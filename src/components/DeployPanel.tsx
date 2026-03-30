@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Button } from "./ui/button";
+import { Input } from "./ui/input";
 import {
   Card,
   CardContent,
@@ -16,6 +17,8 @@ import {
   deployDidRegistry,
   getSavedCompileArtifact,
   getSavedDeployment,
+  getSavedOwnerSecretHex,
+  saveOwnerSecretHex,
 } from "../lib/didContract";
 
 interface DeployPanelProps {
@@ -37,6 +40,15 @@ export function DeployPanel({ providers, onDeployed }: DeployPanelProps) {
   const [lastTx, setLastTx] = useState(
     getSavedDeployment()?.txHash || "",
   );
+  const [ownerSecret, setOwnerSecret] = useState(getSavedOwnerSecretHex());
+
+  function generateOwnerSecret() {
+    const bytes = new Uint8Array(32);
+    window.crypto.getRandomValues(bytes);
+    const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+    setOwnerSecret(hex);
+    saveOwnerSecretHex(hex);
+  }
 
   async function handleCompile() {
     setCompiling(true);
@@ -68,7 +80,8 @@ export function DeployPanel({ providers, onDeployed }: DeployPanelProps) {
     setDeployError("");
     setDeployMessage("");
     try {
-      const result = await deployDidRegistry(providers);
+      saveOwnerSecretHex(ownerSecret);
+      const result = await deployDidRegistry(providers, ownerSecret);
       setLastTx(result.txHash);
       setLastDeploy(result);
       setDeployMessage(result.message || "");
@@ -89,7 +102,7 @@ export function DeployPanel({ providers, onDeployed }: DeployPanelProps) {
         </CardTitle>
         <CardDescription className="text-zinc-400">
           Validate the managed Compact build and deploy the registry to{" "}
-          {providers.networkId}.
+          {providers.networkId}. The registry is initialized in the constructor.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -98,6 +111,40 @@ export function DeployPanel({ providers, onDeployed }: DeployPanelProps) {
             This flow expects a real Compact managed build under
             `public/contracts/managed/did-registry`. If that directory is
             missing, run `npm run compile-contract` first.
+          </p>
+        </div>
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-zinc-300">
+            Owner Authorization Secret
+          </label>
+          <Input
+            type="text"
+            value={ownerSecret}
+            onChange={(event) => setOwnerSecret(event.target.value.trim())}
+            placeholder="64 hex chars used as the Midnight witness secret"
+            className="font-mono text-xs"
+          />
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => saveOwnerSecretHex(ownerSecret)}
+              className="border-zinc-700 text-zinc-200 hover:bg-zinc-800"
+            >
+              Save Secret
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={generateOwnerSecret}
+              className="border-zinc-700 text-zinc-200 hover:bg-zinc-800"
+            >
+              Generate Secret
+            </Button>
+          </div>
+          <p className="text-xs text-zinc-500">
+            Midnight uses this local witness secret to authorize owner-only
+            `issue/update/revoke`. It stays in this browser for the experiment.
           </p>
         </div>
         <div className="space-y-2">
@@ -180,44 +227,38 @@ export function DeployPanel({ providers, onDeployed }: DeployPanelProps) {
               </p>
             <p className="text-xs text-zinc-300 mt-1">
               <span className="text-zinc-500">Deploy Tx:</span>{" "}
-              <a
-                href={explorerTxUrl(lastDeploy?.txId || lastTx)}
-                target="_blank"
-                rel="noreferrer"
-                className="break-all font-mono text-emerald-400 underline underline-offset-2"
-              >
-                {lastDeploy?.txId || lastTx}
-              </a>
+              <span className="break-all font-mono">{lastDeploy?.txId || lastTx}</span>
             </p>
             {lastDeploy?.txId && lastDeploy.txHash && lastDeploy.txId !== lastDeploy.txHash && (
               <p className="text-xs text-zinc-300 mt-1">
                 <span className="text-zinc-500">Deploy Tx Hash:</span>{" "}
-                <span className="break-all font-mono">{lastDeploy.txHash}</span>
-              </p>
-            )}
-            {lastDeploy?.initializeTxHash && (
-              <p className="text-xs text-zinc-300 mt-1">
-                <span className="text-zinc-500">Initialize Tx:</span>{" "}
                 <a
-                  href={explorerTxUrl(lastDeploy.initializeTxId || lastDeploy.initializeTxHash)}
+                  href={explorerTxUrl(lastDeploy.txHash)}
                   target="_blank"
                   rel="noreferrer"
                   className="break-all font-mono text-emerald-400 underline underline-offset-2"
                 >
-                  {lastDeploy.initializeTxId || lastDeploy.initializeTxHash}
+                  {lastDeploy.txHash}
                 </a>
               </p>
             )}
-            {lastDeploy?.initializeTxId &&
-              lastDeploy.initializeTxHash &&
-              lastDeploy.initializeTxId !== lastDeploy.initializeTxHash && (
-                <p className="text-xs text-zinc-300 mt-1">
-                  <span className="text-zinc-500">Initialize Tx Hash:</span>{" "}
-                  <span className="break-all font-mono">
-                    {lastDeploy.initializeTxHash}
-                  </span>
-                </p>
-              )}
+            {!lastDeploy?.txId && lastTx && (
+              <p className="text-xs text-zinc-300 mt-1">
+                <span className="text-zinc-500">Deploy Tx Hash:</span>{" "}
+                <a
+                  href={explorerTxUrl(lastTx)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="break-all font-mono text-emerald-400 underline underline-offset-2"
+                >
+                  {lastTx}
+                </a>
+              </p>
+            )}
+            <p className="text-xs text-zinc-300 mt-1">
+              <span className="text-zinc-500">Initialization:</span>{" "}
+              constructor-based
+            </p>
           </div>
         )}
       </CardContent>

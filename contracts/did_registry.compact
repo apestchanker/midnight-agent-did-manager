@@ -2,6 +2,8 @@ pragma language_version >= 0.20;
 
 import CompactStandardLibrary;
 
+// Contract version: 0.1.0
+
 // DID lifecycle status codes:
 // 0 = none
 // 1 = pending issuance
@@ -27,20 +29,26 @@ export ledger organization_disclosures: Map<Bytes<32>, Uint<8>>;
 export ledger revocation_commitments: Map<Bytes<32>, Bytes<32>>;
 export ledger registry_nonce: Counter;
 
-constructor() {
-  initialized = false;
-  registry_admin = pad(32, "");
-  issuer_service = pad(32, "");
-  total_requests = 0;
-  total_active_dids = 0;
+witness issuerSecret(): Bytes<32>;
+
+export circuit contract_version(): Bytes<16> {
+  return pad(16, "0.1.0");
 }
 
-export circuit initialize(admin_key: Bytes<32>, issuer_key: Bytes<32>): [] {
-  assert(!initialized, "Already initialized");
+circuit issuerPublicKey(secret: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>(
+           [pad(32, "midnight:did:issuer:v1"), secret]);
+}
 
-  registry_admin = disclose(admin_key);
-  issuer_service = disclose(issuer_key);
+constructor(owner_secret: Bytes<32>) {
+  const public_owner_key = disclose(issuerPublicKey(owner_secret));
+  assert(public_owner_key != pad(32, ""), "Owner key required");
+
   initialized = true;
+  registry_admin = public_owner_key;
+  issuer_service = public_owner_key;
+  total_requests = 0;
+  total_active_dids = 0;
   registry_nonce.increment(1);
 }
 
@@ -70,7 +78,11 @@ export circuit request_did(
 
   request_commitments.insert(public_agent_key, disclose(request_commitment));
   proof_commitments.insert(public_agent_key, disclose(proof_commitment));
-  organization_labels.insert(public_agent_key, disclose(organization_label));
+  if (disclose(organization_disclosure) == (1 as Uint<8>)) {
+    organization_labels.insert(public_agent_key, disclose(organization_label));
+  } else {
+    organization_labels.insert(public_agent_key, pad(64, ""));
+  }
   organization_disclosures.insert(public_agent_key, disclose(organization_disclosure));
   status_by_agent.insert(public_agent_key, (1 as Uint<8>));
 
@@ -79,7 +91,6 @@ export circuit request_did(
 }
 
 export circuit issue_did(
-                 issuer_key: Bytes<32>,
                  agent_key: Bytes<32>,
                  did_commitment: Bytes<32>,
                  document_commitment: Bytes<32>,
@@ -88,7 +99,9 @@ export circuit issue_did(
                  organization_disclosure: Uint<8>
                  ): [] {
   assert(initialized, "Contract not initialized");
-  assert(disclose(issuer_key) == issuer_service, "Unauthorized issuer");
+  const issuer_secret = issuerSecret();
+  const issuer_key = issuerPublicKey(issuer_secret);
+  assert(issuer_key == issuer_service, "Unauthorized issuer");
   assert(
     disclose(organization_disclosure) == (0 as Uint<8>) ||
     disclose(organization_disclosure) == (1 as Uint<8>),
@@ -102,7 +115,11 @@ export circuit issue_did(
   did_commitments.insert(public_agent_key, disclose(did_commitment));
   document_commitments.insert(public_agent_key, disclose(document_commitment));
   proof_commitments.insert(public_agent_key, disclose(proof_commitment));
-  organization_labels.insert(public_agent_key, disclose(organization_label));
+  if (disclose(organization_disclosure) == (1 as Uint<8>)) {
+    organization_labels.insert(public_agent_key, disclose(organization_label));
+  } else {
+    organization_labels.insert(public_agent_key, pad(64, ""));
+  }
   organization_disclosures.insert(public_agent_key, disclose(organization_disclosure));
   status_by_agent.insert(public_agent_key, (2 as Uint<8>));
 
@@ -130,14 +147,17 @@ export circuit request_update(
 
   update_request_commitments.insert(public_agent_key, disclose(update_request_commitment));
   proof_commitments.insert(public_agent_key, disclose(proof_commitment));
-  organization_labels.insert(public_agent_key, disclose(organization_label));
+  if (disclose(organization_disclosure) == (1 as Uint<8>)) {
+    organization_labels.insert(public_agent_key, disclose(organization_label));
+  } else {
+    organization_labels.insert(public_agent_key, pad(64, ""));
+  }
   organization_disclosures.insert(public_agent_key, disclose(organization_disclosure));
   status_by_agent.insert(public_agent_key, (4 as Uint<8>));
   registry_nonce.increment(1);
 }
 
 export circuit update_did(
-                 issuer_key: Bytes<32>,
                  agent_key: Bytes<32>,
                  did_commitment: Bytes<32>,
                  document_commitment: Bytes<32>,
@@ -146,7 +166,9 @@ export circuit update_did(
                  organization_disclosure: Uint<8>
                  ): [] {
   assert(initialized, "Contract not initialized");
-  assert(disclose(issuer_key) == issuer_service, "Unauthorized issuer");
+  const issuer_secret = issuerSecret();
+  const issuer_key = issuerPublicKey(issuer_secret);
+  assert(issuer_key == issuer_service, "Unauthorized issuer");
   assert(
     disclose(organization_disclosure) == (0 as Uint<8>) ||
     disclose(organization_disclosure) == (1 as Uint<8>),
@@ -160,7 +182,11 @@ export circuit update_did(
   did_commitments.insert(public_agent_key, disclose(did_commitment));
   document_commitments.insert(public_agent_key, disclose(document_commitment));
   proof_commitments.insert(public_agent_key, disclose(proof_commitment));
-  organization_labels.insert(public_agent_key, disclose(organization_label));
+  if (disclose(organization_disclosure) == (1 as Uint<8>)) {
+    organization_labels.insert(public_agent_key, disclose(organization_label));
+  } else {
+    organization_labels.insert(public_agent_key, pad(64, ""));
+  }
   organization_disclosures.insert(public_agent_key, disclose(organization_disclosure));
   status_by_agent.insert(public_agent_key, (2 as Uint<8>));
   registry_nonce.increment(1);
@@ -184,12 +210,13 @@ export circuit request_revoke(
 }
 
 export circuit revoke_did(
-                 issuer_key: Bytes<32>,
                  agent_key: Bytes<32>,
                  revocation_commitment: Bytes<32>
                  ): [] {
   assert(initialized, "Contract not initialized");
-  assert(disclose(issuer_key) == issuer_service, "Unauthorized issuer");
+  const issuer_secret = issuerSecret();
+  const issuer_key = issuerPublicKey(issuer_secret);
+  assert(issuer_key == issuer_service, "Unauthorized issuer");
 
   const public_agent_key = disclose(agent_key);
   assert(status_by_agent.member(public_agent_key), "DID not found");

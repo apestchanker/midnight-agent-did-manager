@@ -26,6 +26,7 @@ import {
 import {
   createWalletDidRequest,
   finalizeIssuedDid,
+  getDidRequest,
   getCustomerByWallet,
   getLatestAdminRegistryDeployment,
   listDidRequests,
@@ -64,6 +65,9 @@ export default function App() {
     return typeof value === "string" ? value : "";
   }
   const rawEnv = import.meta.env as Record<string, string | undefined>;
+  const appTitle = (rawEnv.VITE_APP_TITLE || "Midnight Agent DID Manager").trim();
+  const appVersion = (rawEnv.VITE_APP_VERSION || "0.1.0").trim();
+  const versionedAppTitle = `${appTitle} v${appVersion}`;
   const configuredAdminShieldedAddress = (
     rawEnv.VITE_ADMIN_WALLET_SHIELDED_ADDR ||
     rawEnv.ADMIN_WALLET_SHIELDED_ADDR ||
@@ -80,6 +84,10 @@ export default function App() {
     error: walletError,
     connect,
   } = useWallet();
+
+  useEffect(() => {
+    document.title = versionedAppTitle;
+  }, [versionedAppTitle]);
 
   const [contractAddress, setContractAddress] = useState("");
   const [selectedAgentAddress, setSelectedAgentAddress] = useState("");
@@ -463,6 +471,17 @@ export default function App() {
     return record;
   }
 
+  async function waitForRequestIssued(requestId: string) {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const request = await getDidRequest(requestId);
+      if (request.request_status === "issued") {
+        return request;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 500));
+    }
+    throw new Error("The DID was issued on-chain, but the DID service did not reflect the issued request state in time.");
+  }
+
   async function handleRefreshRecord() {
     if (!selectedAgentAddress.trim()) {
       throw new Error("Agent record address is required");
@@ -484,6 +503,8 @@ export default function App() {
       didDocument: payload.didDocument,
     });
 
+    setDidRecord(issuedRecord);
+
     if (
       selectedAdminDid &&
       selectedAdminDid.subject_wallet_address === payload.agentAddress &&
@@ -502,9 +523,16 @@ export default function App() {
         didDocument: parsedDidDocument,
         didRecord: issuedRecord,
       });
+      await waitForRequestIssued(selectedAdminDid.id);
     }
 
-    return refreshAgentRecord(payload.agentAddress);
+    try {
+      return await refreshAgentRecord(payload.agentAddress);
+    } catch (error) {
+      console.warn("[App] Falling back to locally issued DID state while indexer catches up:", error);
+      await refreshRequestCollections();
+      return issuedRecord;
+    }
   }
 
   async function handleUpdateDid(payload: {
@@ -986,7 +1014,7 @@ export default function App() {
         <main className="mx-auto w-full max-w-6xl space-y-8 px-4 py-6 md:px-8 md:py-10">
         <header className="space-y-2">
           <h1 className="text-3xl md:text-4xl font-bold">
-            Midnight Agent DID Manager
+            {versionedAppTitle}
           </h1>
           <p className="text-zinc-400 text-sm md:text-base">
             Connect wallet, register a DID, and track registry state from one

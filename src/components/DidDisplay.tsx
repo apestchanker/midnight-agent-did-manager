@@ -117,20 +117,33 @@ export function DidDisplay({ record }: DidDisplayProps) {
             {record.txHash && (
               <p className="text-sm text-zinc-300">
                 <span className="text-zinc-500">Tx:</span>{" "}
-                <a
-                  href={explorerTxUrl(record.txId || record.txHash)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="font-mono break-all text-emerald-400 underline underline-offset-2"
-                >
-                  {record.txId || record.txHash}
-                </a>
+                <span className="font-mono break-all">{record.txId || record.txHash}</span>
               </p>
             )}
             {record.txId && record.txHash && record.txId !== record.txHash && (
               <p className="text-sm text-zinc-300">
                 <span className="text-zinc-500">Tx Hash:</span>{" "}
-                <span className="font-mono break-all">{record.txHash}</span>
+                <a
+                  href={explorerTxUrl(record.txHash)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-mono break-all text-emerald-400 underline underline-offset-2"
+                >
+                  {record.txHash}
+                </a>
+              </p>
+            )}
+            {!record.txId && record.txHash && (
+              <p className="text-sm text-zinc-300">
+                <span className="text-zinc-500">Tx Hash:</span>{" "}
+                <a
+                  href={explorerTxUrl(record.txHash)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-mono break-all text-emerald-400 underline underline-offset-2"
+                >
+                  {record.txHash}
+                </a>
               </p>
             )}
             <p className="text-sm text-zinc-300">

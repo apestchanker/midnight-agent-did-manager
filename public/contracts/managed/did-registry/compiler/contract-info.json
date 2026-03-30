@@ -4,29 +4,14 @@
   "runtime-version": "0.15.0",
   "circuits": [
     {
-      "name": "initialize",
-      "pure": false,
-      "proof": true,
+      "name": "contract_version",
+      "pure": true,
+      "proof": false,
       "arguments": [
-        {
-          "name": "admin_key",
-          "type": {
-            "type-name": "Bytes",
-            "length": 32
-          }
-        },
-        {
-          "name": "issuer_key",
-          "type": {
-            "type-name": "Bytes",
-            "length": 32
-          }
-        }
       ],
       "result-type": {
-        "type-name": "Tuple",
-        "types": [
-        ]
+        "type-name": "Bytes",
+        "length": 16
       }
     },
     {
@@ -81,13 +66,6 @@
       "pure": false,
       "proof": true,
       "arguments": [
-        {
-          "name": "issuer_key",
-          "type": {
-            "type-name": "Bytes",
-            "length": 32
-          }
-        },
         {
           "name": "agent_key",
           "type": {
@@ -190,13 +168,6 @@
       "proof": true,
       "arguments": [
         {
-          "name": "issuer_key",
-          "type": {
-            "type-name": "Bytes",
-            "length": 32
-          }
-        },
-        {
           "name": "agent_key",
           "type": {
             "type-name": "Bytes",
@@ -284,13 +255,6 @@
       "proof": true,
       "arguments": [
         {
-          "name": "issuer_key",
-          "type": {
-            "type-name": "Bytes",
-            "length": 32
-          }
-        },
-        {
           "name": "agent_key",
           "type": {
             "type-name": "Bytes",
@@ -313,6 +277,15 @@
     }
   ],
   "witnesses": [
+    {
+      "name": "issuerSecret",
+      "arguments": [
+      ],
+      "result type": {
+        "type-name": "Bytes",
+        "length": 32
+      }
+    }
   ],
   "contracts": [
   ]

@@ -1,12 +1,10 @@
 import type * as __compactRuntime from '@midnight-ntwrk/compact-runtime';
 
 export type Witnesses<PS> = {
+  issuerSecret(context: __compactRuntime.WitnessContext<Ledger, PS>): [PS, Uint8Array];
 }
 
 export type ImpureCircuits<PS> = {
-  initialize(context: __compactRuntime.CircuitContext<PS>,
-             admin_key_0: Uint8Array,
-             issuer_key_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
   request_did(context: __compactRuntime.CircuitContext<PS>,
               agent_key_0: Uint8Array,
               request_commitment_0: Uint8Array,
@@ -14,7 +12,6 @@ export type ImpureCircuits<PS> = {
               organization_label_0: Uint8Array,
               organization_disclosure_0: bigint): __compactRuntime.CircuitResults<PS, []>;
   issue_did(context: __compactRuntime.CircuitContext<PS>,
-            issuer_key_0: Uint8Array,
             agent_key_0: Uint8Array,
             did_commitment_0: Uint8Array,
             document_commitment_0: Uint8Array,
@@ -28,7 +25,6 @@ export type ImpureCircuits<PS> = {
                  organization_label_0: Uint8Array,
                  organization_disclosure_0: bigint): __compactRuntime.CircuitResults<PS, []>;
   update_did(context: __compactRuntime.CircuitContext<PS>,
-             issuer_key_0: Uint8Array,
              agent_key_0: Uint8Array,
              did_commitment_0: Uint8Array,
              document_commitment_0: Uint8Array,
@@ -40,15 +36,11 @@ export type ImpureCircuits<PS> = {
                  revocation_request_commitment_0: Uint8Array,
                  proof_commitment_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
   revoke_did(context: __compactRuntime.CircuitContext<PS>,
-             issuer_key_0: Uint8Array,
              agent_key_0: Uint8Array,
              revocation_commitment_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
 }
 
 export type ProvableCircuits<PS> = {
-  initialize(context: __compactRuntime.CircuitContext<PS>,
-             admin_key_0: Uint8Array,
-             issuer_key_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
   request_did(context: __compactRuntime.CircuitContext<PS>,
               agent_key_0: Uint8Array,
               request_commitment_0: Uint8Array,
@@ -56,7 +48,6 @@ export type ProvableCircuits<PS> = {
               organization_label_0: Uint8Array,
               organization_disclosure_0: bigint): __compactRuntime.CircuitResults<PS, []>;
   issue_did(context: __compactRuntime.CircuitContext<PS>,
-            issuer_key_0: Uint8Array,
             agent_key_0: Uint8Array,
             did_commitment_0: Uint8Array,
             document_commitment_0: Uint8Array,
@@ -70,7 +61,6 @@ export type ProvableCircuits<PS> = {
                  organization_label_0: Uint8Array,
                  organization_disclosure_0: bigint): __compactRuntime.CircuitResults<PS, []>;
   update_did(context: __compactRuntime.CircuitContext<PS>,
-             issuer_key_0: Uint8Array,
              agent_key_0: Uint8Array,
              did_commitment_0: Uint8Array,
              document_commitment_0: Uint8Array,
@@ -82,18 +72,16 @@ export type ProvableCircuits<PS> = {
                  revocation_request_commitment_0: Uint8Array,
                  proof_commitment_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
   revoke_did(context: __compactRuntime.CircuitContext<PS>,
-             issuer_key_0: Uint8Array,
              agent_key_0: Uint8Array,
              revocation_commitment_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
 }
 
 export type PureCircuits = {
+  contract_version(): Uint8Array;
 }
 
 export type Circuits<PS> = {
-  initialize(context: __compactRuntime.CircuitContext<PS>,
-             admin_key_0: Uint8Array,
-             issuer_key_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
+  contract_version(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, Uint8Array>;
   request_did(context: __compactRuntime.CircuitContext<PS>,
               agent_key_0: Uint8Array,
               request_commitment_0: Uint8Array,
@@ -101,7 +89,6 @@ export type Circuits<PS> = {
               organization_label_0: Uint8Array,
               organization_disclosure_0: bigint): __compactRuntime.CircuitResults<PS, []>;
   issue_did(context: __compactRuntime.CircuitContext<PS>,
-            issuer_key_0: Uint8Array,
             agent_key_0: Uint8Array,
             did_commitment_0: Uint8Array,
             document_commitment_0: Uint8Array,
@@ -115,7 +102,6 @@ export type Circuits<PS> = {
                  organization_label_0: Uint8Array,
                  organization_disclosure_0: bigint): __compactRuntime.CircuitResults<PS, []>;
   update_did(context: __compactRuntime.CircuitContext<PS>,
-             issuer_key_0: Uint8Array,
              agent_key_0: Uint8Array,
              did_commitment_0: Uint8Array,
              document_commitment_0: Uint8Array,
@@ -127,7 +113,6 @@ export type Circuits<PS> = {
                  revocation_request_commitment_0: Uint8Array,
                  proof_commitment_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
   revoke_did(context: __compactRuntime.CircuitContext<PS>,
-             issuer_key_0: Uint8Array,
              agent_key_0: Uint8Array,
              revocation_commitment_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
 }
@@ -221,7 +206,8 @@ export declare class Contract<PS = any, W extends Witnesses<PS> = Witnesses<PS>>
   impureCircuits: ImpureCircuits<PS>;
   provableCircuits: ProvableCircuits<PS>;
   constructor(witnesses: W);
-  initialState(context: __compactRuntime.ConstructorContext<PS>): __compactRuntime.ConstructorResult<PS>;
+  initialState(context: __compactRuntime.ConstructorContext<PS>,
+               owner_secret_0: Uint8Array): __compactRuntime.ConstructorResult<PS>;
 }
 
 export declare function ledger(state: __compactRuntime.StateValue | __compactRuntime.ChargedState): Ledger;

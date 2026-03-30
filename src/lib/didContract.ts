@@ -22,9 +22,10 @@ import type {
   UpdateDidInput,
 } from "../types/did";
 
-const DEPLOY_KEY = "did-registry:last-deploy:v4";
+const DEPLOY_KEY = "did-registry:last-deploy:v5";
 const COMPILE_KEY = "did-registry:last-compile:v4";
 const DID_CACHE_PREFIX = "did-registry:request-cache:v1";
+const OWNER_SECRET_KEY = "did-registry:owner-secret:v1";
 const MANAGED_CONTRACT_BASE_PATH =
   (import.meta.env.VITE_MANAGED_CONTRACT_PATH || "").trim() ||
   "/contracts/managed/did-registry";
@@ -231,6 +232,60 @@ async function createAgentKey(agentAddress: string): Promise<Uint8Array> {
   return sha256Bytes(agentAddress.trim().toLowerCase());
 }
 
+function normalizeSecretHex(secretHex: string): string {
+  return secretHex.trim().replace(/^0x/i, "").toLowerCase();
+}
+
+function isValidSecretHex(secretHex: string): boolean {
+  return /^[0-9a-f]{64}$/.test(normalizeSecretHex(secretHex));
+}
+
+function getConfiguredOwnerSecretHex(): string {
+  const value = import.meta.env.VITE_REGISTRY_OWNER_SECRET_HEX;
+  return typeof value === "string" ? normalizeSecretHex(value) : "";
+}
+
+export function getSavedOwnerSecretHex(): string {
+  const configured = getConfiguredOwnerSecretHex();
+  if (configured) return configured;
+  if (typeof window === "undefined") return "";
+  const raw = window.localStorage.getItem(OWNER_SECRET_KEY) || "";
+  return normalizeSecretHex(raw);
+}
+
+export function saveOwnerSecretHex(secretHex: string): void {
+  if (typeof window === "undefined") return;
+  const normalized = normalizeSecretHex(secretHex);
+  if (!normalized) {
+    window.localStorage.removeItem(OWNER_SECRET_KEY);
+    return;
+  }
+  window.localStorage.setItem(OWNER_SECRET_KEY, normalized);
+}
+
+function requireOwnerSecretBytes(ownerSecretHex?: string): Uint8Array {
+  const normalized = normalizeSecretHex(ownerSecretHex || getSavedOwnerSecretHex());
+  if (!isValidSecretHex(normalized)) {
+    throw new Error(
+      "Registry owner authorization secret is not configured. Set a 32-byte hex secret in Deploy DID Registry before issuing, updating, or revoking.",
+    );
+  }
+  return fromHex(normalized);
+}
+
+function createWitnesses(ownerSecretHex?: string) {
+  const ownerSecret = ownerSecretHex ? normalizeSecretHex(ownerSecretHex) : "";
+  return {
+    issuerSecret: (context: { currentPrivateState: unknown }) => {
+      const secretBytes = requireOwnerSecretBytes(ownerSecret);
+      return [context.currentPrivateState, secretBytes] as [
+        unknown,
+        Uint8Array,
+      ];
+    },
+  };
+}
+
 async function createRequestCommitment(input: {
   contractAddress: string;
   agentAddress: string;
@@ -416,11 +471,17 @@ async function primeWalletSession(providers: AppProviders): Promise<void> {
 
 async function getContractRuntime() {
   const module = await loadManagedContractModule();
+  const contractDefinition = CompactCompiledContract.make(
+    "did-registry",
+    module.Contract as never,
+  ) as never;
+  const contractWithWitnesses = CompactCompiledContract.withWitnesses(
+    contractDefinition,
+    createWitnesses() as never,
+  ) as never;
   const compiledContract = CompactCompiledContract.withCompiledFileAssets(
-    CompactCompiledContract.withVacantWitnesses(
-      CompactCompiledContract.make("did-registry", module.Contract as never),
-    ),
-    MANAGED_CONTRACT_BASE_PATH,
+    contractWithWitnesses,
+    MANAGED_CONTRACT_BASE_PATH as never,
   ) as never;
 
   return { module, compiledContract };
@@ -491,6 +552,7 @@ export async function compileDidRegistry(
 
 export async function deployDidRegistry(
   providers: AppProviders,
+  ownerSecretHex?: string,
 ): Promise<DeployResult> {
   const compileData = getSavedCompileArtifact();
   if (!compileData) {
@@ -500,18 +562,16 @@ export async function deployDidRegistry(
   }
 
   await primeWalletSession(providers);
+  const normalizedSecret = normalizeSecretHex(
+    ownerSecretHex || getSavedOwnerSecretHex(),
+  );
+  const ownerSecret = requireOwnerSecretBytes(normalizedSecret);
+  saveOwnerSecretHex(normalizedSecret);
   const { compiledContract } = await getContractRuntime();
   const deployed = await deployContract(providers as never, {
     compiledContract,
-    args: [],
+    args: [ownerSecret],
   });
-
-  await primeWalletSession(providers);
-  const operatorKey = await createAgentKey(providers.unshieldedAddress);
-  const initializeTx = await (deployed.callTx.initialize as (
-    adminKey: Uint8Array,
-    issuerKey: Uint8Array,
-  ) => Promise<{ public: { txId: string; txHash: string } }>)(operatorKey, operatorKey);
 
   const contractAddress = extractContractAddress(deployed);
   if (!contractAddress) {
@@ -528,14 +588,12 @@ export async function deployDidRegistry(
     txId: String(
       (deployed as DeployTransactionMetadata).deployTxData?.public?.txId || "",
     ),
-    initializeTxHash: String(initializeTx.public.txHash || ""),
-    initializeTxId: String(initializeTx.public.txId || ""),
     txStatus: "confirmed",
     mode: "onchain",
     deployedAt: new Date().toISOString(),
     networkId: providers.networkId,
     message:
-      "Contract deployed to Midnight Preprod and initialized with the connected wallet as both admin and issuer service.",
+      "Contract deployed to Midnight and initialized in the constructor. Owner-only issue, update, and revoke are now protected by a Midnight witness secret stored locally in this browser for the experiment.",
   };
 
   saveDeployment(result, providers.networkId);
@@ -658,7 +716,6 @@ export async function issueDid(
     contractAddress: input.contractAddress as never,
   });
 
-  const issuerKey = await createAgentKey(providers.unshieldedAddress);
   const agentKey = await createAgentKey(input.agentAddress);
   const agentKeyHex = toHex(agentKey);
   const did = await createDidIdentifier(
@@ -690,14 +747,13 @@ export async function issueDid(
   const organizationDisclosure = disclosureFlag(organizationDisclosureValue);
 
   const tx = await (contract.callTx.issue_did as (
-    issuerKeyArg: Uint8Array,
     agentKeyArg: Uint8Array,
     didCommitmentArg: Uint8Array,
     documentCommitmentArg: Uint8Array,
     proofCommitmentArg: Uint8Array,
     organizationLabelArg: Uint8Array,
     organizationDisclosureArg: bigint,
-  ) => Promise<{ public: { txHash: string; txId?: string } }>)(issuerKey, agentKey, didCommitment, documentCommitment, proofCommitment, organizationLabel, organizationDisclosure);
+  ) => Promise<{ public: { txHash: string; txId?: string } }>)(agentKey, didCommitment, documentCommitment, proofCommitment, organizationLabel, organizationDisclosure);
 
   const now = new Date().toISOString();
   const cached = mergeDidMetadata(input.contractAddress, input.agentAddress, {
@@ -775,7 +831,6 @@ export async function updateDid(
     contractAddress: input.contractAddress as never,
   });
 
-  const issuerKey = await createAgentKey(providers.unshieldedAddress);
   const agentKey = await createAgentKey(input.agentAddress);
   const agentKeyHex = toHex(agentKey);
   const did = await createDidIdentifier(
@@ -807,14 +862,13 @@ export async function updateDid(
   const organizationDisclosure = disclosureFlag(organizationDisclosureValue);
 
   const tx = await (contract.callTx.update_did as (
-    issuerKeyArg: Uint8Array,
     agentKeyArg: Uint8Array,
     didCommitmentArg: Uint8Array,
     documentCommitmentArg: Uint8Array,
     proofCommitmentArg: Uint8Array,
     organizationLabelArg: Uint8Array,
     organizationDisclosureArg: bigint,
-  ) => Promise<{ public: { txHash: string; txId?: string } }>)(issuerKey, agentKey, didCommitment, documentCommitment, proofCommitment, organizationLabel, organizationDisclosure);
+  ) => Promise<{ public: { txHash: string; txId?: string } }>)(agentKey, didCommitment, documentCommitment, proofCommitment, organizationLabel, organizationDisclosure);
 
   const now = new Date().toISOString();
   const cached = mergeDidMetadata(input.contractAddress, input.agentAddress, {
@@ -878,7 +932,6 @@ export async function revokeDid(
     contractAddress: input.contractAddress as never,
   });
 
-  const issuerKey = await createAgentKey(providers.unshieldedAddress);
   const agentKey = await createAgentKey(input.agentAddress);
   const agentKeyHex = toHex(agentKey);
   const did = await createDidIdentifier(
@@ -895,10 +948,9 @@ export async function revokeDid(
   });
 
   const tx = await (contract.callTx.revoke_did as (
-    issuerKeyArg: Uint8Array,
     agentKeyArg: Uint8Array,
     revocationCommitmentArg: Uint8Array,
-  ) => Promise<{ public: { txHash: string; txId?: string } }>)(issuerKey, agentKey, revocationCommitment);
+  ) => Promise<{ public: { txHash: string; txId?: string } }>)(agentKey, revocationCommitment);
 
   const now = new Date().toISOString();
   const cached = mergeDidMetadata(input.contractAddress, input.agentAddress, {

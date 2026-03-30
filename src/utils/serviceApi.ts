@@ -167,6 +167,10 @@ export function listDidRequests(filters: {
   return requestJson(`/api/did-requests${suffix}`);
 }
 
+export function getDidRequest(requestId: string): Promise<DidRequestRow> {
+  return requestJson(`/api/did-requests/${requestId}`);
+}
+
 export function approveDidRequest(requestId: string, humanWalletAddress: string) {
   return requestJson<DidRequestRow>(`/api/human/did-requests/${requestId}/approve`, {
     method: "POST",

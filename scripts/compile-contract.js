@@ -25,10 +25,12 @@ const generatedRuntimeDtsPath = resolve(
 const compiledMetaDir = resolve(__dirname, "../contracts/compiled");
 const compiledMetaPath = resolve(compiledMetaDir, "did_registry.compiled.json");
 const CIRCUITS = [
-  "initialize",
+  "contract_version",
   "request_did",
   "issue_did",
+  "request_update",
   "update_did",
+  "request_revoke",
   "revoke_did",
 ];
 
@@ -96,7 +98,7 @@ function writeMetadata() {
     compiledMetaPath,
     JSON.stringify(
       {
-        version: "1.0",
+        version: "0.1.0",
         name: "did_registry",
         source: sourceCode,
         compiledAt: new Date().toISOString(),
@@ -113,9 +115,13 @@ function writeMetadata() {
             "total_active_dids",
             "status_by_agent",
             "request_commitments",
+            "update_request_commitments",
+            "revocation_request_commitments",
             "did_commitments",
             "document_commitments",
             "proof_commitments",
+            "organization_labels",
+            "organization_disclosures",
             "revocation_commitments",
             "registry_nonce",
           ],

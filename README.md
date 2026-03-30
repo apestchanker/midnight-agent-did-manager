@@ -81,8 +81,14 @@ The Compact contract is the registry of record. It stores:
 - subject binding through a wallet-derived agent key
 - DID lifecycle state
 - request, update, revoke, DID, document, and proof commitments
-- registry admin and issuer service keys
+- registry admin and issuer service public authorization keys
 - optional public organization disclosure
+
+For owner-only authorization, the contract follows Midnight's documented `witness` pattern:
+
+- a local owner secret is kept off-chain
+- a public authorization key derived from that secret is stored on-chain
+- `issue/update/revoke` require a Compact `witness` proving knowledge of the secret
 
 It does not store:
 
@@ -91,6 +97,7 @@ It does not store:
 - customer workflow data
 - MCP keys
 - credential JWTs
+- the owner authorization secret
 
 ### Off-chain
 
@@ -109,6 +116,8 @@ For the sake of experimentation and local development, this repository uses Post
 That is a convenience choice for research and prototyping, not a recommended production custody model for sensitive agent data.
 
 In a production deployment, off-chain identity payloads, credentials, and other sensitive holder material should be moved to a proper vault or secure custody system so that only the agent, the human owner/operator, or another explicitly authorized principal can access them.
+
+The same caution applies to the registry owner authorization secret: for this research repository it may be stored in `.env` or browser `localStorage`, but in production it should live in a proper secure vault or custody system.
 
 ## Product Views
 
@@ -130,7 +139,12 @@ For the issuer/admin wallet.
 - issue, update, or revoke DIDs on-chain
 - persist deployment and issuance state in Postgres
 
-Admin mode is enabled when the connected wallet is recognized as the registry admin / issuer on-chain, or when the connected shielded address matches `VITE_ADMIN_WALLET_SHIELDED_ADDR`.
+In this repository, Admin mode should be enabled through `VITE_ADMIN_WALLET_SHIELDED_ADDR`.
+
+Important distinction:
+
+- UI admin access is gated by the configured admin wallet/shielded address
+- contract owner authorization for `issue/update/revoke` is gated by the owner witness secret described below
 
 ### Registry
 
@@ -171,6 +185,38 @@ See:
 - local Midnight proof server
 - a funded 1AM wallet on Midnight Preprod
 
+## Official Resources
+
+- 1AM Wallet beta installer: https://1am.xyz/install-beta
+- Midnight developer documentation: https://docs.midnight.network/
+- Midnight getting started / toolchain install: https://docs.midnight.network/getting-started
+- Midnight JS SDK repository: https://github.com/midnightntwrk/midnight-js
+
+## Tested Versions
+
+- Application version: `0.1.0`
+- Midnight JS SDK family used by this repo: `4.0.2`
+- Midnight DApp connector API: `4.0.1`
+- Midnight ledger / proof stack used by this repo: `8.0.3`
+- 1AM Wallet: Beta channel from the official installer at `https://1am.xyz/install-beta`
+
+For the Midnight SDK, the main package set currently pinned in this repository is:
+
+- `@midnight-ntwrk/midnight-js-contracts@^4.0.2`
+- `@midnight-ntwrk/midnight-js-fetch-zk-config-provider@^4.0.2`
+- `@midnight-ntwrk/midnight-js-http-client-proof-provider@^4.0.2`
+- `@midnight-ntwrk/midnight-js-indexer-public-data-provider@^4.0.2`
+- `@midnight-ntwrk/midnight-js-level-private-state-provider@^4.0.2`
+- `@midnight-ntwrk/midnight-js-network-id@^4.0.2`
+- `@midnight-ntwrk/midnight-js-node-zk-config-provider@^4.0.2`
+- `@midnight-ntwrk/midnight-js-utils@^4.0.2`
+- `@midnight-ntwrk/ledger-v8@^8.0.3`
+
+Note:
+
+- this repository references the official 1AM Beta installer, but does not pin a wallet version number in code
+- if 1AM publishes a specific public Beta version identifier, update this section accordingly
+
 ## Environment
 
 Copy `env.example` to `.env` and adjust values as needed.
@@ -188,7 +234,47 @@ VITE_DID_API_BASE_URL=http://localhost:8787
 DID_API_PORT=8787
 DATABASE_URL=postgresql://postgres:YOUR_DB_PASSWORD_HERE@127.0.0.1:5432/agent_registry_db
 VITE_ADMIN_WALLET_SHIELDED_ADDR=mn_shield-addr_XXXXXXXX
+VITE_REGISTRY_OWNER_SECRET_HEX=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
+
+## Owner Authorization Secret
+
+The registry contract no longer authorizes `issue/update/revoke` by comparing a public issuer argument. It now uses Midnight's documented Compact `witness` pattern instead.
+
+What it is:
+
+- a 32-byte secret represented as 64 hex characters
+- used for deploy and later owner-only `issue/update/revoke`
+- not derived from the connected wallet
+- not stored on-chain
+- not stored in Postgres
+
+How it works:
+
+- at deploy time, the contract stores only a public authorization key derived from the secret
+- at `issue/update/revoke` time, the DApp supplies the secret via `witness issuerSecret()`
+- the contract verifies that the derived public key matches the owner key stored on-chain
+
+How to provide it:
+
+1. Recommended for repeatable local testing:
+   set `VITE_REGISTRY_OWNER_SECRET_HEX` in `.env`
+2. Alternative test-only flow:
+   leave that env var unset, open `Deploy DID Registry` in the UI, and either:
+   - paste a 64-hex secret
+   - or click `Generate Secret`
+
+If you do not put it in `.env`:
+
+- the app stores it in browser `localStorage`
+- that is acceptable only for experimentation
+- if you clear that browser storage and did not back up the secret, you will lose the ability to `issue/update/revoke` that registry
+
+Test-only warning:
+
+- using browser `localStorage` for this secret is for development and experiments only
+- do not rely on that for production custody
+- in production, replace it with a proper vault/HSM/custody mechanism
 
 ## Development
 
@@ -198,11 +284,49 @@ Install dependencies:
 npm install
 ```
 
+Recommended startup order for a fresh local setup:
+
+1. Install and connect the 1AM wallet.
+2. Install the Midnight toolchain following the official Midnight docs.
+3. Start PostgreSQL, either locally with Docker or through an external host.
+4. Set your `.env`, including `VITE_REGISTRY_OWNER_SECRET_HEX` if you want a repeatable owner secret.
+5. Compile the Compact contract artifacts.
+6. Start the local DID API.
+7. Start the local proof server.
+8. Start the frontend.
+
 Compile the Compact contract and refresh managed assets:
 
 ```bash
 npm run compile-contract
 ```
+
+This command:
+
+- compiles [contracts/did_registry.compact](/Users/alex/Documents/Developer/didMN/contracts/did_registry.compact)
+- regenerates [contracts/managed/did-registry](/Users/alex/Documents/Developer/didMN/contracts/managed/did-registry)
+- refreshes the browser-served assets under `public/contracts/managed/did-registry`
+- refreshes generated runtime bindings under `src/generated`
+- updates [contracts/compiled/did_registry.compiled.json](/Users/alex/Documents/Developer/didMN/contracts/compiled/did_registry.compiled.json)
+
+You need the official Midnight Compact compiler installed as `compact` or `compactc`.
+
+Deploying a registry with the current contract model:
+
+1. Ensure the owner authorization secret is available:
+   - either set `VITE_REGISTRY_OWNER_SECRET_HEX` in `.env`
+   - or prepare to generate / paste it in the UI deploy panel
+2. Start the proof server and frontend.
+3. Open the app as Admin.
+4. Go to `Deploy DID Registry`.
+5. Deploy the contract.
+
+Important:
+
+- the contract is initialized in its constructor
+- there is no separate `initialize` step anymore
+- `issue/update/revoke` are authorized by the owner witness secret, not by the connected wallet alone
+- if you generate the secret in the UI and keep it only in browser `localStorage`, treat that as test-only custody
 
 Validate local Preprod prerequisites:
 
@@ -417,3 +541,18 @@ Credentials:
 ## Repository Notes
 
 This repository intentionally excludes local-only working notes, generated local data, and development logs from version control via `.gitignore`.
+
+## Contract Directory Notes
+
+The `contracts/` tree intentionally contains both source and generated artifacts used by the DApp:
+
+- [contracts/did_registry.compact](/Users/alex/Documents/Developer/didMN/contracts/did_registry.compact)
+  the Compact source of truth
+- [contracts/managed/did-registry](/Users/alex/Documents/Developer/didMN/contracts/managed/did-registry)
+  generated managed runtime, proving/verifier keys, and ZKIR assets required by the app
+- [contracts/compiled/did_registry.compiled.json](/Users/alex/Documents/Developer/didMN/contracts/compiled/did_registry.compiled.json)
+  generated metadata snapshot of the current contract
+
+Inside `contracts/managed/did-registry`, both plain circuit filenames and `did-registry#...` aliases are kept intentionally. The aliased files are needed for the current Vite/browser asset lookup flow.
+
+There should be no personal environment data, wallet secrets, or machine-specific local notes under `contracts/`. The files present there are generated build artifacts required by this repository, not temporary user-only state.
