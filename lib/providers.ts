@@ -16,6 +16,7 @@ import type {
   ConnectedAPI,
   KeyMaterialProvider,
 } from "@midnight-ntwrk/dapp-connector-api";
+import { requestWalletPermissionsIfSupported } from "./wallet-permissions";
 import { fromHex, toHex } from "./wallet-bridge";
 
 const MANAGED_CONTRACT_PATH =
@@ -94,14 +95,7 @@ export interface AppProviders extends MidnightProviders<string> {
 }
 
 async function ensureWalletSession(api: ConnectedAPI): Promise<void> {
-  await api.hintUsage([
-    "getConfiguration",
-    "getShieldedAddresses",
-    "getUnshieldedAddress",
-    "getProvingProvider",
-    "balanceUnsealedTransaction",
-    "submitTransaction",
-  ]);
+  await requestWalletPermissionsIfSupported(api);
 }
 
 function getPrivateStatePassword(accountId: string, networkId: string): string {

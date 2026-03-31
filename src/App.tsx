@@ -83,6 +83,13 @@ export default function App() {
     providers,
     error: walletError,
     connect,
+    availableWallets,
+    selectedWalletName,
+    setSelectedWalletName,
+    connectedWalletName,
+    pendingRemoteProverApproval,
+    approveRemoteProver,
+    declineRemoteProver,
   } = useWallet();
 
   useEffect(() => {
@@ -1032,11 +1039,28 @@ export default function App() {
                 </p>
               </div>
             </div>
+            {status !== "connected" && (
+              <div className="flex justify-end">
+                <a
+                  href="/wallet-testing.html"
+                  className="inline-flex items-center rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-200 transition hover:border-zinc-500 hover:bg-zinc-800"
+                >
+                  Open Wallet Testing
+                </a>
+              </div>
+            )}
             <WalletPanel
               status={status}
               address={address}
               error={walletError}
+              walletName={connectedWalletName}
               connect={connect}
+              availableWallets={availableWallets}
+              selectedWalletName={selectedWalletName}
+              onSelectWallet={setSelectedWalletName}
+              pendingRemoteProverApproval={pendingRemoteProverApproval}
+              approveRemoteProver={approveRemoteProver}
+              declineRemoteProver={declineRemoteProver}
             />
           </section>
         )}

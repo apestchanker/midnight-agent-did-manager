@@ -58,9 +58,10 @@ export async function detectWallets(): Promise<InitialAPI[]> {
     }, 500);
   });
 }
-export async function connectWallet(): Promise<{
+export async function connectWallet(preferredWalletName?: string): Promise<{
   api: ConnectedAPI;
   config: Awaited<ReturnType<ConnectedAPI["getConfiguration"]>>;
+  walletName: string;
 }> {
   const wallets = await detectWallets();
   console.log(
@@ -69,9 +70,14 @@ export async function connectWallet(): Promise<{
   );
   if (wallets.length === 0)
     throw new Error(
-      "No Midnight wallet detected. Install 1AM from https://1am.xyz and refresh.",
+      "No Midnight wallet detected. Install 1AM or Lace and refresh.",
     );
-  const selected = wallets.find((w) => w.name === "1AM") || wallets[0];
+  const selected =
+    (preferredWalletName
+      ? wallets.find((w) => w.name === preferredWalletName)
+      : undefined) ||
+    wallets.find((w) => w.name === "1AM") ||
+    wallets[0];
   console.log("[Wallet] Selected wallet:", selected.name);
 
   // Try configured network first, then fallback to others
@@ -96,7 +102,7 @@ export async function connectWallet(): Promise<{
       ]);
       const config = await api.getConfiguration();
       console.log("[Wallet] Connected on " + config.networkId, config);
-      return { api, config };
+      return { api, config, walletName: selected.name };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.log("[Wallet] Network " + net + " failed:", msg);
@@ -107,7 +113,7 @@ export async function connectWallet(): Promise<{
         try {
           const api = await selected.connect(walletNet as never);
           const config = await api.getConfiguration();
-          return { api, config };
+          return { api, config, walletName: selected.name };
         } catch (e) {
           console.log("[Wallet] Failed to connect to wallet network:", e);
         }
@@ -117,6 +123,6 @@ export async function connectWallet(): Promise<{
   throw new Error(
     "Could not connect to wallet. Tried networks: " +
       networks.join(", ") +
-      ". Make sure 1AM is unlocked and set to one of these networks.",
+      `. Make sure ${selected.name} is unlocked and set to one of these networks.`,
   );
 }

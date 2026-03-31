@@ -3,7 +3,9 @@ import {
   deployContract,
   findDeployedContract,
 } from "@midnight-ntwrk/midnight-js-contracts";
+import type { ConnectedAPI } from "@midnight-ntwrk/dapp-connector-api";
 import type { AppProviders } from "../../lib/providers";
+import { requestWalletPermissionsIfSupported } from "../../lib/wallet-permissions";
 import { fromHex, toHex } from "../../lib/wallet-bridge";
 import {
   createWalletDidRequest,
@@ -456,14 +458,7 @@ async function loadManagedContractModule(): Promise<ManagedContractModule> {
 }
 
 async function primeWalletSession(providers: AppProviders): Promise<void> {
-  await providers.connectedAPI.hintUsage([
-    "getConfiguration",
-    "getShieldedAddresses",
-    "getUnshieldedAddress",
-    "getProvingProvider",
-    "balanceUnsealedTransaction",
-    "submitTransaction",
-  ]);
+  await requestWalletPermissionsIfSupported(providers.connectedAPI);
   await providers.connectedAPI.getConfiguration();
   await providers.connectedAPI.getShieldedAddresses();
   await providers.connectedAPI.getUnshieldedAddress();
