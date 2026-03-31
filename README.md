@@ -74,6 +74,26 @@ The author and contributors disclaim responsibility and liability, to the maximu
                                          └──────────────────────────────┘
 ```
 
+## Reference Architecture
+
+The following reference diagram summarizes the intended relationship between external systems, the AI agent, its DID/credential layer, secure secret custody, and Midnight as the privacy-preserving execution layer.
+
+![Agents DID reference architecture](./docs/images/agents-did-architecture.png)
+
+## Application Screenshots
+
+Agent DID request and issued DID view:
+
+![Agent DID screen](./docs/images/agent-did-screen.png)
+
+Verifiable Credentials and disclosure bundle view:
+
+![Verifiable Credentials screen](./docs/images/credentials-screen.png)
+
+## Further Reading
+
+- Article: [Selective Disclosure & Self-Managing DIDs for AI Agents](https://dev.to/midnight-aliit/selective-disclosure-self-managing-dids-for-ai-agents-3kcl)
+
 ### On-chain
 
 The Compact contract is the registry of record. It stores:
