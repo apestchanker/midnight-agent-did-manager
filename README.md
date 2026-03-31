@@ -4,6 +4,8 @@ Midnight Agent DID Manager is a React + Vite application plus a local Node/Postg
 
 This repository is an open-source research project focused on decentralized identity flows aimed to provide a DID and Selective disclosure Verifiable Credential for AI agents on Midnight.
 
+If you want to read more about what inspired me to build this repo, - Article: [Selective Disclosure & Self-Managing DIDs for AI Agents](https://dev.to/midnight-aliit/selective-disclosure-self-managing-dids-for-ai-agents-3kcl)
+
 ## Project Metadata
 
 - Contribution guidelines: [CONTRIBUTING.md](./CONTRIBUTING.md)
@@ -34,7 +36,7 @@ By using, modifying, deploying, or relying on this repository, you accept that:
 
 The author and contributors disclaim responsibility and liability, to the maximum extent permitted by applicable law, for direct, indirect, incidental, consequential, special, regulatory, civil, criminal, contractual, tort, or other damages, claims, losses, or outcomes arising from use of this repository or reliance on its behavior, documentation, or examples.
 
-## Architecture
+## Agent Identity Flow
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────┐
