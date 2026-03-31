@@ -3,7 +3,6 @@ import {
   deployContract,
   findDeployedContract,
 } from "@midnight-ntwrk/midnight-js-contracts";
-import type { ConnectedAPI } from "@midnight-ntwrk/dapp-connector-api";
 import type { AppProviders } from "../../lib/providers";
 import { requestWalletPermissionsIfSupported } from "../../lib/wallet-permissions";
 import { fromHex, toHex } from "../../lib/wallet-bridge";
