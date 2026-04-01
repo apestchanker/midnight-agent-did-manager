@@ -499,7 +499,7 @@ export class Contract {
       throw new __compactRuntime.CompactError(`Contract state constructor: expected 2 arguments (as invoked from Typescript), received ${args_0.length}`);
     }
     const constructorContext_0 = args_0[0];
-    const owner_secret_0 = args_0[1];
+    const owner_public_key_0 = args_0[1];
     if (typeof(constructorContext_0) !== 'object') {
       throw new __compactRuntime.CompactError(`Contract state constructor: expected 'constructorContext' in argument 1 (as invoked from Typescript) to be an object`);
     }
@@ -512,12 +512,12 @@ export class Contract {
     if (typeof(constructorContext_0.initialZswapLocalState) !== 'object') {
       throw new __compactRuntime.CompactError(`Contract state constructor: expected 'initialZswapLocalState' in argument 1 (as invoked from Typescript) to be an object`);
     }
-    if (!(owner_secret_0.buffer instanceof ArrayBuffer && owner_secret_0.BYTES_PER_ELEMENT === 1 && owner_secret_0.length === 32)) {
+    if (!(owner_public_key_0.buffer instanceof ArrayBuffer && owner_public_key_0.BYTES_PER_ELEMENT === 1 && owner_public_key_0.length === 32)) {
       __compactRuntime.typeError('Contract state constructor',
                                  'argument 1 (argument 2 as invoked from Typescript)',
                                  'did_registry.compact line 43 char 1',
                                  'Bytes<32>',
-                                 owner_secret_0)
+                                 owner_public_key_0)
     }
     const state_0 = new __compactRuntime.ContractState();
     let stateValue_0 = __compactRuntime.StateValue.newArray();
@@ -837,7 +837,7 @@ export class Contract {
                                                                                               alignment: _descriptor_4.alignment() }).encode() } },
                                        { ins: { cached: false, n: 1 } },
                                        { ins: { cached: true, n: 1 } }]);
-    const public_owner_key_0 = this._issuerPublicKey_0(owner_secret_0);
+    const public_owner_key_0 = owner_public_key_0;
     __compactRuntime.assert(!this._equal_0(public_owner_key_0,
                                            new Uint8Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])),
                             'Owner key required');

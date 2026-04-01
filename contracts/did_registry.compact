@@ -40,8 +40,8 @@ circuit issuerPublicKey(secret: Bytes<32>): Bytes<32> {
            [pad(32, "midnight:did:issuer:v1"), secret]);
 }
 
-constructor(owner_secret: Bytes<32>) {
-  const public_owner_key = disclose(issuerPublicKey(owner_secret));
+constructor(owner_public_key: Bytes<32>) {
+  const public_owner_key = disclose(owner_public_key);
   assert(public_owner_key != pad(32, ""), "Owner key required");
 
   initialized = true;

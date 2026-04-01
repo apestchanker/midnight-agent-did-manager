@@ -1,5 +1,10 @@
 import * as CompactCompiledContract from "@midnight-ntwrk/compact-js/effect/CompiledContract";
 import {
+  Bytes32Descriptor,
+  CompactTypeVector,
+  persistentHash,
+} from "@midnight-ntwrk/compact-runtime";
+import {
   deployContract,
   findDeployedContract,
 } from "@midnight-ntwrk/midnight-js-contracts";
@@ -30,6 +35,7 @@ const OWNER_SECRET_KEY = "did-registry:owner-secret:v1";
 const MANAGED_CONTRACT_BASE_PATH =
   (import.meta.env.VITE_MANAGED_CONTRACT_PATH || "").trim() ||
   "/contracts/managed/did-registry";
+const ISSUER_PUBLIC_KEY_PREFIX = new TextEncoder().encode("midnight:did:issuer:v1");
 
 type SavedCompileArtifact = {
   managedPath: string;
@@ -272,6 +278,19 @@ function requireOwnerSecretBytes(ownerSecretHex?: string): Uint8Array {
     );
   }
   return fromHex(normalized);
+}
+
+function padBytes(value: Uint8Array, length: number): Uint8Array {
+  const output = new Uint8Array(length);
+  output.set(value.slice(0, length));
+  return output;
+}
+
+function deriveIssuerPublicKey(secret: Uint8Array): Uint8Array {
+  return persistentHash(
+    new CompactTypeVector(2, Bytes32Descriptor),
+    [padBytes(ISSUER_PUBLIC_KEY_PREFIX, 32), secret],
+  );
 }
 
 function createWitnesses(ownerSecretHex?: string) {
@@ -560,11 +579,12 @@ export async function deployDidRegistry(
     ownerSecretHex || getSavedOwnerSecretHex(),
   );
   const ownerSecret = requireOwnerSecretBytes(normalizedSecret);
+  const ownerPublicKey = deriveIssuerPublicKey(ownerSecret);
   saveOwnerSecretHex(normalizedSecret);
   const { compiledContract } = await getContractRuntime();
   const deployed = await deployContract(providers as never, {
     compiledContract,
-    args: [ownerSecret],
+    args: [ownerPublicKey],
   });
 
   const contractAddress = extractContractAddress(deployed);
@@ -587,7 +607,7 @@ export async function deployDidRegistry(
     deployedAt: new Date().toISOString(),
     networkId: providers.networkId,
     message:
-      "Contract deployed to Midnight and initialized in the constructor. Owner-only issue, update, and revoke are now protected by a Midnight witness secret stored locally in this browser for the experiment.",
+      "Contract deployed to Midnight. The constructor stored only the derived public authorization key; owner-only issue, update, and revoke continue to use the local Midnight witness secret.",
   };
 
   saveDeployment(result, providers.networkId);

@@ -266,14 +266,14 @@ The registry contract no longer authorizes `issue/update/revoke` by comparing a 
 What it is:
 
 - a 32-byte secret represented as 64 hex characters
-- used for deploy and later owner-only `issue/update/revoke`
+- used locally to derive the deploy-time public authorization key and later authorize `issue/update/revoke`
 - not derived from the connected wallet
 - not stored on-chain
 - not stored in Postgres
 
 How it works:
 
-- at deploy time, the contract stores only a public authorization key derived from the secret
+- at deploy time, the DApp derives a public authorization key from the secret and sends only that public key to the constructor
 - at `issue/update/revoke` time, the DApp supplies the secret via `witness issuerSecret()`
 - the contract verifies that the derived public key matches the owner key stored on-chain
 
