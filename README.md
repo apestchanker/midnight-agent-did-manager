@@ -170,7 +170,7 @@ The current branch already includes the application-side support required to use
 2. Start the app normally.
 3. Open `Wallet Access`.
 4. Click `Settings` next to the wallet connect area.
-5. Change `Private Storage` to `Patched Midnight SDK`.
+5. In `Storage Mode`, select `Patched Midnight SDK`.
 6. Connect the wallet.
 
 Important:
@@ -270,8 +270,8 @@ See:
 - Node.js 20+
 - PostgreSQL 16+ or compatible
 - Midnight Compact compiler installed as `compact`
-- local Midnight proof server
 - a funded 1AM wallet on Midnight Preprod
+- wallet prover access through 1AM, or a local Midnight proof server if you explicitly choose that setup
 
 ## Official Resources
 
@@ -371,8 +371,8 @@ Recommended startup order for a fresh local setup:
 4. Set your `.env`.
 5. Compile the Compact contract artifacts.
 6. Start the local DID API.
-7. Start the local proof server.
-8. Start the frontend.
+7. Start the frontend.
+8. Start a local proof server only if you are not using the wallet prover.
 
 Compile the Compact contract and refresh managed assets:
 
@@ -442,6 +442,8 @@ Start the proof server:
 ```bash
 npm run start-proof-server
 ```
+
+This is optional when the connected wallet already provides prover access.
 
 ## Database
 
