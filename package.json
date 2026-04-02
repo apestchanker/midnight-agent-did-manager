@@ -1,6 +1,6 @@
 {
   "name": "midnight-agent-did-manager",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -36,8 +36,11 @@
     "@midnight-ntwrk/wallet-sdk-unshielded-wallet": "^2.1.0",
     "@types/node": "^22.0.0",
     "@types/ws": "^8.18.1",
+    "@noble/ciphers": "^2.0.0",
+    "@noble/hashes": "^2.0.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.0.0",
+    "events": "^3.3.0",
     "jose": "^6.2.2",
     "lucide-react": "^0.263.1",
     "pg": "^8.20.0",

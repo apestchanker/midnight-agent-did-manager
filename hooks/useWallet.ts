@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import {
   connectWallet,
   detectWallets,
@@ -6,7 +6,11 @@ import {
   type InitialAPI,
 } from "../lib/wallet-bridge";
 import { requestWalletPermissionsIfSupported } from "../lib/wallet-permissions";
-import { buildProviders, type AppProviders } from "../lib/providers";
+import {
+  buildProviders,
+  type AppProviders,
+  type StorageMode,
+} from "../lib/providers";
 
 type WalletStatus =
   | "detecting"
@@ -43,7 +47,7 @@ function isLocalProverServerUrl(url?: string): boolean {
   }
 }
 
-export function useWallet() {
+export function useWallet(storageMode: StorageMode = "app_local") {
   const [status, setStatus] = useState<WalletStatus>("detecting");
   const [api, setApi] = useState<ConnectedAPI | null>(null);
   const [providers, setProviders] = useState<AppProviders | null>(null);
@@ -57,11 +61,6 @@ export function useWallet() {
 
   useEffect(() => {
     detectWallets().then((wallets) => {
-      console.log(
-        "[useWallet] Wallet detection complete, found:",
-        wallets.length,
-        "wallet(s)",
-      );
       const normalizedWallets = wallets.map(toWalletOption);
       setAvailableWallets(normalizedWallets);
       setSelectedWalletName((current) => {
@@ -76,18 +75,27 @@ export function useWallet() {
     });
   }, []);
 
+  const reconnectApi = useCallback(
+    async (walletNameOverride?: string): Promise<ConnectedAPI> => {
+      const { api: nextApi, walletName } = await connectWallet(
+        walletNameOverride || connectedWalletName || selectedWalletName,
+      );
+      setApi(nextApi);
+      setConnectedWalletName(walletName);
+      return nextApi;
+    },
+    [connectedWalletName, selectedWalletName],
+  );
+
   const finalizeConnection = async (
     connectedApi: ConnectedAPI,
     walletName: string,
   ) => {
     await requestWalletPermissionsIfSupported(connectedApi);
 
-    const provs = await buildProviders(connectedApi);
-    console.log("[useWallet] Providers built:", {
-      networkId: provs.networkId,
-      shieldedAddress: provs.shieldedAddress?.slice(0, 16),
-      unshieldedAddress: provs.unshieldedAddress?.slice(0, 16),
-      proverServerUrl: provs.proverServerUrl,
+    const provs = await buildProviders(connectedApi, {
+      reconnect: async () => reconnectApi(walletName),
+      storageMode,
     });
     setApi(connectedApi);
     setProviders(provs);
@@ -95,10 +103,6 @@ export function useWallet() {
     setConnectedWalletName(walletName);
     setPendingRemoteProverApproval(null);
     setStatus("connected");
-    console.log(
-      "[useWallet] ✅ Connected successfully on network:",
-      provs.networkId,
-    );
   };
 
   const connect = async () => {
@@ -106,21 +110,13 @@ export function useWallet() {
     setError("");
     setPendingRemoteProverApproval(null);
     try {
-      console.log("[useWallet] Connecting to wallet...");
       const {
         api: connectedApi,
         config,
         walletName,
       } = await connectWallet(selectedWalletName);
-      console.log("[useWallet] Connected API:", connectedApi);
-      console.log("[useWallet] Config:", config);
-      console.log("[useWallet] Connected wallet:", walletName);
 
       if (!isLocalProverServerUrl(config.proverServerUri)) {
-        console.warn(
-          "[useWallet] Remote proving endpoint requires explicit approval:",
-          config.proverServerUri,
-        );
         setPendingRemoteProverApproval({
           api: connectedApi,
           config,

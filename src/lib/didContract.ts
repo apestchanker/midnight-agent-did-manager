@@ -28,14 +28,69 @@ import type {
   UpdateDidInput,
 } from "../types/did";
 
-const DEPLOY_KEY = "did-registry:last-deploy:v5";
+const DEPLOY_KEY = "did-registry:last-deploy:v6";
 const COMPILE_KEY = "did-registry:last-compile:v4";
 const DID_CACHE_PREFIX = "did-registry:request-cache:v1";
-const OWNER_SECRET_KEY = "did-registry:owner-secret:v1";
+const OWNER_PRIVATE_STATE_ID = "issuer-owner-state:v1";
+const APP_VERSION = (import.meta.env.VITE_APP_VERSION || "0.2.1").trim() || "0.2.1";
+const CONTRACT_VERSION = "0.2.1";
 const MANAGED_CONTRACT_BASE_PATH =
   (import.meta.env.VITE_MANAGED_CONTRACT_PATH || "").trim() ||
   "/contracts/managed/did-registry";
 const ISSUER_PUBLIC_KEY_PREFIX = new TextEncoder().encode("midnight:did:issuer:v1");
+const OWNER_VAULT_KIND = "midnight-did-owner-vault-backup";
+const OWNER_VAULT_VERSION = "v1";
+const OWNER_VAULT_PBKDF2_ITERATIONS = 600_000;
+const OWNER_VAULT_SALT_BYTES = 16;
+const OWNER_VAULT_IV_BYTES = 12;
+
+type DidRegistryPrivateState = {
+  issuerSecret: Uint8Array;
+  createdAt: string;
+  vaultVersion: string;
+  contractVersion: string;
+  appVersion: string;
+  networkId: string;
+  custodianWalletAddress: string;
+  issuerPublicKeyHex: string;
+};
+
+type SerializedOwnerPrivateState = Omit<DidRegistryPrivateState, "issuerSecret"> & {
+  issuerSecretHex: string;
+};
+
+type OwnerVaultBackupPayload = {
+  kind: typeof OWNER_VAULT_KIND;
+  version: typeof OWNER_VAULT_VERSION;
+  contractAddress: string;
+  networkId: string;
+  exportedAt: string;
+  privateState: SerializedOwnerPrivateState;
+};
+
+type OwnerVaultBackupEnvelope = {
+  kind: typeof OWNER_VAULT_KIND;
+  version: typeof OWNER_VAULT_VERSION;
+  contractAddress: string;
+  networkId: string;
+  exportedAt: string;
+  algorithm: "AES-GCM";
+  kdf: "PBKDF2-SHA-256";
+  iterations: number;
+  saltBase64: string;
+  ivBase64: string;
+  ciphertextBase64: string;
+};
+
+export type OwnerVaultStatus = {
+  hasLocalVault: boolean;
+  contractAddress: string;
+  createdAt?: string;
+  custodianWalletAddress?: string;
+  localIssuerPublicKeyHex?: string;
+  onChainIssuerPublicKeyHex?: string;
+  matchesOnChain: boolean | null;
+};
 
 type SavedCompileArtifact = {
   managedPath: string;
@@ -239,47 +294,6 @@ async function createAgentKey(agentAddress: string): Promise<Uint8Array> {
   return sha256Bytes(agentAddress.trim().toLowerCase());
 }
 
-function normalizeSecretHex(secretHex: string): string {
-  return secretHex.trim().replace(/^0x/i, "").toLowerCase();
-}
-
-function isValidSecretHex(secretHex: string): boolean {
-  return /^[0-9a-f]{64}$/.test(normalizeSecretHex(secretHex));
-}
-
-function getConfiguredOwnerSecretHex(): string {
-  const value = import.meta.env.VITE_REGISTRY_OWNER_SECRET_HEX;
-  return typeof value === "string" ? normalizeSecretHex(value) : "";
-}
-
-export function getSavedOwnerSecretHex(): string {
-  const configured = getConfiguredOwnerSecretHex();
-  if (configured) return configured;
-  if (typeof window === "undefined") return "";
-  const raw = window.localStorage.getItem(OWNER_SECRET_KEY) || "";
-  return normalizeSecretHex(raw);
-}
-
-export function saveOwnerSecretHex(secretHex: string): void {
-  if (typeof window === "undefined") return;
-  const normalized = normalizeSecretHex(secretHex);
-  if (!normalized) {
-    window.localStorage.removeItem(OWNER_SECRET_KEY);
-    return;
-  }
-  window.localStorage.setItem(OWNER_SECRET_KEY, normalized);
-}
-
-function requireOwnerSecretBytes(ownerSecretHex?: string): Uint8Array {
-  const normalized = normalizeSecretHex(ownerSecretHex || getSavedOwnerSecretHex());
-  if (!isValidSecretHex(normalized)) {
-    throw new Error(
-      "Registry owner authorization secret is not configured. Set a 32-byte hex secret in Deploy DID Registry before issuing, updating, or revoking.",
-    );
-  }
-  return fromHex(normalized);
-}
-
 function padBytes(value: Uint8Array, length: number): Uint8Array {
   const output = new Uint8Array(length);
   output.set(value.slice(0, length));
@@ -293,17 +307,372 @@ function deriveIssuerPublicKey(secret: Uint8Array): Uint8Array {
   );
 }
 
-function createWitnesses(ownerSecretHex?: string) {
-  const ownerSecret = ownerSecretHex ? normalizeSecretHex(ownerSecretHex) : "";
+function randomBytes(length: number): Uint8Array {
+  const output = new Uint8Array(length);
+  window.crypto.getRandomValues(output);
+  return output;
+}
+
+function createOwnerPrivateState(
+  providers: AppProviders,
+  issuerSecret: Uint8Array,
+): DidRegistryPrivateState {
+  const issuerPublicKey = deriveIssuerPublicKey(issuerSecret);
   return {
-    issuerSecret: (context: { currentPrivateState: unknown }) => {
-      const secretBytes = requireOwnerSecretBytes(ownerSecret);
-      return [context.currentPrivateState, secretBytes] as [
-        unknown,
+    issuerSecret,
+    createdAt: new Date().toISOString(),
+    vaultVersion: OWNER_VAULT_VERSION,
+    contractVersion: CONTRACT_VERSION,
+    appVersion: APP_VERSION,
+    networkId: providers.networkId,
+    custodianWalletAddress: providers.unshieldedAddress,
+    issuerPublicKeyHex: toHex(issuerPublicKey),
+  };
+}
+
+function createRandomOwnerPrivateState(
+  providers: AppProviders,
+): DidRegistryPrivateState {
+  return createOwnerPrivateState(providers, randomBytes(32));
+}
+
+function serializeOwnerPrivateState(
+  privateState: DidRegistryPrivateState,
+): SerializedOwnerPrivateState {
+  return {
+    ...privateState,
+    issuerSecretHex: toHex(privateState.issuerSecret),
+  };
+}
+
+function deserializeOwnerPrivateState(
+  value: SerializedOwnerPrivateState,
+): DidRegistryPrivateState {
+  return {
+    ...value,
+    issuerSecret: fromHex(value.issuerSecretHex),
+  };
+}
+
+function requireBackupPassword(password: string): string {
+  const normalized = password.trim();
+  if (normalized.length < 10) {
+    throw new Error("Vault backup password must be at least 10 characters long.");
+  }
+  return normalized;
+}
+
+function toBase64(value: Uint8Array): string {
+  return btoa(String.fromCharCode(...value));
+}
+
+function fromBase64(value: string): Uint8Array {
+  return Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
+}
+
+function toWebCryptoBuffer(value: Uint8Array): ArrayBuffer {
+  return value.buffer.slice(
+    value.byteOffset,
+    value.byteOffset + value.byteLength,
+  ) as ArrayBuffer;
+}
+
+async function deriveVaultWrappingKey(
+  password: string,
+  salt: Uint8Array,
+): Promise<CryptoKey> {
+  const material = await window.crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(password),
+    "PBKDF2",
+    false,
+    ["deriveKey"],
+  );
+
+  return window.crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      hash: "SHA-256",
+      salt: toWebCryptoBuffer(salt),
+      iterations: OWNER_VAULT_PBKDF2_ITERATIONS,
+    },
+    material,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
+}
+
+async function encryptOwnerVaultBackup(
+  payload: OwnerVaultBackupPayload,
+  password: string,
+): Promise<OwnerVaultBackupEnvelope> {
+  const salt = randomBytes(OWNER_VAULT_SALT_BYTES);
+  const iv = randomBytes(OWNER_VAULT_IV_BYTES);
+  const key = await deriveVaultWrappingKey(password, salt);
+  const plaintext = new TextEncoder().encode(JSON.stringify(payload));
+  const ciphertext = new Uint8Array(
+    await window.crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: toWebCryptoBuffer(iv) },
+      key,
+      toWebCryptoBuffer(plaintext),
+    ),
+  );
+
+  return {
+    kind: OWNER_VAULT_KIND,
+    version: OWNER_VAULT_VERSION,
+    contractAddress: payload.contractAddress,
+    networkId: payload.networkId,
+    exportedAt: payload.exportedAt,
+    algorithm: "AES-GCM",
+    kdf: "PBKDF2-SHA-256",
+    iterations: OWNER_VAULT_PBKDF2_ITERATIONS,
+    saltBase64: toBase64(salt),
+    ivBase64: toBase64(iv),
+    ciphertextBase64: toBase64(ciphertext),
+  };
+}
+
+async function decryptOwnerVaultBackup(
+  serializedBackup: string,
+  password: string,
+): Promise<OwnerVaultBackupPayload> {
+  let envelope: OwnerVaultBackupEnvelope;
+  try {
+    envelope = JSON.parse(serializedBackup) as OwnerVaultBackupEnvelope;
+  } catch {
+    throw new Error("Vault backup is not valid JSON.");
+  }
+
+  if (
+    envelope.kind !== OWNER_VAULT_KIND ||
+    envelope.version !== OWNER_VAULT_VERSION
+  ) {
+    throw new Error("Unsupported owner vault backup format.");
+  }
+
+  const key = await deriveVaultWrappingKey(
+    password,
+    fromBase64(envelope.saltBase64),
+  );
+
+  let plaintext: Uint8Array;
+  try {
+    plaintext = new Uint8Array(
+      await window.crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: toWebCryptoBuffer(fromBase64(envelope.ivBase64)) },
+        key,
+        toWebCryptoBuffer(fromBase64(envelope.ciphertextBase64)),
+      ),
+    );
+  } catch {
+    throw new Error("Failed to decrypt vault backup. Check the backup password.");
+  }
+
+  try {
+    return JSON.parse(new TextDecoder().decode(plaintext)) as OwnerVaultBackupPayload;
+  } catch {
+    throw new Error("Vault backup payload is corrupted or incomplete.");
+  }
+}
+
+function isValidPrivateState(value: unknown): value is DidRegistryPrivateState {
+  return !!(
+    value &&
+    typeof value === "object" &&
+    "issuerSecret" in value &&
+    (value as { issuerSecret: unknown }).issuerSecret instanceof Uint8Array &&
+    (value as { issuerSecret: Uint8Array }).issuerSecret.length === 32
+  );
+}
+
+async function getOnChainIssuerPublicKeyHex(
+  providers: AppProviders,
+  contractAddress: string,
+): Promise<string | undefined> {
+  const { module } = await getContractRuntime();
+  const state = await providers.publicDataProvider.queryContractState(
+    contractAddress as never,
+  );
+  if (!state) return undefined;
+  const ledgerState = module.ledger((state as { data: unknown }).data);
+  return toRecordHex(ledgerState.issuer_service);
+}
+
+async function assertOwnerPrivateStateMatchesContract(
+  providers: AppProviders,
+  contractAddress: string,
+  privateState: DidRegistryPrivateState,
+): Promise<void> {
+  const onChainIssuerPublicKeyHex = await getOnChainIssuerPublicKeyHex(
+    providers,
+    contractAddress,
+  );
+  if (!onChainIssuerPublicKeyHex) {
+    throw new Error("Could not read the issuer authorization key from the contract state.");
+  }
+
+  const localIssuerPublicKeyHex = toHex(
+    deriveIssuerPublicKey(privateState.issuerSecret),
+  );
+
+  if (localIssuerPublicKeyHex.toLowerCase() !== onChainIssuerPublicKeyHex.toLowerCase()) {
+    throw new Error(
+      "The local owner vault does not match this contract's on-chain issuer authorization key. Restore the correct backup for this registry.",
+    );
+  }
+}
+
+async function ensureOwnerPrivateState(
+  providers: AppProviders,
+  contractAddress: string,
+): Promise<DidRegistryPrivateState> {
+  providers.privateStateProvider.setContractAddress(contractAddress as never);
+  const existing = await providers.privateStateProvider.get(
+    OWNER_PRIVATE_STATE_ID,
+  );
+  if (isValidPrivateState(existing)) {
+    await assertOwnerPrivateStateMatchesContract(providers, contractAddress, existing);
+    return existing;
+  }
+
+  throw new Error(
+    "Owner vault is missing from Midnight private state for this contract. Restore a vault backup before issuing, updating, or revoking DIDs.",
+  );
+}
+
+function createWitnesses() {
+  return {
+    issuerSecret: (context: { privateState: unknown }) => {
+      if (!isValidPrivateState(context.privateState)) {
+        throw new Error(
+          "Owner witness secret is missing from Midnight private state for this contract.",
+        );
+      }
+      return [context.privateState, context.privateState.issuerSecret] as [
+        DidRegistryPrivateState,
         Uint8Array,
       ];
     },
   };
+}
+
+export async function getOwnerVaultStatus(
+  providers: AppProviders,
+  contractAddress: string,
+): Promise<OwnerVaultStatus> {
+  if (!contractAddress.trim()) {
+    return {
+      hasLocalVault: false,
+      contractAddress,
+      matchesOnChain: null,
+    };
+  }
+
+  providers.privateStateProvider.setContractAddress(contractAddress as never);
+  const existing = await providers.privateStateProvider.get(OWNER_PRIVATE_STATE_ID);
+  const onChainIssuerPublicKeyHex = await getOnChainIssuerPublicKeyHex(
+    providers,
+    contractAddress,
+  );
+
+  if (!isValidPrivateState(existing)) {
+    return {
+      hasLocalVault: false,
+      contractAddress,
+      onChainIssuerPublicKeyHex,
+      matchesOnChain: null,
+    };
+  }
+
+  const localIssuerPublicKeyHex = toHex(
+    deriveIssuerPublicKey(existing.issuerSecret),
+  );
+
+  return {
+    hasLocalVault: true,
+    contractAddress,
+    createdAt:
+      ("createdAt" in existing && typeof existing.createdAt === "string"
+        ? existing.createdAt
+        : undefined) ||
+      ("derivedAt" in (existing as Record<string, unknown>) &&
+      typeof (existing as { derivedAt?: string }).derivedAt === "string"
+        ? (existing as { derivedAt?: string }).derivedAt
+        : undefined),
+    custodianWalletAddress:
+      "custodianWalletAddress" in existing &&
+      typeof existing.custodianWalletAddress === "string"
+        ? existing.custodianWalletAddress
+        : undefined,
+    localIssuerPublicKeyHex,
+    onChainIssuerPublicKeyHex,
+    matchesOnChain: onChainIssuerPublicKeyHex
+      ? localIssuerPublicKeyHex.toLowerCase() === onChainIssuerPublicKeyHex.toLowerCase()
+      : null,
+  };
+}
+
+export async function exportOwnerVaultBackup(
+  providers: AppProviders,
+  contractAddress: string,
+  backupPassword: string,
+): Promise<string> {
+  const privateState = await ensureOwnerPrivateState(providers, contractAddress);
+  const payload: OwnerVaultBackupPayload = {
+    kind: OWNER_VAULT_KIND,
+    version: OWNER_VAULT_VERSION,
+    contractAddress,
+    networkId: providers.networkId,
+    exportedAt: new Date().toISOString(),
+    privateState: serializeOwnerPrivateState(privateState),
+  };
+
+  const encrypted = await encryptOwnerVaultBackup(
+    payload,
+    requireBackupPassword(backupPassword),
+  );
+  return JSON.stringify(encrypted, null, 2);
+}
+
+export async function restoreOwnerVaultBackup(
+  providers: AppProviders,
+  contractAddress: string,
+  serializedBackup: string,
+  backupPassword: string,
+): Promise<OwnerVaultStatus> {
+  const payload = await decryptOwnerVaultBackup(
+    serializedBackup,
+    requireBackupPassword(backupPassword),
+  );
+
+  if (payload.contractAddress.trim() !== contractAddress.trim()) {
+    throw new Error(
+      `This backup belongs to ${payload.contractAddress}, not ${contractAddress}.`,
+    );
+  }
+
+  if (payload.networkId !== providers.networkId) {
+    throw new Error(
+      `This backup targets network ${payload.networkId}, but the connected wallet is on ${providers.networkId}.`,
+    );
+  }
+
+  const privateState = deserializeOwnerPrivateState(payload.privateState);
+  if (!isValidPrivateState(privateState)) {
+    throw new Error("The owner vault backup payload is invalid.");
+  }
+
+  await assertOwnerPrivateStateMatchesContract(
+    providers,
+    contractAddress,
+    privateState,
+  );
+
+  providers.privateStateProvider.setContractAddress(contractAddress as never);
+  await providers.privateStateProvider.set(OWNER_PRIVATE_STATE_ID, privateState);
+  return getOwnerVaultStatus(providers, contractAddress);
 }
 
 async function createRequestCommitment(input: {
@@ -565,7 +934,6 @@ export async function compileDidRegistry(
 
 export async function deployDidRegistry(
   providers: AppProviders,
-  ownerSecretHex?: string,
 ): Promise<DeployResult> {
   const compileData = getSavedCompileArtifact();
   if (!compileData) {
@@ -575,16 +943,14 @@ export async function deployDidRegistry(
   }
 
   await primeWalletSession(providers);
-  const normalizedSecret = normalizeSecretHex(
-    ownerSecretHex || getSavedOwnerSecretHex(),
-  );
-  const ownerSecret = requireOwnerSecretBytes(normalizedSecret);
-  const ownerPublicKey = deriveIssuerPublicKey(ownerSecret);
-  saveOwnerSecretHex(normalizedSecret);
+  const ownerPrivateState = createRandomOwnerPrivateState(providers);
+  const ownerPublicKey = deriveIssuerPublicKey(ownerPrivateState.issuerSecret);
   const { compiledContract } = await getContractRuntime();
   const deployed = await deployContract(providers as never, {
     compiledContract,
     args: [ownerPublicKey],
+    privateStateId: OWNER_PRIVATE_STATE_ID,
+    initialPrivateState: ownerPrivateState,
   });
 
   const contractAddress = extractContractAddress(deployed);
@@ -593,6 +959,9 @@ export async function deployDidRegistry(
       "Deployment succeeded but the contract address could not be derived from the Midnight SDK response.",
     );
   }
+
+  providers.privateStateProvider.setContractAddress(contractAddress as never);
+  await providers.privateStateProvider.set(OWNER_PRIVATE_STATE_ID, ownerPrivateState);
 
   const result: DeployResult = {
     contractAddress,
@@ -607,7 +976,7 @@ export async function deployDidRegistry(
     deployedAt: new Date().toISOString(),
     networkId: providers.networkId,
     message:
-      "Contract deployed to Midnight. The constructor stored only the derived public authorization key; owner-only issue, update, and revoke continue to use the local Midnight witness secret.",
+      "Contract deployed to Midnight. A random owner secret was generated, only the derived public authorization key was stored on-chain, and the owner vault was saved to Midnight private state. Export a backup before relying on this registry.",
   };
 
   saveDeployment(result, providers.networkId);
@@ -630,6 +999,7 @@ export async function requestDid(
   const contract = await findDeployedContract(providers as never, {
     compiledContract,
     contractAddress: input.contractAddress as never,
+    privateStateId: OWNER_PRIVATE_STATE_ID,
   });
 
   const agentKey = await createAgentKey(input.agentAddress);
@@ -724,10 +1094,16 @@ export async function issueDid(
   providers: AppProviders,
   input: IssueDidInput,
 ): Promise<DidRecord> {
+  const ownerPrivateState = await ensureOwnerPrivateState(
+    providers,
+    input.contractAddress,
+  );
   const { compiledContract } = await getContractRuntime();
   const contract = await findDeployedContract(providers as never, {
     compiledContract,
     contractAddress: input.contractAddress as never,
+    privateStateId: OWNER_PRIVATE_STATE_ID,
+    initialPrivateState: ownerPrivateState,
   });
 
   const agentKey = await createAgentKey(input.agentAddress);
@@ -839,10 +1215,16 @@ export async function updateDid(
   providers: AppProviders,
   input: UpdateDidInput,
 ): Promise<DidRecord> {
+  const ownerPrivateState = await ensureOwnerPrivateState(
+    providers,
+    input.contractAddress,
+  );
   const { compiledContract } = await getContractRuntime();
   const contract = await findDeployedContract(providers as never, {
     compiledContract,
     contractAddress: input.contractAddress as never,
+    privateStateId: OWNER_PRIVATE_STATE_ID,
+    initialPrivateState: ownerPrivateState,
   });
 
   const agentKey = await createAgentKey(input.agentAddress);
@@ -940,10 +1322,16 @@ export async function revokeDid(
   providers: AppProviders,
   input: RevokeDidInput,
 ): Promise<DidRecord> {
+  const ownerPrivateState = await ensureOwnerPrivateState(
+    providers,
+    input.contractAddress,
+  );
   const { compiledContract } = await getContractRuntime();
   const contract = await findDeployedContract(providers as never, {
     compiledContract,
     contractAddress: input.contractAddress as never,
+    privateStateId: OWNER_PRIVATE_STATE_ID,
+    initialPrivateState: ownerPrivateState,
   });
 
   const agentKey = await createAgentKey(input.agentAddress);

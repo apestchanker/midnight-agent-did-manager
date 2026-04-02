@@ -976,7 +976,7 @@ export class Contract {
     return result_0;
   }
   _contract_version_0() {
-    return new Uint8Array([48, 46, 49, 46, 48, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    return new Uint8Array([48, 46, 50, 46, 49, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
   }
   _issuerPublicKey_0(secret_0) {
     return this._persistentHash_0([new Uint8Array([109, 105, 100, 110, 105, 103, 104, 116, 58, 100, 105, 100, 58, 105, 115, 115, 117, 101, 114, 58, 118, 49, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),

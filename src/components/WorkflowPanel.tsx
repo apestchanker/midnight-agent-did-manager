@@ -270,18 +270,20 @@ export function WorkflowPanel({
       </CardHeader>
       <CardContent className="space-y-6">
         <div className="flex flex-wrap gap-2">
-          {visibleSections.map((sectionId) =>
-            navButton(
-              sectionId,
-              {
-                overview: "Overview",
-                mcp: "MCP Keys",
-                requests: "Requests",
-                human: "Human Approval",
-                admin: "Admin Review",
-              }[sectionId],
-            ),
-          )}
+          {visibleSections.map((sectionId) => (
+            <div key={sectionId}>
+              {navButton(
+                sectionId,
+                {
+                  overview: "Overview",
+                  mcp: "MCP Keys",
+                  requests: "Requests",
+                  human: "Human Approval",
+                  admin: "Admin Review",
+                }[sectionId],
+              )}
+            </div>
+          ))}
         </div>
 
         <div className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-300">

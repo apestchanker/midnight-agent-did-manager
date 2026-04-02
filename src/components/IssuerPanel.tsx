@@ -184,6 +184,12 @@ export function IssuerPanel({
           />
         </div>
 
+        <div className="rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-400">
+          Owner-only actions use the local owner vault stored in Midnight private
+          state. If the vault is missing, restore it from an encrypted backup in
+          the Owner Vault section before issuing, updating, or revoking.
+        </div>
+
         <div>
           <Label htmlFor="didDocument" className="text-zinc-300">
             DID Document Payload

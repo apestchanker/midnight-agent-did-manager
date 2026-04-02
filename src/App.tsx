@@ -4,10 +4,12 @@ import { Label } from "./components/ui/label";
 import { Button } from "./components/ui/button";
 import { WalletPanel } from "../components/WalletPanel";
 import { useWallet } from "../hooks/useWallet";
+import type { StorageMode } from "../lib/providers";
 import { DeployPanel } from "./components/DeployPanel";
 import { RequestForm } from "./components/RequestForm";
 import { DidDisplay } from "./components/DidDisplay";
 import { IssuerPanel } from "./components/IssuerPanel";
+import { OwnerVaultPanel } from "./components/OwnerVaultPanel";
 import { WorkflowPanel } from "./components/WorkflowPanel";
 import { VcPanel } from "./components/VcPanel";
 import type { DidRecord, DeployResult, RegistryAccess, RegistrySummary } from "./types/did";
@@ -66,7 +68,7 @@ export default function App() {
   }
   const rawEnv = import.meta.env as Record<string, string | undefined>;
   const appTitle = (rawEnv.VITE_APP_TITLE || "Midnight Agent DID Manager").trim();
-  const appVersion = (rawEnv.VITE_APP_VERSION || "0.1.0").trim();
+  const appVersion = (rawEnv.VITE_APP_VERSION || "0.2.1").trim();
   const versionedAppTitle = `${appTitle} v${appVersion}`;
   const configuredAdminShieldedAddress = (
     rawEnv.VITE_ADMIN_WALLET_SHIELDED_ADDR ||
@@ -77,6 +79,12 @@ export default function App() {
     .toLowerCase();
   const LAST_CONTRACT_KEY = "did-registry:last-contract-address:v1";
   const LAST_AGENT_KEY = "did-registry:last-agent-address:v1";
+  const STORAGE_MODE_KEY = "did-registry:storage-mode:v1";
+  const [storageMode, setStorageMode] = useState<StorageMode>(() => {
+    if (typeof window === "undefined") return "app_local";
+    const saved = window.localStorage.getItem(STORAGE_MODE_KEY);
+    return saved === "patched_sdk" ? "patched_sdk" : "app_local";
+  });
   const {
     status,
     address,
@@ -90,11 +98,16 @@ export default function App() {
     pendingRemoteProverApproval,
     approveRemoteProver,
     declineRemoteProver,
-  } = useWallet();
+  } = useWallet(storageMode);
 
   useEffect(() => {
     document.title = versionedAppTitle;
   }, [versionedAppTitle]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(STORAGE_MODE_KEY, storageMode);
+  }, [storageMode]);
 
   const [contractAddress, setContractAddress] = useState("");
   const [selectedAgentAddress, setSelectedAgentAddress] = useState("");
@@ -1061,6 +1074,8 @@ export default function App() {
               pendingRemoteProverApproval={pendingRemoteProverApproval}
               approveRemoteProver={approveRemoteProver}
               declineRemoteProver={declineRemoteProver}
+              storageMode={storageMode}
+              onSelectStorageMode={setStorageMode}
             />
           </section>
         )}
@@ -1425,6 +1440,23 @@ export default function App() {
                     onIssueOnChain={handleIssueDid}
                   />
                 )}
+              </section>
+            )}
+
+            {providers && viewMode === "admin" && (
+              <section className="scroll-mt-24 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-lg font-semibold text-white">Owner Vault</h2>
+                    <p className="text-sm text-zinc-500">
+                      Export and restore the local admin secret used by issuer-only operations.
+                    </p>
+                  </div>
+                </div>
+                <OwnerVaultPanel
+                  providers={providers}
+                  contractAddress={contractAddress}
+                />
               </section>
             )}
 

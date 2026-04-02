@@ -2,7 +2,7 @@ pragma language_version >= 0.20;
 
 import CompactStandardLibrary;
 
-// Contract version: 0.1.0
+// Contract version: 0.2.1
 
 // DID lifecycle status codes:
 // 0 = none
@@ -32,7 +32,7 @@ export ledger registry_nonce: Counter;
 witness issuerSecret(): Bytes<32>;
 
 export circuit contract_version(): Bytes<16> {
-  return pad(16, "0.1.0");
+  return pad(16, "0.2.1");
 }
 
 circuit issuerPublicKey(secret: Bytes<32>): Bytes<32> {

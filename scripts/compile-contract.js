@@ -24,6 +24,7 @@ const generatedRuntimeDtsPath = resolve(
 );
 const compiledMetaDir = resolve(__dirname, "../contracts/compiled");
 const compiledMetaPath = resolve(compiledMetaDir, "did_registry.compiled.json");
+const CONTRACT_METADATA_VERSION = "0.2.0";
 const CIRCUITS = [
   "contract_version",
   "request_did",
@@ -98,7 +99,7 @@ function writeMetadata() {
     compiledMetaPath,
     JSON.stringify(
       {
-        version: "0.1.0",
+        version: CONTRACT_METADATA_VERSION,
         name: "did_registry",
         source: sourceCode,
         compiledAt: new Date().toISOString(),

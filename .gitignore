@@ -18,6 +18,11 @@ data/
 
 # Local-only working files
 local/
+vendor/
+artifacts/sdk-package-src/
+artifacts/sdk-package-src/**
+!artifacts/sdk/
+!artifacts/sdk/**
 
 # Editor directories and files
 .vscode/*

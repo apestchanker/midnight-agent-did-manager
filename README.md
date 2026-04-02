@@ -108,7 +108,7 @@ The Compact contract is the registry of record. It stores:
 
 For owner-only authorization, the contract follows Midnight's documented `witness` pattern:
 
-- a local owner secret is kept off-chain
+- a random owner secret is kept off-chain in Midnight private state
 - a public authorization key derived from that secret is stored on-chain
 - `issue/update/revoke` require a Compact `witness` proving knowledge of the secret
 
@@ -139,7 +139,73 @@ That is a convenience choice for research and prototyping, not a recommended pro
 
 In a production deployment, off-chain identity payloads, credentials, and other sensitive holder material should be moved to a proper vault or secure custody system so that only the agent, the human owner/operator, or another explicitly authorized principal can access them.
 
-The same caution applies to the registry owner authorization secret: for this research repository it may be stored in `.env` or browser `localStorage`, but in production it should live in a proper secure vault or custody system.
+In this repository, the owner witness secret is cached in Midnight private state and can be exported as an encrypted backup from the UI. In production, recovery and custody should move to a proper secure vault or custody system.
+
+## Patched SDK Tarball
+
+This repository includes a locally packaged interim tarball for the patched Midnight private-state provider:
+
+- [artifacts/sdk/midnight-ntwrk-midnight-js-level-private-state-provider-4.0.2-patched.1.tgz](./artifacts/sdk/midnight-ntwrk-midnight-js-level-private-state-provider-4.0.2-patched.1.tgz)
+
+This tarball corresponds to the browser-compatibility patch submitted upstream in the Midnight JS PR and is intended as a temporary local-install option while that PR is pending review.
+
+### Local Install
+
+To install the patched package into this app locally:
+
+```bash
+npm install ./artifacts/sdk/midnight-ntwrk-midnight-js-level-private-state-provider-4.0.2-patched.1.tgz
+```
+
+The current branch already includes the application-side support required to use that patched provider:
+
+- [lib/providers.ts](./lib/providers.ts) exposes a storage mode switch between the safe app-local vault and the patched SDK-backed provider
+- [components/WalletPanel.tsx](./components/WalletPanel.tsx) exposes that switch in the wallet settings UI
+- [vite.config.ts](./vite.config.ts) includes the browser `events` resolution required by the `level` / `abstract-level` stack
+- [package.json](./package.json) includes the `events` dependency used by that browser resolution step
+
+### How To Use It In The UI
+
+1. Install the tarball with the command above.
+2. Start the app normally.
+3. Open `Wallet Access`.
+4. Click `Settings` next to the wallet connect area.
+5. Change `Private Storage` to `Patched Midnight SDK`.
+6. Connect the wallet.
+
+Important:
+
+- storage mode is locked while connected
+- each storage mode uses a different backend namespace
+- switching modes can make an existing vault look missing until you switch back or restore the corresponding backup
+
+### If You Want To Use It In Another Branch Or Repo
+
+At minimum, you need:
+
+1. The tarball installed as the private-state provider dependency.
+2. A browser `events` polyfill/resolution step in Vite.
+3. A UI or configuration flag that lets you deliberately select the patched SDK-backed private-state provider instead of your default local storage mode.
+
+Example Vite browser resolution:
+
+```ts
+import { defineConfig } from "vite";
+import { fileURLToPath, URL } from "node:url";
+
+export default defineConfig({
+  resolve: {
+    alias: {
+      events: fileURLToPath(
+        new URL("./node_modules/events/events.js", import.meta.url),
+      ),
+    },
+  },
+  optimizeDeps: {
+    include: ["events"],
+  },
+});
+```
 
 ## Product Views
 
@@ -216,7 +282,7 @@ See:
 
 ## Tested Versions
 
-- Application version: `0.1.0`
+- Application version: `0.2.1`
 - Midnight JS SDK family used by this repo: `4.0.2`
 - Midnight DApp connector API: `4.0.1`
 - Midnight ledger / proof stack used by this repo: `8.0.3`
@@ -256,45 +322,36 @@ VITE_DID_API_BASE_URL=http://localhost:8787
 DID_API_PORT=8787
 DATABASE_URL=postgresql://postgres:YOUR_DB_PASSWORD_HERE@127.0.0.1:5432/agent_registry_db
 VITE_ADMIN_WALLET_SHIELDED_ADDR=mn_shield-addr_XXXXXXXX
-VITE_REGISTRY_OWNER_SECRET_HEX=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
-## Owner Authorization Secret
+## Owner Authorization Vault
 
 The registry contract no longer authorizes `issue/update/revoke` by comparing a public issuer argument. It now uses Midnight's documented Compact `witness` pattern instead.
 
 What it is:
 
-- a 32-byte secret represented as 64 hex characters
+- a random 32-byte secret generated at deploy time
 - used locally to derive the deploy-time public authorization key and later authorize `issue/update/revoke`
-- not derived from the connected wallet
 - not stored on-chain
 - not stored in Postgres
 
 How it works:
 
-- at deploy time, the DApp derives a public authorization key from the secret and sends only that public key to the constructor
+- at deploy time, the DApp generates a random 32-byte witness secret and sends only the derived public authorization key to the constructor
+- the witness secret is cached in Midnight private state for that contract instance
 - at `issue/update/revoke` time, the DApp supplies the secret via `witness issuerSecret()`
 - the contract verifies that the derived public key matches the owner key stored on-chain
 
-How to provide it:
+How to recover it:
 
-1. Recommended for repeatable local testing:
-   set `VITE_REGISTRY_OWNER_SECRET_HEX` in `.env`
-2. Alternative test-only flow:
-   leave that env var unset, open `Deploy DID Registry` in the UI, and either:
-   - paste a 64-hex secret
-   - or click `Generate Secret`
-
-If you do not put it in `.env`:
-
-- the app stores it in browser `localStorage`
-- that is acceptable only for experimentation
-- if you clear that browser storage and did not back up the secret, you will lose the ability to `issue/update/revoke` that registry
+1. Export an encrypted owner vault backup after deployment.
+2. If the local private state is lost, reconnect the admin wallet.
+3. Open the `Owner Vault` panel and restore the encrypted backup for the target registry.
+4. Use a backup password with at least 10 characters.
 
 Test-only warning:
 
-- using browser `localStorage` for this secret is for development and experiments only
+- browser-backed private state is for development and experiments only
 - do not rely on that for production custody
 - in production, replace it with a proper vault/HSM/custody mechanism
 
@@ -311,7 +368,7 @@ Recommended startup order for a fresh local setup:
 1. Install and connect the 1AM wallet.
 2. Install the Midnight toolchain following the official Midnight docs.
 3. Start PostgreSQL, either locally with Docker or through an external host.
-4. Set your `.env`, including `VITE_REGISTRY_OWNER_SECRET_HEX` if you want a repeatable owner secret.
+4. Set your `.env`.
 5. Compile the Compact contract artifacts.
 6. Start the local DID API.
 7. Start the local proof server.
@@ -335,20 +392,19 @@ You need the official Midnight Compact compiler installed as `compact` or `compa
 
 Deploying a registry with the current contract model:
 
-1. Ensure the owner authorization secret is available:
-   - either set `VITE_REGISTRY_OWNER_SECRET_HEX` in `.env`
-   - or prepare to generate / paste it in the UI deploy panel
-2. Start the proof server and frontend.
+1. Connect the admin wallet.
+2. Start the frontend and API.
 3. Open the app as Admin.
 4. Go to `Deploy DID Registry`.
 5. Deploy the contract.
+6. Open `Owner Vault` and export an encrypted backup immediately.
 
 Important:
 
 - the contract is initialized in its constructor
 - there is no separate `initialize` step anymore
-- `issue/update/revoke` are authorized by the owner witness secret, not by the connected wallet alone
-- if you generate the secret in the UI and keep it only in browser `localStorage`, treat that as test-only custody
+- `issue/update/revoke` are authorized by the owner witness secret stored in Midnight private state
+- if browser-backed private state is lost, restore the encrypted owner vault backup before attempting issuer actions
 
 Validate local Preprod prerequisites:
 

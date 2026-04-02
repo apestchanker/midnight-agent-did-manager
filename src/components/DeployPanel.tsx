@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { Button } from "./ui/button";
-import { Input } from "./ui/input";
 import {
   Card,
   CardContent,
@@ -17,8 +16,6 @@ import {
   deployDidRegistry,
   getSavedCompileArtifact,
   getSavedDeployment,
-  getSavedOwnerSecretHex,
-  saveOwnerSecretHex,
 } from "../lib/didContract";
 
 interface DeployPanelProps {
@@ -40,15 +37,6 @@ export function DeployPanel({ providers, onDeployed }: DeployPanelProps) {
   const [lastTx, setLastTx] = useState(
     getSavedDeployment()?.txHash || "",
   );
-  const [ownerSecret, setOwnerSecret] = useState(getSavedOwnerSecretHex());
-
-  function generateOwnerSecret() {
-    const bytes = new Uint8Array(32);
-    window.crypto.getRandomValues(bytes);
-    const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
-    setOwnerSecret(hex);
-    saveOwnerSecretHex(hex);
-  }
 
   async function handleCompile() {
     setCompiling(true);
@@ -80,8 +68,7 @@ export function DeployPanel({ providers, onDeployed }: DeployPanelProps) {
     setDeployError("");
     setDeployMessage("");
     try {
-      saveOwnerSecretHex(ownerSecret);
-      const result = await deployDidRegistry(providers, ownerSecret);
+      const result = await deployDidRegistry(providers);
       setLastTx(result.txHash);
       setLastDeploy(result);
       setDeployMessage(result.message || "");
@@ -113,38 +100,12 @@ export function DeployPanel({ providers, onDeployed }: DeployPanelProps) {
             missing, run `npm run compile-contract` first.
           </p>
         </div>
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-zinc-300">
-            Owner Authorization Secret
-          </label>
-          <Input
-            type="text"
-            value={ownerSecret}
-            onChange={(event) => setOwnerSecret(event.target.value.trim())}
-            placeholder="64 hex chars used as the Midnight witness secret"
-            className="font-mono text-xs"
-          />
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => saveOwnerSecretHex(ownerSecret)}
-              className="border-zinc-700 text-zinc-200 hover:bg-zinc-800"
-            >
-              Save Secret
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={generateOwnerSecret}
-              className="border-zinc-700 text-zinc-200 hover:bg-zinc-800"
-            >
-              Generate Secret
-            </Button>
-          </div>
-          <p className="text-xs text-zinc-500">
-            Midnight uses this local witness secret to authorize owner-only
-            `issue/update/revoke`. It stays in this browser for the experiment.
+        <div className="rounded-md bg-amber-950/30 border border-amber-800 p-3">
+          <p className="text-xs text-amber-200">
+            Deployment now generates a random owner secret and stores it only in
+            Midnight private state for this contract. Export an encrypted vault
+            backup immediately after deployment so admin access can be restored
+            if the local vault is lost.
           </p>
         </div>
         <div className="space-y-2">

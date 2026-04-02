@@ -7,10 +7,16 @@ export default defineConfig({
   plugins: [react(), wasm()],
   resolve: {
     alias: {
+      events: fileURLToPath(
+        new URL("./node_modules/events/events.js", import.meta.url),
+      ),
       "isomorphic-ws": fileURLToPath(
         new URL("./src/shims/isomorphic-ws.ts", import.meta.url),
       ),
     },
+  },
+  optimizeDeps: {
+    include: ["events"],
   },
   server: {
     port: 5173,

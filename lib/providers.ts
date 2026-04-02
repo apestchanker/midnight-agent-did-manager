@@ -1,5 +1,6 @@
 import { Transaction } from "@midnight-ntwrk/ledger-v8";
 import { indexerPublicDataProvider } from "@midnight-ntwrk/midnight-js-indexer-public-data-provider";
+import { levelPrivateStateProvider } from "@midnight-ntwrk/midnight-js-level-private-state-provider";
 import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 import {
   createProverKey,
@@ -16,6 +17,7 @@ import type {
   ConnectedAPI,
   KeyMaterialProvider,
 } from "@midnight-ntwrk/dapp-connector-api";
+import type { ContractAddress, SigningKey } from "@midnight-ntwrk/compact-runtime";
 import { requestWalletPermissionsIfSupported } from "./wallet-permissions";
 import { fromHex, toHex } from "./wallet-bridge";
 
@@ -23,63 +25,168 @@ const MANAGED_CONTRACT_PATH =
   (import.meta.env.VITE_MANAGED_CONTRACT_PATH || "").trim() ||
   "/contracts/managed/did-registry";
 
-const PRIVATE_STATE_NS = "midnight-did:private-state-password:v1";
+const PRIVATE_STATE_PASSWORD_ENV = (import.meta.env.VITE_PRIVATE_STATE_PASSWORD || "").trim();
+const APP_LOCAL_STORAGE_PREFIX = "didmn:private-state:app-local:v1";
 
-function createBrowserPrivateStateProvider(
-  accountId: string,
-): PrivateStateProvider {
-  const stateStore = new Map<string, unknown>();
-  const signingKeyStore = new Map<string, unknown>();
-  let currentContractAddress = "";
+export type StorageMode = "app_local" | "patched_sdk";
 
-  const scopedKey = (privateStateId: string) =>
-    `${accountId}:${currentContractAddress}:${privateStateId}`;
+interface AppLocalSerializedBytes {
+  __type: "Uint8Array";
+  data: number[];
+}
+
+interface AppLocalSerializedBigInt {
+  __type: "BigInt";
+  data: string;
+}
+
+function serializeAppLocalValue(value: unknown): unknown {
+  if (value instanceof Uint8Array) {
+    return {
+      __type: "Uint8Array",
+      data: Array.from(value),
+    } satisfies AppLocalSerializedBytes;
+  }
+  if (typeof value === "bigint") {
+    return {
+      __type: "BigInt",
+      data: value.toString(10),
+    } satisfies AppLocalSerializedBigInt;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => serializeAppLocalValue(entry));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, serializeAppLocalValue(entry)]),
+    );
+  }
+  return value;
+}
+
+function deserializeAppLocalValue<T>(value: unknown): T {
+  if (!value || typeof value !== "object") {
+    return value as T;
+  }
+  if (
+    "__type" in value &&
+    value.__type === "Uint8Array" &&
+    "data" in value &&
+    Array.isArray(value.data)
+  ) {
+    return new Uint8Array(value.data as number[]) as T;
+  }
+  if (
+    "__type" in value &&
+    value.__type === "BigInt" &&
+    "data" in value &&
+    typeof value.data === "string"
+  ) {
+    return BigInt(value.data) as T;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => deserializeAppLocalValue(entry)) as T;
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [key, deserializeAppLocalValue(entry)]),
+  ) as T;
+}
+
+function getAppLocalStorage(): Storage {
+  if (typeof window === "undefined") {
+    throw new Error("App local private storage is only available in the browser.");
+  }
+  return window.localStorage;
+}
+
+function getAppLocalNamespace(accountId: string): string {
+  return `${APP_LOCAL_STORAGE_PREFIX}:${accountId}`;
+}
+
+function createAppLocalPrivateStateProvider(accountId: string): PrivateStateProvider {
+  const namespace = getAppLocalNamespace(accountId);
+  let contractAddress: ContractAddress | null = null;
+
+  const stateKey = (privateStateId: string): string => {
+    if (contractAddress === null) {
+      throw new Error("Contract address not set. Call setContractAddress() before accessing private state.");
+    }
+    return `${namespace}:state:${contractAddress}:${privateStateId}`;
+  };
+
+  const signingKeyKey = (address: ContractAddress): string =>
+    `${namespace}:signing-key:${address}`;
+
+  const forEachNamespacedKey = (
+    prefix: string,
+    callback: (key: string) => void,
+  ): void => {
+    const storage = getAppLocalStorage();
+    const keys: string[] = [];
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (key && key.startsWith(prefix)) {
+        keys.push(key);
+      }
+    }
+    keys.forEach(callback);
+  };
 
   return {
-    setContractAddress(address) {
-      currentContractAddress = String(address);
+    setContractAddress(address: ContractAddress): void {
+      contractAddress = address;
     },
-    async set(privateStateId, state) {
-      stateStore.set(scopedKey(privateStateId), state);
+    async get(privateStateId: string) {
+      const raw = getAppLocalStorage().getItem(stateKey(privateStateId));
+      if (!raw) return null;
+      return deserializeAppLocalValue(JSON.parse(raw));
     },
-    async get(privateStateId) {
-      return (stateStore.get(scopedKey(privateStateId)) as never) ?? null;
+    async set(privateStateId: string, state: unknown) {
+      getAppLocalStorage().setItem(
+        stateKey(privateStateId),
+        JSON.stringify(serializeAppLocalValue(state)),
+      );
     },
-    async remove(privateStateId) {
-      stateStore.delete(scopedKey(privateStateId));
+    async remove(privateStateId: string) {
+      getAppLocalStorage().removeItem(stateKey(privateStateId));
     },
     async clear() {
-      for (const key of [...stateStore.keys()]) {
-        if (key.startsWith(`${accountId}:${currentContractAddress}:`)) {
-          stateStore.delete(key);
-        }
+      if (contractAddress === null) {
+        throw new Error("Contract address not set. Call setContractAddress() before accessing private state.");
       }
+      forEachNamespacedKey(`${namespace}:state:${contractAddress}:`, (key) => {
+        getAppLocalStorage().removeItem(key);
+      });
     },
-    async setSigningKey(address, signingKey) {
-      signingKeyStore.set(String(address), signingKey);
+    async getSigningKey(address: ContractAddress) {
+      const raw = getAppLocalStorage().getItem(signingKeyKey(address));
+      if (!raw) return null;
+      return deserializeAppLocalValue<SigningKey>(JSON.parse(raw));
     },
-    async getSigningKey(address) {
-      return (signingKeyStore.get(String(address)) as never) ?? null;
+    async setSigningKey(address: ContractAddress, signingKey: SigningKey) {
+      getAppLocalStorage().setItem(
+        signingKeyKey(address),
+        JSON.stringify(serializeAppLocalValue(signingKey)),
+      );
     },
-    async removeSigningKey(address) {
-      signingKeyStore.delete(String(address));
+    async removeSigningKey(address: ContractAddress) {
+      getAppLocalStorage().removeItem(signingKeyKey(address));
     },
     async clearSigningKeys() {
-      signingKeyStore.clear();
+      forEachNamespacedKey(`${namespace}:signing-key:`, (key) => {
+        getAppLocalStorage().removeItem(key);
+      });
     },
-    async exportPrivateStates() {
-      throw new Error("Private state export is not implemented in the browser adapter.");
-    },
-    async importPrivateStates() {
-      throw new Error("Private state import is not implemented in the browser adapter.");
-    },
-    async exportSigningKeys() {
-      throw new Error("Signing key export is not implemented in the browser adapter.");
-    },
-    async importSigningKeys() {
-      throw new Error("Signing key import is not implemented in the browser adapter.");
-    },
-  };
+  } as PrivateStateProvider;
+}
+
+function getTemporaryPrivateStatePassword(accountId: string): string {
+  if (PRIVATE_STATE_PASSWORD_ENV) {
+    return PRIVATE_STATE_PASSWORD_ENV;
+  }
+
+  // Temporary smoke-test password source so the browser Level provider can be exercised locally.
+  return `DidMn!BrowserSmoke2026#${accountId}`;
 }
 
 export interface AppProviders extends MidnightProviders<string> {
@@ -94,24 +201,19 @@ export interface AppProviders extends MidnightProviders<string> {
   zkArtifactsBaseUrl: string;
 }
 
+interface BuildProvidersOptions {
+  reconnect?: () => Promise<ConnectedAPI>;
+  storageMode?: StorageMode;
+}
+
 async function ensureWalletSession(api: ConnectedAPI): Promise<void> {
   await requestWalletPermissionsIfSupported(api);
 }
 
-function getPrivateStatePassword(accountId: string, networkId: string): string {
-  if (typeof window === "undefined") {
-    return `${PRIVATE_STATE_NS}:${networkId}:${accountId}`.padEnd(32, "0");
-  }
-
-  const key = `${PRIVATE_STATE_NS}:${networkId}:${accountId}`;
-  const existing = window.localStorage.getItem(key);
-  if (existing) return existing;
-
-  const bytes = new Uint8Array(32);
-  window.crypto.getRandomValues(bytes);
-  const password = toHex(bytes);
-  window.localStorage.setItem(key, password);
-  return password;
+function isWalletDisconnectedError(error: unknown): boolean {
+  const message =
+    error instanceof Error ? error.message : String(error ?? "");
+  return /not connected to wallet/i.test(message);
 }
 
 function getManagedContractUrl(): string {
@@ -185,14 +287,16 @@ class NormalizedFetchZkConfigProvider extends ZKConfigProvider<string> {
   }
 }
 
-export async function buildProviders(api: ConnectedAPI): Promise<AppProviders> {
+export async function buildProviders(
+  api: ConnectedAPI,
+  options: BuildProvidersOptions = {},
+): Promise<AppProviders> {
   const config = await api.getConfiguration();
   setNetworkId(config.networkId as never);
   const shielded = await api.getShieldedAddresses();
   const unshielded = await api.getUnshieldedAddress();
 
   const accountId = `${config.networkId}:${unshielded.unshieldedAddress}`;
-  getPrivateStatePassword(unshielded.unshieldedAddress, config.networkId);
   const managedContractUrl = getManagedContractUrl();
 
   const zkConfigProvider = new NormalizedFetchZkConfigProvider(managedContractUrl);
@@ -204,27 +308,46 @@ export async function buildProviders(api: ConnectedAPI): Promise<AppProviders> {
       zkConfigProvider.getVerifierKey(circuitId),
   };
 
+  let currentApi = api;
+
+  const withWalletRetry = async <T>(operation: (connectedApi: ConnectedAPI) => Promise<T>): Promise<T> => {
+    try {
+      await ensureWalletSession(currentApi);
+      return await operation(currentApi);
+    } catch (error) {
+      if (!isWalletDisconnectedError(error) || !options.reconnect) {
+        throw error;
+      }
+
+      currentApi = await options.reconnect();
+      await ensureWalletSession(currentApi);
+      return operation(currentApi);
+    }
+  };
+
   const provingProvider = {
     check: async (
       serializedPreimage: Uint8Array,
       keyLocation: string,
     ): Promise<(bigint | undefined)[]> => {
-      await ensureWalletSession(api);
-      const freshProvider = await api.getProvingProvider(keyMaterialProvider);
-      return freshProvider.check(serializedPreimage, keyLocation);
+      return withWalletRetry(async (connectedApi) => {
+        const freshProvider = await connectedApi.getProvingProvider(keyMaterialProvider);
+        return freshProvider.check(serializedPreimage, keyLocation);
+      });
     },
     prove: async (
       serializedPreimage: Uint8Array,
       keyLocation: string,
       overwriteBindingInput?: bigint,
     ): Promise<Uint8Array> => {
-      await ensureWalletSession(api);
-      const freshProvider = await api.getProvingProvider(keyMaterialProvider);
-      return freshProvider.prove(
-        serializedPreimage,
-        keyLocation,
-        overwriteBindingInput,
-      );
+      return withWalletRetry(async (connectedApi) => {
+        const freshProvider = await connectedApi.getProvingProvider(keyMaterialProvider);
+        return freshProvider.prove(
+          serializedPreimage,
+          keyLocation,
+          overwriteBindingInput,
+        );
+      });
     },
   };
 
@@ -233,10 +356,11 @@ export async function buildProviders(api: ConnectedAPI): Promise<AppProviders> {
     getEncryptionPublicKey: () =>
       shielded.shieldedEncryptionPublicKey as never,
     async balanceTx(tx) {
-      await ensureWalletSession(api);
-      const result = await api.balanceUnsealedTransaction(toHex(tx.serialize()), {
-        payFees: true,
-      });
+      const result = await withWalletRetry((connectedApi) =>
+        connectedApi.balanceUnsealedTransaction(toHex(tx.serialize()), {
+          payFees: true,
+        }),
+      );
       return Transaction.deserialize(
         "signature",
         "proof",
@@ -248,15 +372,26 @@ export async function buildProviders(api: ConnectedAPI): Promise<AppProviders> {
 
   const midnightProvider: MidnightProvider = {
     async submitTx(tx) {
-      await ensureWalletSession(api);
-      await api.submitTransaction(toHex(tx.serialize()));
+      await withWalletRetry(async (connectedApi) => {
+        await connectedApi.submitTransaction(toHex(tx.serialize()));
+      });
       const [identifier] = tx.identifiers();
       return identifier;
     },
   };
 
+  const storageMode = options.storageMode || "app_local";
+  const privateStateProvider =
+    storageMode === "patched_sdk"
+      ? (levelPrivateStateProvider({
+          accountId,
+          privateStoragePasswordProvider: () =>
+            getTemporaryPrivateStatePassword(accountId),
+        }) as PrivateStateProvider)
+      : createAppLocalPrivateStateProvider(accountId);
+
   return {
-    privateStateProvider: createBrowserPrivateStateProvider(accountId),
+    privateStateProvider,
     publicDataProvider: indexerPublicDataProvider(
       config.indexerUri,
       config.indexerWsUri,
