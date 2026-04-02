@@ -1,6 +1,5 @@
 import { Transaction } from "@midnight-ntwrk/ledger-v8";
 import { indexerPublicDataProvider } from "@midnight-ntwrk/midnight-js-indexer-public-data-provider";
-import { levelPrivateStateProvider } from "@midnight-ntwrk/midnight-js-level-private-state-provider";
 import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 import {
   createProverKey,
@@ -20,6 +19,7 @@ import type {
 import type { ContractAddress, SigningKey } from "@midnight-ntwrk/compact-runtime";
 import { requestWalletPermissionsIfSupported } from "./wallet-permissions";
 import { fromHex, toHex } from "./wallet-bridge";
+import { createPatchedSdkPrivateStateProvider } from "./patched-private-state-provider";
 
 const MANAGED_CONTRACT_PATH =
   (import.meta.env.VITE_MANAGED_CONTRACT_PATH || "").trim() ||
@@ -383,11 +383,11 @@ export async function buildProviders(
   const storageMode = options.storageMode || "app_local";
   const privateStateProvider =
     storageMode === "patched_sdk"
-      ? (levelPrivateStateProvider({
+      ? createPatchedSdkPrivateStateProvider({
           accountId,
           privateStoragePasswordProvider: () =>
             getTemporaryPrivateStatePassword(accountId),
-        }) as PrivateStateProvider)
+        })
       : createAppLocalPrivateStateProvider(accountId);
 
   return {

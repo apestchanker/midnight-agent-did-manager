@@ -149,29 +149,21 @@ This repository includes a locally packaged interim tarball for the patched Midn
 
 This tarball corresponds to the browser-compatibility patch submitted upstream in the Midnight JS PR and is intended as a temporary local-install option while that PR is pending review.
 
-### Local Install
-
-To install the patched package into this app locally:
-
-```bash
-npm install ./artifacts/sdk/midnight-ntwrk-midnight-js-level-private-state-provider-4.0.2-patched.1.tgz
-```
-
-The current branch already includes the application-side support required to use that patched provider:
+The current branch already includes the application-side support required to use the patched provider path without changing the default SDK dependency:
 
 - [lib/providers.ts](./lib/providers.ts) exposes a storage mode switch between the safe app-local vault and the patched SDK-backed provider
+- [lib/patched-private-state-provider.ts](./lib/patched-private-state-provider.ts) contains the browser-safe local implementation derived from the tested upstream patch
 - [components/WalletPanel.tsx](./components/WalletPanel.tsx) exposes that switch in the wallet settings UI
 - [vite.config.ts](./vite.config.ts) includes the browser `events` resolution required by the `level` / `abstract-level` stack
 - [package.json](./package.json) includes the `events` dependency used by that browser resolution step
 
 ### How To Use It In The UI
 
-1. Install the tarball with the command above.
-2. Start the app normally.
-3. Open `Wallet Access`.
-4. Click `Settings` next to the wallet connect area.
-5. In `Storage Mode`, select `Patched Midnight SDK`.
-6. Connect the wallet.
+1. Start the app normally.
+2. Open `Wallet Access`.
+3. Click `Settings` next to the wallet connect area.
+4. In `Storage Mode`, select `Patched Midnight SDK`.
+5. Connect the wallet.
 
 Important:
 
@@ -183,9 +175,11 @@ Important:
 
 At minimum, you need:
 
-1. The tarball installed as the private-state provider dependency.
+1. A browser-safe implementation of the patched private-state provider.
 2. A browser `events` polyfill/resolution step in Vite.
 3. A UI or configuration flag that lets you deliberately select the patched SDK-backed private-state provider instead of your default local storage mode.
+
+This repo includes the tarball as a reference artifact, but the committed app does not force consumers to install it. The default dependency remains the official Midnight SDK package, and the patched mode is exposed as an explicit opt-in path in the UI.
 
 Example Vite browser resolution:
 
