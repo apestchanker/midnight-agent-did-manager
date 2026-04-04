@@ -5,11 +5,7 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const repoRoot = resolve(__dirname, "..");
-const packageJsonPath = resolve(repoRoot, "package.json");
-const envPaths = [
-  resolve(repoRoot, ".env"),
-  resolve(repoRoot, ".env.local"),
-];
+const envPath = resolve(repoRoot, ".env");
 
 function parseEnvFile(content) {
   const parsed = {};
@@ -38,40 +34,30 @@ function parseEnvFile(content) {
   return parsed;
 }
 
-function loadFileEnv() {
-  const env = {};
-
-  for (const envPath of envPaths) {
-    try {
-      Object.assign(env, parseEnvFile(readFileSync(envPath, "utf-8")));
-    } catch {
-      // Ignore missing local env files.
-    }
-  }
-
-  return env;
-}
-
-function resolveVersion(rawValue, fallback) {
+function resolveVersion(rawValue, key) {
   const normalized = (rawValue || "").trim();
-  return normalized || fallback;
+  if (!normalized) {
+    throw new Error(
+      `Missing required ${key} in .env. Define both VITE_APP_VERSION and VITE_CONTRACT_VERSION in /Users/alex/Documents/Developer/didMN/.env.`,
+    );
+  }
+  return normalized;
 }
 
 export function getVersionConfig() {
-  const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
-  const fileEnv = loadFileEnv();
-  const mergedEnv = {
-    ...fileEnv,
-    ...process.env,
-  };
+  let fileEnv;
+  try {
+    fileEnv = parseEnvFile(readFileSync(envPath, "utf-8"));
+  } catch {
+    throw new Error(
+      "Missing .env file. Define VITE_APP_VERSION and VITE_CONTRACT_VERSION in /Users/alex/Documents/Developer/didMN/.env.",
+    );
+  }
 
-  const appVersion = resolveVersion(
-    mergedEnv.VITE_APP_VERSION || mergedEnv.APP_VERSION,
-    packageJson.version,
-  );
+  const appVersion = resolveVersion(fileEnv.VITE_APP_VERSION, "VITE_APP_VERSION");
   const contractVersion = resolveVersion(
-    mergedEnv.VITE_CONTRACT_VERSION || mergedEnv.CONTRACT_VERSION,
-    appVersion,
+    fileEnv.VITE_CONTRACT_VERSION,
+    "VITE_CONTRACT_VERSION",
   );
 
   return {

@@ -12,7 +12,6 @@ import {
   checkDidServiceHealth,
   createAgentDidRequest,
   createMcpKey,
-  finalizeIssuedDid,
   getCustomerByWallet,
   listDidRequests,
 } from "../utils/serviceApi";
@@ -198,15 +197,9 @@ export function WorkflowPanel({
           },
         ],
       };
-      const issuedRecord = await onIssueOnChain({
+      await onIssueOnChain({
         agentAddress: request.subject_wallet_address,
         didDocument: JSON.stringify(didDocument, null, 2),
-      });
-      await finalizeIssuedDid({
-        requestId: request.id,
-        issuerWalletAddress: walletAddress,
-        didDocument,
-        didRecord: issuedRecord,
       });
       setMessage(`Request ${request.id} issued on-chain and persisted in the DID service.`);
       await refreshDashboard();

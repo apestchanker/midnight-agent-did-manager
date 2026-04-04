@@ -203,6 +203,7 @@ export interface AppProviders extends MidnightProviders<string> {
 
 interface BuildProvidersOptions {
   reconnect?: () => Promise<ConnectedAPI>;
+  onReconnect?: (api: ConnectedAPI) => void;
   storageMode?: StorageMode;
 }
 
@@ -320,10 +321,29 @@ export async function buildProviders(
       }
 
       currentApi = await options.reconnect();
+      options.onReconnect?.(currentApi);
       await ensureWalletSession(currentApi);
       return operation(currentApi);
     }
   };
+
+  const connectedApiProxy = new Proxy({} as ConnectedAPI, {
+    get(_target, prop) {
+      const currentValue = Reflect.get(currentApi as object, prop);
+      if (typeof currentValue !== "function") {
+        return currentValue;
+      }
+
+      return (...args: unknown[]) =>
+        withWalletRetry((connectedApi) =>
+          Reflect.apply(
+            Reflect.get(connectedApi as object, prop) as (...innerArgs: unknown[]) => unknown,
+            connectedApi,
+            args,
+          ) as Promise<unknown>,
+        );
+    },
+  }) as ConnectedAPI;
 
   const provingProvider = {
     check: async (
@@ -401,7 +421,7 @@ export async function buildProviders(
     proofProvider: createProofProvider(provingProvider as never),
     walletProvider,
     midnightProvider,
-    connectedAPI: api,
+    connectedAPI: connectedApiProxy,
     networkId: config.networkId,
     indexerUrl: config.indexerUri,
     indexerWsUrl: config.indexerWsUri,

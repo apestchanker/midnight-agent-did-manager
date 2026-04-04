@@ -16,20 +16,18 @@ import type { DidRecord, DeployResult, RegistryAccess, RegistrySummary } from ".
 import type { DidRequestRow, RegistryDidRow } from "./types/service";
 import { APP_VERSION } from "./lib/version";
 import {
-  fetchRegistryAccess,
-  fetchDidRecord,
-  fetchRegistrySummary,
+  DidRegistryAPI,
   getSavedContractAddress,
   getSavedDeployment,
-  issueDid,
-  requestDid,
-  revokeDid,
-  updateDid,
 } from "./lib/didContract";
 import {
+  issueDidWithSync,
+  requestDidWithSync,
+  revokeDidWithSync,
+  updateDidWithSync,
+} from "./lib/did/app-api";
+import {
   createWalletDidRequest,
-  finalizeIssuedDid,
-  getDidRequest,
   getCustomerByWallet,
   getLatestAdminRegistryDeployment,
   listDidRequests,
@@ -128,6 +126,7 @@ export default function App() {
     null,
   );
   const [registryDids, setRegistryDids] = useState<RegistryDidRow[]>([]);
+  const [registryApi, setRegistryApi] = useState<DidRegistryAPI | null>(null);
 
   const walletAddress = useMemo(() => address || "", [address]);
   const isConfiguredAdminWallet = useMemo(() => {
@@ -348,27 +347,45 @@ export default function App() {
   }, [registryDids, selectedAgentAddress, viewMode]);
 
   useEffect(() => {
-    if (!providers || !contractAddress || !selectedAgentAddress) {
+    if (!providers || !contractAddress.trim()) {
+      setRegistryApi(null);
+      return;
+    }
+
+    let cancelled = false;
+    DidRegistryAPI.join(providers, contractAddress)
+      .then((api) => {
+        if (!cancelled) setRegistryApi(api);
+      })
+      .catch((error) => {
+        console.error("[App] Failed to join registry API:", error);
+        if (!cancelled) setRegistryApi(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [contractAddress, providers]);
+
+  useEffect(() => {
+    if (!registryApi || !selectedAgentAddress) {
       setDidRecord(null);
       return;
     }
 
-    fetchDidRecord(providers, contractAddress, selectedAgentAddress)
-      .then(async (record) => {
+    const subscription = registryApi.agentRecord$(selectedAgentAddress).subscribe({
+      next: async (record) => {
         setDidRecord(record);
         await refreshRequestCollections();
-      })
-      .catch((error) => {
+      },
+      error: (error) => {
         console.error("[App] Failed to load DID:", error);
         setDidRecord(null);
-      });
-  }, [
-    contractAddress,
-    providers,
-    refreshRequestCollections,
-    selectedAgentAddress,
-    walletAddress,
-  ]);
+      },
+    });
+
+    return () => subscription.unsubscribe();
+  }, [refreshRequestCollections, registryApi, selectedAgentAddress, walletAddress]);
 
   useEffect(() => {
     if (
@@ -420,8 +437,6 @@ export default function App() {
     setContractAddress(result.contractAddress);
     setDeployResult(result);
     if (!providers) return;
-    const summary = await fetchRegistrySummary(providers, result.contractAddress);
-    setRegistrySummary(summary);
     try {
       await saveAdminRegistryDeployment({
         networkId: providers.networkId,
@@ -451,13 +466,11 @@ export default function App() {
     organizationDisclosure: "disclosed" | "undisclosed";
     didDocument: string;
   }) {
-    if (!providers) throw new Error("Wallet providers not ready");
+    if (!registryApi) throw new Error("Wallet providers not ready");
     if (!walletAddress) throw new Error("Connect wallet first");
-    if (!contractAddress.trim())
-      throw new Error("Contract address is required");
+    if (!contractAddress.trim()) throw new Error("Contract address is required");
 
-    const record = await requestDid(providers, {
-      contractAddress,
+    const record = await requestDidWithSync(registryApi, {
       requesterWalletAddress: walletAddress,
       agentAddress: payload.agentAddress,
       agentName: payload.agentName,
@@ -469,17 +482,15 @@ export default function App() {
     setDidRecord(record);
     setSelectedAgentAddress(payload.agentAddress);
     setNewAgentMode(false);
-    const summary = await fetchRegistrySummary(providers, contractAddress);
-    setRegistrySummary(summary);
     await refreshRequestCollections();
     return record;
   }
 
   async function refreshAgentRecord(agentAddress: string) {
-    if (!providers) throw new Error("Wallet providers not ready");
+    if (!registryApi) throw new Error("Wallet providers not ready");
     const [record, summary] = await Promise.all([
-      fetchDidRecord(providers, contractAddress, agentAddress),
-      fetchRegistrySummary(providers, contractAddress),
+      registryApi.fetchDidRecord(agentAddress),
+      registryApi.fetchRegistrySummary(),
     ]);
     setDidRecord(record);
     setRegistrySummary(summary);
@@ -489,17 +500,6 @@ export default function App() {
       throw new Error("The registry transaction was confirmed but the updated agent record could not be read back from the indexer yet.");
     }
     return record;
-  }
-
-  async function waitForRequestIssued(requestId: string) {
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      const request = await getDidRequest(requestId);
-      if (request.request_status === "issued") {
-        return request;
-      }
-      await new Promise((resolve) => window.setTimeout(resolve, 500));
-    }
-    throw new Error("The DID was issued on-chain, but the DID service did not reflect the issued request state in time.");
   }
 
   async function handleRefreshRecord() {
@@ -513,38 +513,17 @@ export default function App() {
     agentAddress: string;
     didDocument: string;
   }) {
-    if (!providers) throw new Error("Wallet providers not ready");
+    if (!registryApi) throw new Error("Wallet providers not ready");
     if (!contractAddress.trim())
       throw new Error("Contract address is required");
 
-    const issuedRecord = await issueDid(providers, {
-      contractAddress,
+    const issuedRecord = await issueDidWithSync(registryApi, {
+      contractAddress: registryApi.contractAddress,
       agentAddress: payload.agentAddress,
       didDocument: payload.didDocument,
     });
 
     setDidRecord(issuedRecord);
-
-    if (
-      selectedAdminDid &&
-      selectedAdminDid.subject_wallet_address === payload.agentAddress &&
-      selectedAdminDid.request_status === "pending_admin_review"
-    ) {
-      let parsedDidDocument: Record<string, unknown>;
-      try {
-        parsedDidDocument = JSON.parse(payload.didDocument) as Record<string, unknown>;
-      } catch {
-        throw new Error("The DID was issued on-chain, but the DID document payload could not be parsed for database finalization.");
-      }
-
-      await finalizeIssuedDid({
-        requestId: selectedAdminDid.id,
-        issuerWalletAddress: walletAddress,
-        didDocument: parsedDidDocument,
-        didRecord: issuedRecord,
-      });
-      await waitForRequestIssued(selectedAdminDid.id);
-    }
 
     try {
       return await refreshAgentRecord(payload.agentAddress);
@@ -559,12 +538,12 @@ export default function App() {
     agentAddress: string;
     didDocument: string;
   }) {
-    if (!providers) throw new Error("Wallet providers not ready");
+    if (!registryApi) throw new Error("Wallet providers not ready");
     if (!contractAddress.trim())
       throw new Error("Contract address is required");
 
-    await updateDid(providers, {
-      contractAddress,
+    await updateDidWithSync(registryApi, {
+      contractAddress: registryApi.contractAddress,
       agentAddress: payload.agentAddress,
       didDocument: payload.didDocument,
     });
@@ -576,12 +555,12 @@ export default function App() {
     agentAddress: string;
     reason: string;
   }) {
-    if (!providers) throw new Error("Wallet providers not ready");
+    if (!registryApi) throw new Error("Wallet providers not ready");
     if (!contractAddress.trim())
       throw new Error("Contract address is required");
 
-    await revokeDid(providers, {
-      contractAddress,
+    await revokeDidWithSync(registryApi, {
+      contractAddress: registryApi.contractAddress,
       agentAddress: payload.agentAddress,
       reason: payload.reason,
     });
@@ -590,18 +569,21 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!providers || !contractAddress) {
+    if (!registryApi) {
       setRegistrySummary(null);
       return;
     }
 
-    fetchRegistrySummary(providers, contractAddress)
-      .then(setRegistrySummary)
-      .catch((error) => {
+    const subscription = registryApi.registrySummary$.subscribe({
+      next: setRegistrySummary,
+      error: (error) => {
         console.error("[App] Failed to load registry summary:", error);
         setRegistrySummary(null);
-      });
-  }, [contractAddress, providers]);
+      },
+    });
+
+    return () => subscription.unsubscribe();
+  }, [registryApi]);
 
   useEffect(() => {
     if (!contractAddress.trim()) {
@@ -618,12 +600,12 @@ export default function App() {
   }, [contractAddress, didRecord?.status]);
 
   useEffect(() => {
-    if (!providers || !contractAddress.trim() || !walletAddress.trim()) {
+    if (!registryApi || !walletAddress.trim()) {
       setRegistryAccess(null);
       return;
     }
-    fetchRegistryAccess(providers, contractAddress, walletAddress)
-      .then((result) => {
+    const subscription = registryApi.access$(walletAddress).subscribe({
+      next: (result) => {
         setRegistryAccess(result);
         if (
           isConfiguredAdminWallet ||
@@ -634,12 +616,15 @@ export default function App() {
         } else {
           setViewMode("user");
         }
-      })
-      .catch((error) => {
+      },
+      error: (error) => {
         console.error("[App] Failed to load registry access:", error);
         setRegistryAccess(null);
-      });
-  }, [providers, contractAddress, walletAddress, isConfiguredAdminWallet]);
+      },
+    });
+
+    return () => subscription.unsubscribe();
+  }, [registryApi, walletAddress, isConfiguredAdminWallet]);
 
   useEffect(() => {
     if (!walletAddress.trim()) {

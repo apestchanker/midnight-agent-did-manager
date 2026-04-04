@@ -1,3 +1,4 @@
+import "./load-env.js";
 import { readFile } from "fs/promises";
 import { resolve } from "path";
 import { Pool } from "pg";

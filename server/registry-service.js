@@ -813,6 +813,24 @@ export async function issueApprovedDidRequest(input) {
     if (!request) {
       throw new Error("DID request not found.");
     }
+    if (request.request_status === "issued") {
+      const existingRecord = (
+        await client.query(
+          `select *
+           from did_records
+           where request_id = $1
+              or did = $2
+           order by updated_at desc
+           limit 1`,
+          [request.id, request.requested_did || null],
+        )
+      ).rows[0];
+
+      return {
+        request,
+        record: existingRecord || null,
+      };
+    }
     if (request.request_status !== "pending_admin_review") {
       throw new Error("DID request is not pending admin review.");
     }

@@ -1,3 +1,4 @@
+import "./load-env.js";
 import { createServer } from "http";
 import { URL } from "url";
 import { getDatabaseUrl, initializeDatabase } from "./db.js";

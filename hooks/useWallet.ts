@@ -95,6 +95,9 @@ export function useWallet(storageMode: StorageMode = "app_local") {
 
     const provs = await buildProviders(connectedApi, {
       reconnect: async () => reconnectApi(walletName),
+      onReconnect: (reconnectedApi) => {
+        setApi(reconnectedApi);
+      },
       storageMode,
     });
     setApi(connectedApi);
