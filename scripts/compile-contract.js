@@ -3,11 +3,14 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } fr
 import { dirname, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { getVersionConfig } from "./version-config.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+const { contractVersion } = getVersionConfig();
 const contractPath = resolve(__dirname, "../contracts/did_registry.compact");
+const contractTemplatePath = resolve(__dirname, "../contracts/did_registry.compact.template");
 const managedDir = resolve(__dirname, "../contracts/managed/did-registry");
 const publicManagedDir = resolve(
   __dirname,
@@ -34,6 +37,12 @@ const CIRCUITS = [
   "request_revoke",
   "revoke_did",
 ];
+
+function renderContractSource() {
+  const template = readFileSync(contractTemplatePath, "utf-8");
+  const rendered = template.replaceAll("__CONTRACT_VERSION__", contractVersion);
+  writeFileSync(contractPath, rendered);
+}
 
 function runCompiler(binary) {
   return spawnSync(binary, ["compile", contractPath, managedDir], {
@@ -139,6 +148,8 @@ function writeMetadata() {
 }
 
 try {
+  renderContractSource();
+
   const firstAttempt = runCompiler("compact");
   if (firstAttempt.error && firstAttempt.error.code === "ENOENT") {
     const secondAttempt = runCompiler("compactc");

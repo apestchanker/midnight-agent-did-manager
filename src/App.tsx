@@ -14,6 +14,7 @@ import { WorkflowPanel } from "./components/WorkflowPanel";
 import { VcPanel } from "./components/VcPanel";
 import type { DidRecord, DeployResult, RegistryAccess, RegistrySummary } from "./types/did";
 import type { DidRequestRow, RegistryDidRow } from "./types/service";
+import { APP_VERSION } from "./lib/version";
 import {
   fetchRegistryAccess,
   fetchDidRecord,
@@ -68,8 +69,7 @@ export default function App() {
   }
   const rawEnv = import.meta.env as Record<string, string | undefined>;
   const appTitle = (rawEnv.VITE_APP_TITLE || "Midnight Agent DID Manager").trim();
-  const appVersion = (rawEnv.VITE_APP_VERSION || "0.2.2").trim();
-  const versionedAppTitle = `${appTitle} v${appVersion}`;
+  const versionedAppTitle = `${appTitle} v${APP_VERSION}`;
   const configuredAdminShieldedAddress = (
     rawEnv.VITE_ADMIN_WALLET_SHIELDED_ADDR ||
     rawEnv.ADMIN_WALLET_SHIELDED_ADDR ||

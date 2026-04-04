@@ -1,0 +1,243 @@
+pragma language_version >= 0.20;
+
+import CompactStandardLibrary;
+
+// Contract version: __CONTRACT_VERSION__
+
+// DID lifecycle status codes:
+// 0 = none
+// 1 = pending issuance
+// 2 = active
+// 3 = revoked
+// 4 = pending update
+// 5 = pending revocation
+
+export ledger initialized: Boolean;
+export ledger registry_admin: Bytes<32>;
+export ledger issuer_service: Bytes<32>;
+export ledger total_requests: Uint<64>;
+export ledger total_active_dids: Uint<64>;
+export ledger status_by_agent: Map<Bytes<32>, Uint<8>>;
+export ledger request_commitments: Map<Bytes<32>, Bytes<32>>;
+export ledger update_request_commitments: Map<Bytes<32>, Bytes<32>>;
+export ledger revocation_request_commitments: Map<Bytes<32>, Bytes<32>>;
+export ledger did_commitments: Map<Bytes<32>, Bytes<32>>;
+export ledger document_commitments: Map<Bytes<32>, Bytes<32>>;
+export ledger proof_commitments: Map<Bytes<32>, Bytes<32>>;
+export ledger organization_labels: Map<Bytes<32>, Bytes<64>>;
+export ledger organization_disclosures: Map<Bytes<32>, Uint<8>>;
+export ledger revocation_commitments: Map<Bytes<32>, Bytes<32>>;
+export ledger registry_nonce: Counter;
+export ledger issuer_nonce: Counter;
+
+witness issuerSecret(): Bytes<32>;
+
+export circuit contract_version(): Bytes<16> {
+  return pad(16, "__CONTRACT_VERSION__");
+}
+
+circuit issuerNonceHash(nonce: Uint<64>): Bytes<32> {
+  return persistentHash<Uint<64>>(nonce);
+}
+
+circuit issuerPublicKey(secret: Bytes<32>, nonce: Uint<64>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>(
+           [pad(32, "midnight:did:issuer:v1"), secret, issuerNonceHash(nonce)]);
+}
+
+constructor(owner_public_key: Bytes<32>) {
+  const public_owner_key = disclose(owner_public_key);
+  assert(public_owner_key != pad(32, ""), "Owner key required");
+
+  initialized = true;
+  registry_admin = public_owner_key;
+  issuer_service = public_owner_key;
+  total_requests = 0;
+  total_active_dids = 0;
+  registry_nonce.increment(1);
+  issuer_nonce.increment(1);
+}
+
+export circuit request_did(
+                 agent_key: Bytes<32>,
+                 request_commitment: Bytes<32>,
+                 proof_commitment: Bytes<32>,
+                 organization_label: Bytes<64>,
+                 organization_disclosure: Uint<8>
+                 ): [] {
+  assert(initialized, "Contract not initialized");
+  assert(
+    disclose(organization_disclosure) == (0 as Uint<8>) ||
+    disclose(organization_disclosure) == (1 as Uint<8>),
+    "Invalid organization disclosure flag"
+  );
+
+  const public_agent_key = disclose(agent_key);
+
+  if (status_by_agent.member(public_agent_key)) {
+    const current_status = status_by_agent.lookup(public_agent_key);
+    assert(current_status != (1 as Uint<8>), "Issuance already pending");
+    assert(current_status != (2 as Uint<8>), "DID already active");
+    assert(current_status != (4 as Uint<8>), "Update already pending");
+    assert(current_status != (5 as Uint<8>), "Revocation already pending");
+  }
+
+  request_commitments.insert(public_agent_key, disclose(request_commitment));
+  proof_commitments.insert(public_agent_key, disclose(proof_commitment));
+  if (disclose(organization_disclosure) == (1 as Uint<8>)) {
+    organization_labels.insert(public_agent_key, disclose(organization_label));
+  } else {
+    organization_labels.insert(public_agent_key, pad(64, ""));
+  }
+  organization_disclosures.insert(public_agent_key, disclose(organization_disclosure));
+  status_by_agent.insert(public_agent_key, (1 as Uint<8>));
+
+  total_requests = (total_requests + 1) as Uint<64>;
+  registry_nonce.increment(1);
+}
+
+export circuit issue_did(
+                 agent_key: Bytes<32>,
+                 did_commitment: Bytes<32>,
+                 document_commitment: Bytes<32>,
+                 proof_commitment: Bytes<32>,
+                 organization_label: Bytes<64>,
+                 organization_disclosure: Uint<8>
+                 ): [] {
+  assert(initialized, "Contract not initialized");
+  const issuer_secret = issuerSecret();
+  const issuer_key = issuerPublicKey(issuer_secret, issuer_nonce);
+  assert(issuer_key == issuer_service, "Unauthorized issuer");
+  assert(
+    disclose(organization_disclosure) == (0 as Uint<8>) ||
+    disclose(organization_disclosure) == (1 as Uint<8>),
+    "Invalid organization disclosure flag"
+  );
+
+  const public_agent_key = disclose(agent_key);
+  assert(status_by_agent.member(public_agent_key), "No request found");
+  assert(status_by_agent.lookup(public_agent_key) == (1 as Uint<8>), "Request is not pending issuance");
+
+  did_commitments.insert(public_agent_key, disclose(did_commitment));
+  document_commitments.insert(public_agent_key, disclose(document_commitment));
+  proof_commitments.insert(public_agent_key, disclose(proof_commitment));
+  if (disclose(organization_disclosure) == (1 as Uint<8>)) {
+    organization_labels.insert(public_agent_key, disclose(organization_label));
+  } else {
+    organization_labels.insert(public_agent_key, pad(64, ""));
+  }
+  organization_disclosures.insert(public_agent_key, disclose(organization_disclosure));
+  status_by_agent.insert(public_agent_key, (2 as Uint<8>));
+
+  total_active_dids = (total_active_dids + 1) as Uint<64>;
+  issuer_nonce.increment(1);
+  issuer_service = disclose(issuerPublicKey(issuer_secret, issuer_nonce));
+  registry_nonce.increment(1);
+}
+
+export circuit request_update(
+                 agent_key: Bytes<32>,
+                 update_request_commitment: Bytes<32>,
+                 proof_commitment: Bytes<32>,
+                 organization_label: Bytes<64>,
+                 organization_disclosure: Uint<8>
+                 ): [] {
+  assert(initialized, "Contract not initialized");
+  assert(
+    disclose(organization_disclosure) == (0 as Uint<8>) ||
+    disclose(organization_disclosure) == (1 as Uint<8>),
+    "Invalid organization disclosure flag"
+  );
+
+  const public_agent_key = disclose(agent_key);
+  assert(status_by_agent.member(public_agent_key), "DID not found");
+  assert(status_by_agent.lookup(public_agent_key) == (2 as Uint<8>), "DID is not active");
+
+  update_request_commitments.insert(public_agent_key, disclose(update_request_commitment));
+  proof_commitments.insert(public_agent_key, disclose(proof_commitment));
+  if (disclose(organization_disclosure) == (1 as Uint<8>)) {
+    organization_labels.insert(public_agent_key, disclose(organization_label));
+  } else {
+    organization_labels.insert(public_agent_key, pad(64, ""));
+  }
+  organization_disclosures.insert(public_agent_key, disclose(organization_disclosure));
+  status_by_agent.insert(public_agent_key, (4 as Uint<8>));
+  registry_nonce.increment(1);
+}
+
+export circuit update_did(
+                 agent_key: Bytes<32>,
+                 did_commitment: Bytes<32>,
+                 document_commitment: Bytes<32>,
+                 proof_commitment: Bytes<32>,
+                 organization_label: Bytes<64>,
+                 organization_disclosure: Uint<8>
+                 ): [] {
+  assert(initialized, "Contract not initialized");
+  const issuer_secret = issuerSecret();
+  const issuer_key = issuerPublicKey(issuer_secret, issuer_nonce);
+  assert(issuer_key == issuer_service, "Unauthorized issuer");
+  assert(
+    disclose(organization_disclosure) == (0 as Uint<8>) ||
+    disclose(organization_disclosure) == (1 as Uint<8>),
+    "Invalid organization disclosure flag"
+  );
+
+  const public_agent_key = disclose(agent_key);
+  assert(status_by_agent.member(public_agent_key), "DID not found");
+  assert(status_by_agent.lookup(public_agent_key) == (4 as Uint<8>), "DID is not pending update");
+
+  did_commitments.insert(public_agent_key, disclose(did_commitment));
+  document_commitments.insert(public_agent_key, disclose(document_commitment));
+  proof_commitments.insert(public_agent_key, disclose(proof_commitment));
+  if (disclose(organization_disclosure) == (1 as Uint<8>)) {
+    organization_labels.insert(public_agent_key, disclose(organization_label));
+  } else {
+    organization_labels.insert(public_agent_key, pad(64, ""));
+  }
+  organization_disclosures.insert(public_agent_key, disclose(organization_disclosure));
+  status_by_agent.insert(public_agent_key, (2 as Uint<8>));
+  issuer_nonce.increment(1);
+  issuer_service = disclose(issuerPublicKey(issuer_secret, issuer_nonce));
+  registry_nonce.increment(1);
+}
+
+export circuit request_revoke(
+                 agent_key: Bytes<32>,
+                 revocation_request_commitment: Bytes<32>,
+                 proof_commitment: Bytes<32>
+                 ): [] {
+  assert(initialized, "Contract not initialized");
+
+  const public_agent_key = disclose(agent_key);
+  assert(status_by_agent.member(public_agent_key), "DID not found");
+  assert(status_by_agent.lookup(public_agent_key) == (2 as Uint<8>), "DID is not active");
+
+  revocation_request_commitments.insert(public_agent_key, disclose(revocation_request_commitment));
+  proof_commitments.insert(public_agent_key, disclose(proof_commitment));
+  status_by_agent.insert(public_agent_key, (5 as Uint<8>));
+  registry_nonce.increment(1);
+}
+
+export circuit revoke_did(
+                 agent_key: Bytes<32>,
+                 revocation_commitment: Bytes<32>
+                 ): [] {
+  assert(initialized, "Contract not initialized");
+  const issuer_secret = issuerSecret();
+  const issuer_key = issuerPublicKey(issuer_secret, issuer_nonce);
+  assert(issuer_key == issuer_service, "Unauthorized issuer");
+
+  const public_agent_key = disclose(agent_key);
+  assert(status_by_agent.member(public_agent_key), "DID not found");
+  assert(status_by_agent.lookup(public_agent_key) == (5 as Uint<8>), "DID is not pending revocation");
+
+  revocation_commitments.insert(public_agent_key, disclose(revocation_commitment));
+  status_by_agent.insert(public_agent_key, (3 as Uint<8>));
+
+  assert(total_active_dids > (0 as Uint<64>), "Active DID counter underflow");
+  total_active_dids = (total_active_dids - 1) as Uint<64>;
+  issuer_nonce.increment(1);
+  issuer_service = disclose(issuerPublicKey(issuer_secret, issuer_nonce));
+  registry_nonce.increment(1);
+}
