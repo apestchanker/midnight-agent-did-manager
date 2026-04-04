@@ -125,6 +125,7 @@ function writeMetadata() {
             "organization_disclosures",
             "revocation_commitments",
             "registry_nonce",
+            "issuer_nonce",
           ],
           targetNetwork: process.env.VITE_NETWORK_ID || "preprod",
           deploymentReady: true,

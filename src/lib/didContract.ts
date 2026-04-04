@@ -2,6 +2,7 @@ import * as CompactCompiledContract from "@midnight-ntwrk/compact-js/effect/Comp
 import {
   Bytes32Descriptor,
   CompactTypeVector,
+  CompactTypeUnsignedInteger,
   persistentHash,
 } from "@midnight-ntwrk/compact-runtime";
 import {
@@ -38,6 +39,9 @@ const MANAGED_CONTRACT_BASE_PATH =
   (import.meta.env.VITE_MANAGED_CONTRACT_PATH || "").trim() ||
   "/contracts/managed/did-registry";
 const ISSUER_PUBLIC_KEY_PREFIX = new TextEncoder().encode("midnight:did:issuer:v1");
+const UINT64_MAX = (1n << 64n) - 1n;
+const Uint64Descriptor = new CompactTypeUnsignedInteger(UINT64_MAX, 8);
+const INITIAL_ISSUER_NONCE = 1n;
 const OWNER_VAULT_KIND = "midnight-did-owner-vault-backup";
 const OWNER_VAULT_VERSION = "v1";
 const OWNER_VAULT_PBKDF2_ITERATIONS = 600_000;
@@ -300,10 +304,14 @@ function padBytes(value: Uint8Array, length: number): Uint8Array {
   return output;
 }
 
-function deriveIssuerPublicKey(secret: Uint8Array): Uint8Array {
+function deriveIssuerNonceHash(nonce: bigint): Uint8Array {
+  return persistentHash(Uint64Descriptor, nonce);
+}
+
+function deriveIssuerPublicKey(secret: Uint8Array, nonce: bigint): Uint8Array {
   return persistentHash(
-    new CompactTypeVector(2, Bytes32Descriptor),
-    [padBytes(ISSUER_PUBLIC_KEY_PREFIX, 32), secret],
+    new CompactTypeVector(3, Bytes32Descriptor),
+    [padBytes(ISSUER_PUBLIC_KEY_PREFIX, 32), secret, deriveIssuerNonceHash(nonce)],
   );
 }
 
@@ -317,7 +325,7 @@ function createOwnerPrivateState(
   providers: AppProviders,
   issuerSecret: Uint8Array,
 ): DidRegistryPrivateState {
-  const issuerPublicKey = deriveIssuerPublicKey(issuerSecret);
+  const issuerPublicKey = deriveIssuerPublicKey(issuerSecret, INITIAL_ISSUER_NONCE);
   return {
     issuerSecret,
     createdAt: new Date().toISOString(),
@@ -500,6 +508,19 @@ async function getOnChainIssuerPublicKeyHex(
   return toRecordHex(ledgerState.issuer_service);
 }
 
+async function getOnChainIssuerNonce(
+  providers: AppProviders,
+  contractAddress: string,
+): Promise<bigint | undefined> {
+  const { module } = await getContractRuntime();
+  const state = await providers.publicDataProvider.queryContractState(
+    contractAddress as never,
+  );
+  if (!state) return undefined;
+  const ledgerState = module.ledger((state as { data: unknown }).data);
+  return typeof ledgerState.issuer_nonce === "bigint" ? ledgerState.issuer_nonce : undefined;
+}
+
 async function assertOwnerPrivateStateMatchesContract(
   providers: AppProviders,
   contractAddress: string,
@@ -512,9 +533,13 @@ async function assertOwnerPrivateStateMatchesContract(
   if (!onChainIssuerPublicKeyHex) {
     throw new Error("Could not read the issuer authorization key from the contract state.");
   }
+  const onChainIssuerNonce = await getOnChainIssuerNonce(providers, contractAddress);
+  if (onChainIssuerNonce == null) {
+    throw new Error("Could not read the issuer authorization nonce from the contract state.");
+  }
 
   const localIssuerPublicKeyHex = toHex(
-    deriveIssuerPublicKey(privateState.issuerSecret),
+    deriveIssuerPublicKey(privateState.issuerSecret, onChainIssuerNonce),
   );
 
   if (localIssuerPublicKeyHex.toLowerCase() !== onChainIssuerPublicKeyHex.toLowerCase()) {
@@ -576,6 +601,7 @@ export async function getOwnerVaultStatus(
     providers,
     contractAddress,
   );
+  const onChainIssuerNonce = await getOnChainIssuerNonce(providers, contractAddress);
 
   if (!isValidPrivateState(existing)) {
     return {
@@ -587,7 +613,10 @@ export async function getOwnerVaultStatus(
   }
 
   const localIssuerPublicKeyHex = toHex(
-    deriveIssuerPublicKey(existing.issuerSecret),
+    deriveIssuerPublicKey(
+      existing.issuerSecret,
+      onChainIssuerNonce ?? INITIAL_ISSUER_NONCE,
+    ),
   );
 
   return {
@@ -944,7 +973,10 @@ export async function deployDidRegistry(
 
   await primeWalletSession(providers);
   const ownerPrivateState = createRandomOwnerPrivateState(providers);
-  const ownerPublicKey = deriveIssuerPublicKey(ownerPrivateState.issuerSecret);
+  const ownerPublicKey = deriveIssuerPublicKey(
+    ownerPrivateState.issuerSecret,
+    INITIAL_ISSUER_NONCE,
+  );
   const { compiledContract } = await getContractRuntime();
   const deployed = await deployContract(providers as never, {
     compiledContract,

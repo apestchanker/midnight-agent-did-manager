@@ -194,6 +194,7 @@ export type Ledger = {
     [Symbol.iterator](): Iterator<[Uint8Array, Uint8Array]>
   };
   readonly registry_nonce: bigint;
+  readonly issuer_nonce: bigint;
 }
 
 export type ContractReferenceLocations = any;

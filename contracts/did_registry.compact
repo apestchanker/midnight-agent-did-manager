@@ -28,6 +28,7 @@ export ledger organization_labels: Map<Bytes<32>, Bytes<64>>;
 export ledger organization_disclosures: Map<Bytes<32>, Uint<8>>;
 export ledger revocation_commitments: Map<Bytes<32>, Bytes<32>>;
 export ledger registry_nonce: Counter;
+export ledger issuer_nonce: Counter;
 
 witness issuerSecret(): Bytes<32>;
 
@@ -35,9 +36,13 @@ export circuit contract_version(): Bytes<16> {
   return pad(16, "0.2.1");
 }
 
-circuit issuerPublicKey(secret: Bytes<32>): Bytes<32> {
-  return persistentHash<Vector<2, Bytes<32>>>(
-           [pad(32, "midnight:did:issuer:v1"), secret]);
+circuit issuerNonceHash(nonce: Uint<64>): Bytes<32> {
+  return persistentHash<Uint<64>>(nonce);
+}
+
+circuit issuerPublicKey(secret: Bytes<32>, nonce: Uint<64>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>(
+           [pad(32, "midnight:did:issuer:v1"), secret, issuerNonceHash(nonce)]);
 }
 
 constructor(owner_public_key: Bytes<32>) {
@@ -50,6 +55,7 @@ constructor(owner_public_key: Bytes<32>) {
   total_requests = 0;
   total_active_dids = 0;
   registry_nonce.increment(1);
+  issuer_nonce.increment(1);
 }
 
 export circuit request_did(
@@ -100,7 +106,7 @@ export circuit issue_did(
                  ): [] {
   assert(initialized, "Contract not initialized");
   const issuer_secret = issuerSecret();
-  const issuer_key = issuerPublicKey(issuer_secret);
+  const issuer_key = issuerPublicKey(issuer_secret, issuer_nonce);
   assert(issuer_key == issuer_service, "Unauthorized issuer");
   assert(
     disclose(organization_disclosure) == (0 as Uint<8>) ||
@@ -124,6 +130,8 @@ export circuit issue_did(
   status_by_agent.insert(public_agent_key, (2 as Uint<8>));
 
   total_active_dids = (total_active_dids + 1) as Uint<64>;
+  issuer_nonce.increment(1);
+  issuer_service = disclose(issuerPublicKey(issuer_secret, issuer_nonce));
   registry_nonce.increment(1);
 }
 
@@ -167,7 +175,7 @@ export circuit update_did(
                  ): [] {
   assert(initialized, "Contract not initialized");
   const issuer_secret = issuerSecret();
-  const issuer_key = issuerPublicKey(issuer_secret);
+  const issuer_key = issuerPublicKey(issuer_secret, issuer_nonce);
   assert(issuer_key == issuer_service, "Unauthorized issuer");
   assert(
     disclose(organization_disclosure) == (0 as Uint<8>) ||
@@ -189,6 +197,8 @@ export circuit update_did(
   }
   organization_disclosures.insert(public_agent_key, disclose(organization_disclosure));
   status_by_agent.insert(public_agent_key, (2 as Uint<8>));
+  issuer_nonce.increment(1);
+  issuer_service = disclose(issuerPublicKey(issuer_secret, issuer_nonce));
   registry_nonce.increment(1);
 }
 
@@ -215,7 +225,7 @@ export circuit revoke_did(
                  ): [] {
   assert(initialized, "Contract not initialized");
   const issuer_secret = issuerSecret();
-  const issuer_key = issuerPublicKey(issuer_secret);
+  const issuer_key = issuerPublicKey(issuer_secret, issuer_nonce);
   assert(issuer_key == issuer_service, "Unauthorized issuer");
 
   const public_agent_key = disclose(agent_key);
@@ -227,5 +237,7 @@ export circuit revoke_did(
 
   assert(total_active_dids > (0 as Uint<64>), "Active DID counter underflow");
   total_active_dids = (total_active_dids - 1) as Uint<64>;
+  issuer_nonce.increment(1);
+  issuer_service = disclose(issuerPublicKey(issuer_secret, issuer_nonce));
   registry_nonce.increment(1);
 }
