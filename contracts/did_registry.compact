@@ -2,7 +2,7 @@ pragma language_version >= 0.20;
 
 import CompactStandardLibrary;
 
-// Contract version: 0.2.1
+// Contract version: 0.2.2
 
 // DID lifecycle status codes:
 // 0 = none
@@ -33,7 +33,7 @@ export ledger issuer_nonce: Counter;
 witness issuerSecret(): Bytes<32>;
 
 export circuit contract_version(): Bytes<16> {
-  return pad(16, "0.2.1");
+  return pad(16, "0.2.2");
 }
 
 circuit issuerNonceHash(nonce: Uint<64>): Bytes<32> {

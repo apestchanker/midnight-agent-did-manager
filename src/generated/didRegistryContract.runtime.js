@@ -1017,7 +1017,7 @@ export class Contract {
     return result_0;
   }
   _contract_version_0() {
-    return new Uint8Array([48, 46, 50, 46, 49, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    return new Uint8Array([48, 46, 50, 46, 50, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
   }
   _issuerNonceHash_0(nonce_0) { return this._persistentHash_1(nonce_0); }
   _issuerPublicKey_0(secret_0, nonce_0) {

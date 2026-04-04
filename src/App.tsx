@@ -68,7 +68,7 @@ export default function App() {
   }
   const rawEnv = import.meta.env as Record<string, string | undefined>;
   const appTitle = (rawEnv.VITE_APP_TITLE || "Midnight Agent DID Manager").trim();
-  const appVersion = (rawEnv.VITE_APP_VERSION || "0.2.1").trim();
+  const appVersion = (rawEnv.VITE_APP_VERSION || "0.2.2").trim();
   const versionedAppTitle = `${appTitle} v${appVersion}`;
   const configuredAdminShieldedAddress = (
     rawEnv.VITE_ADMIN_WALLET_SHIELDED_ADDR ||

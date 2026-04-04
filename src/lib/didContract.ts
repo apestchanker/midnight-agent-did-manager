@@ -33,8 +33,8 @@ const DEPLOY_KEY = "did-registry:last-deploy:v6";
 const COMPILE_KEY = "did-registry:last-compile:v4";
 const DID_CACHE_PREFIX = "did-registry:request-cache:v1";
 const OWNER_PRIVATE_STATE_ID = "issuer-owner-state:v1";
-const APP_VERSION = (import.meta.env.VITE_APP_VERSION || "0.2.1").trim() || "0.2.1";
-const CONTRACT_VERSION = "0.2.1";
+const APP_VERSION = (import.meta.env.VITE_APP_VERSION || "0.2.2").trim() || "0.2.2";
+const CONTRACT_VERSION = "0.2.2";
 const MANAGED_CONTRACT_BASE_PATH =
   (import.meta.env.VITE_MANAGED_CONTRACT_PATH || "").trim() ||
   "/contracts/managed/did-registry";

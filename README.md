@@ -276,7 +276,7 @@ See:
 
 ## Tested Versions
 
-- Application version: `0.2.1`
+- Application version: `0.2.2`
 - Midnight JS SDK family used by this repo: `4.0.2`
 - Midnight DApp connector API: `4.0.1`
 - Midnight ledger / proof stack used by this repo: `8.0.3`
