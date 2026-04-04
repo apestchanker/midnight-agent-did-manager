@@ -5,60 +5,23 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const repoRoot = resolve(__dirname, "..");
-const envPath = resolve(repoRoot, ".env");
-
-function parseEnvFile(content) {
-  const parsed = {};
-
-  for (const rawLine of content.split(/\r?\n/u)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-
-    const separatorIndex = line.indexOf("=");
-    if (separatorIndex === -1) continue;
-
-    const key = line.slice(0, separatorIndex).trim();
-    if (!key) continue;
-
-    let value = line.slice(separatorIndex + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-
-    parsed[key] = value;
-  }
-
-  return parsed;
-}
-
-function resolveVersion(rawValue, key) {
-  const normalized = (rawValue || "").trim();
-  if (!normalized) {
-    throw new Error(
-      `Missing required ${key} in .env. Define both VITE_APP_VERSION and VITE_CONTRACT_VERSION in /Users/alex/Documents/Developer/didMN/.env.`,
-    );
-  }
-  return normalized;
-}
+const packageJsonPath = resolve(repoRoot, "package.json");
 
 export function getVersionConfig() {
-  let fileEnv;
-  try {
-    fileEnv = parseEnvFile(readFileSync(envPath, "utf-8"));
-  } catch {
+  const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
+  const appVersion = String(packageJson.version || "").trim();
+  const contractVersion = String(packageJson.contractVersion || "").trim();
+
+  if (!appVersion) {
     throw new Error(
-      "Missing .env file. Define VITE_APP_VERSION and VITE_CONTRACT_VERSION in /Users/alex/Documents/Developer/didMN/.env.",
+      "Missing package.json version. Define the app version in package.json.",
     );
   }
-
-  const appVersion = resolveVersion(fileEnv.VITE_APP_VERSION, "VITE_APP_VERSION");
-  const contractVersion = resolveVersion(
-    fileEnv.VITE_CONTRACT_VERSION,
-    "VITE_CONTRACT_VERSION",
-  );
+  if (!contractVersion) {
+    throw new Error(
+      "Missing package.json contractVersion. Define the contract version in package.json.",
+    );
+  }
 
   return {
     appVersion,

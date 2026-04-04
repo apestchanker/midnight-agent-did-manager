@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.1
+
+### Fixed
+- Standardized app and contract version resolution to use `package.json` as the single tracked source of truth via `version` and `contractVersion`.
+  Reason/impact: avoids CI build failures caused by missing local `.env` files and prevents version drift between local development and GitHub Actions.
+
 ## v0.3.0
 
 ### Changed
@@ -11,9 +17,6 @@
 
 - Moved the React app to consume registry session state and subscriptions instead of repeatedly re-fetching contract state imperatively.
   Reason/impact: improves UI consistency, reduces duplicated state-loading logic, and makes state refresh after on-chain actions more reliable.
-
-- Standardized app and contract version resolution to use `.env` as the only source of truth for `VITE_APP_VERSION` and `VITE_CONTRACT_VERSION`.
-  Reason/impact: prevents mixed-version behavior between environment files and package metadata.
 
 ### Added
 - Added encrypted owner-vault backup and restore support around contract-scoped Midnight private state.
