@@ -6,20 +6,11 @@ type WalletOption = {
   apiVersion: string;
 };
 
-type PendingRemoteProverApproval = {
-  config: {
-    proverServerUri?: string;
-    networkId?: string;
-  };
-  walletName: string;
-};
-
 type WalletPanelProps = {
   status:
     | "detecting"
     | "disconnected"
     | "connecting"
-    | "awaiting_remote_prover_approval"
     | "connected";
   address: string;
   error: string;
@@ -28,9 +19,6 @@ type WalletPanelProps = {
   availableWallets: WalletOption[];
   selectedWalletName: string;
   onSelectWallet: (walletName: string) => void;
-  pendingRemoteProverApproval: PendingRemoteProverApproval | null;
-  approveRemoteProver: () => Promise<void>;
-  declineRemoteProver: () => void;
   storageMode: StorageMode;
   onSelectStorageMode: (mode: StorageMode) => void;
   onConnect?: (address: string) => void;
@@ -50,9 +38,6 @@ export function WalletPanel({
   availableWallets,
   selectedWalletName,
   onSelectWallet,
-  pendingRemoteProverApproval,
-  approveRemoteProver,
-  declineRemoteProver,
   storageMode,
   onSelectStorageMode,
   onConnect,
@@ -222,38 +207,16 @@ export function WalletPanel({
               ? "No Wallet Detected"
               : `Connect ${selectedWalletName} Wallet`}
       </button>
-      {pendingRemoteProverApproval ? (
-        <div className="rounded-lg border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
-          <div className="font-medium">Remote proving service detected</div>
-          <div className="mt-2 text-xs text-amber-200/90">
-            Wallet `{pendingRemoteProverApproval.walletName}` will use
-            {" "}
-            `{pendingRemoteProverApproval.config.proverServerUri || "an unknown remote endpoint"}`
-            {" "}
-            on network `{pendingRemoteProverApproval.config.networkId || "unknown"}`.
-          </div>
-          <div className="mt-2 text-xs text-amber-200/90">
-            Continue only if you explicitly want proofs to be generated through an
-            external service.
-          </div>
-          <div className="mt-3 flex gap-2">
-            <button
-              onClick={() => {
-                void approveRemoteProver();
-              }}
-              className="rounded-lg bg-amber-200 px-3 py-2 text-xs font-medium text-amber-950 hover:bg-amber-100 transition"
-            >
-              Continue With Remote Prover
-            </button>
-            <button
-              onClick={declineRemoteProver}
-              className="rounded-lg border border-amber-700 px-3 py-2 text-xs font-medium text-amber-100 hover:bg-amber-950/40 transition"
-            >
-              Cancel
-            </button>
-          </div>
+      <div className="rounded-lg border border-amber-700 bg-amber-950/20 p-3 text-sm text-amber-100">
+        <div className="font-medium">PRIVACY WARNING</div>
+        <div className="mt-2 text-xs text-amber-200/90">
+          This app is currenty configured to use the proof service in the CLOUD
+          provided by the connected wallet. BEWARE that any private DATA you use
+          while generating PROOFs will be sent to that CLOUD provider, with the
+          associated privacy RISK it implies. IF you do not trust the WALLET
+          PROVIDER, configure a local PROOF-Server before using this App.
         </div>
-      ) : null}
+      </div>
       {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
     </div>
   );

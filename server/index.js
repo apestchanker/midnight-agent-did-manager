@@ -10,6 +10,7 @@ import {
   createDidRequest,
   createWalletDidRequest,
   createSubscription,
+  revokeCustomerMcpKey,
   getLatestAdminRegistryDeployment,
   getCustomerByWallet,
   getDidRequestById,
@@ -133,6 +134,24 @@ const server = createServer(async (req, res) => {
           label: body.label || "default-agent-key",
           scopes: body.scopes,
           expiresAt: body.expiresAt,
+        }),
+      );
+      return;
+    }
+
+    if (
+      req.method === "POST" &&
+      parts[0] === "api" &&
+      parts[1] === "customers" &&
+      parts[3] === "mcp-keys" &&
+      parts[5] === "revoke"
+    ) {
+      sendJson(
+        res,
+        200,
+        await revokeCustomerMcpKey({
+          customerId: parts[2],
+          keyId: parts[4],
         }),
       );
       return;

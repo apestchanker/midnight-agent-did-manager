@@ -506,6 +506,37 @@ It is:
 
 It is not stored on-chain.
 
+### MCP server modes
+
+The repository now exposes a full MCP server on top of the existing DID workflow layer:
+
+- `npm run dev:mcp:stdio`
+  Runs an MCP stdio server for agent hosts that launch local MCP processes.
+- `npm run dev:mcp:http`
+  Runs an MCP HTTP server on `http://localhost:8788/mcp`.
+
+The MCP server is authenticated by the same human-issued MCP key used by the REST workflow.
+Agents can provide that key through:
+
+- `initialize.mcpKey`
+- `initialize.authToken`
+- `MCP_KEY` for stdio mode
+- `X-MCP-Key` or `Authorization: Bearer ...` for HTTP mode
+
+The HTTP mode also exposes discovery metadata:
+
+- `GET /.well-known/mcp`
+- `GET /mcp/discovery`
+
+Inside MCP itself, discovery is available through:
+
+- `resources/list`
+- `resources/read`
+- `resources/templates/list`
+- `prompts/list`
+- `prompts/get`
+- `tools/list`
+
 ### How to create and use an MCP key
 
 From the UI:
@@ -534,6 +565,32 @@ The agent flow is:
 4. Human approves the request.
 5. Admin issues the DID on-chain.
 6. The DID and credentials become available through the resolver and credential endpoints.
+
+### MCP discovery flow
+
+An agent can discover how to use the server without out-of-band documentation:
+
+1. Call `initialize` and provide the MCP key.
+2. Call `resources/list` and read:
+   - `didmn://guide/overview`
+   - `didmn://guide/auth`
+   - `didmn://guide/tools`
+   - `didmn://guide/workflows`
+3. Call `prompts/list` and optionally `prompts/get` for:
+   - `agent_onboarding`
+   - `request_did_workflow`
+4. Call `tools/list` to see only the tools allowed by the scopes on the current MCP key.
+
+Current MCP tools include:
+
+- `did_request_create`
+- `did_request_list`
+- `did_request_get`
+- `did_resolve`
+- `did_validate`
+- `issuer_descriptor_get`
+- `credential_bundle_get`
+- `credential_list`
 
 Example request:
 

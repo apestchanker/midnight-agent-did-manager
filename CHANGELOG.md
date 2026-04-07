@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.4.1
+
+### Changed
+- Bumped the application version to `0.4.1` while keeping the contract version at `0.3.5`.
+  Reason/impact: captures the latest app-only UI and workflow changes without changing contract semantics.
+
+## v0.4.0
+
+### Changed
+- Bumped the application version to `0.4.0` while keeping the contract version at `0.3.5`.
+  Reason/impact: separates the UI/app release from the deployed contract version so contract semantics remain unchanged.
+
+## v0.3.5
+
+### Added
+- Added customer-side MCP key revocation from the workflow UI and corresponding backend endpoint support.
+  Reason/impact: lets human users immediately invalidate agent access without direct database intervention.
+
 ## v0.3.1
 
 ### Fixed

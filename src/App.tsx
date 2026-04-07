@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
 import { Button } from "./components/ui/button";
@@ -48,12 +48,27 @@ const SECTION_IDS = {
 
 export default function App() {
   type ViewMode = "user" | "admin" | "registry";
+  type ActiveMainSection =
+    | typeof SECTION_IDS.wallet
+    | typeof SECTION_IDS.agents
+    | typeof SECTION_IDS.registry
+    | typeof SECTION_IDS.registryDirectory
+    | typeof SECTION_IDS.request
+    | typeof SECTION_IDS.issuer
+    | typeof SECTION_IDS.credentials
+    | typeof SECTION_IDS.workflow
+    | "admin-subscriptions"
+    | "owner-vault"
+    | "deploy-did-registry";
   type SidebarItem = {
     id: string;
     label: string;
     shortLabel: string;
   };
+  type SettingsSection = "overview" | "subscriptions" | "mcp" | "human";
   type AgentSummary = {
+    key: string;
+    contractAddress: string;
     subjectWalletAddress: string;
     latestRequestId: string;
     latestStatus: string;
@@ -77,6 +92,7 @@ export default function App() {
     .toLowerCase();
   const LAST_CONTRACT_KEY = "did-registry:last-contract-address:v1";
   const LAST_AGENT_KEY = "did-registry:last-agent-address:v1";
+  const LAST_AGENT_SELECTION_KEY = "did-registry:last-agent-selection:v1";
   const STORAGE_MODE_KEY = "did-registry:storage-mode:v1";
   const [storageMode, setStorageMode] = useState<StorageMode>(() => {
     if (typeof window === "undefined") return "app_local";
@@ -93,9 +109,6 @@ export default function App() {
     selectedWalletName,
     setSelectedWalletName,
     connectedWalletName,
-    pendingRemoteProverApproval,
-    approveRemoteProver,
-    declineRemoteProver,
   } = useWallet(storageMode);
 
   useEffect(() => {
@@ -109,6 +122,7 @@ export default function App() {
 
   const [contractAddress, setContractAddress] = useState("");
   const [selectedAgentAddress, setSelectedAgentAddress] = useState("");
+  const [selectedAgentKey, setSelectedAgentKey] = useState("");
   const [didRecord, setDidRecord] = useState<DidRecord | null>(null);
   const [deployResult, setDeployResult] = useState<DeployResult | null>(null);
   const [registryAccess, setRegistryAccess] = useState<RegistryAccess | null>(null);
@@ -119,7 +133,13 @@ export default function App() {
   const [agentsPanelOpen, setAgentsPanelOpen] = useState(true);
   const [adminDidsPanelOpen, setAdminDidsPanelOpen] = useState(true);
   const [adminDidSearch, setAdminDidSearch] = useState("");
+  const [selectedAdminRequestId, setSelectedAdminRequestId] = useState("");
   const [registryPanelOpen, setRegistryPanelOpen] = useState(true);
+  const [selectedRegistryDidId, setSelectedRegistryDidId] = useState("");
+  const [settingsPanelOpen, setSettingsPanelOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("overview");
+  const [activeMainSection, setActiveMainSection] =
+    useState<ActiveMainSection>(SECTION_IDS.wallet);
   const [registryDidSearch, setRegistryDidSearch] = useState("");
   const [newAgentMode, setNewAgentMode] = useState(false);
   const [registrySummary, setRegistrySummary] = useState<RegistrySummary | null>(
@@ -127,6 +147,22 @@ export default function App() {
   );
   const [registryDids, setRegistryDids] = useState<RegistryDidRow[]>([]);
   const [registryApi, setRegistryApi] = useState<DidRegistryAPI | null>(null);
+  const [customerQuotaTotal, setCustomerQuotaTotal] = useState(0);
+  const agentCarouselRef = useRef<HTMLDivElement | null>(null);
+  const adminDidCarouselRef = useRef<HTMLDivElement | null>(null);
+  const registryCarouselRef = useRef<HTMLDivElement | null>(null);
+  const customerRegisteredAgentCount = useMemo(
+    () =>
+      new Set(
+        customerRequests
+          .filter((request) => request.request_status === "issued")
+          .map(
+            (request) =>
+              `${request.contract_address}:${request.subject_wallet_address}`,
+          ),
+      ).size,
+    [customerRequests],
+  );
 
   const walletAddress = useMemo(() => address || "", [address]);
   const isConfiguredAdminWallet = useMemo(() => {
@@ -142,22 +178,29 @@ export default function App() {
       registryAccess?.isRegistryAdmin,
   );
   const managedAgents = useMemo<AgentSummary[]>(() => {
-    const latestByWallet = new Map<string, DidRequestRow>();
+    const latestByAgent = new Map<string, DidRequestRow>();
     for (const request of customerRequests) {
-      const current = latestByWallet.get(request.subject_wallet_address);
+      const agentKey = [
+        request.contract_address,
+        request.subject_wallet_address,
+        getRequestAgentName(request) || request.requested_did || request.id,
+      ].join(":");
+      const current = latestByAgent.get(agentKey);
       if (!current) {
-        latestByWallet.set(request.subject_wallet_address, request);
+        latestByAgent.set(agentKey, request);
         continue;
       }
       if (
         new Date(request.updated_at).getTime() >=
         new Date(current.updated_at).getTime()
       ) {
-        latestByWallet.set(request.subject_wallet_address, request);
+        latestByAgent.set(agentKey, request);
       }
     }
-    return Array.from(latestByWallet.values())
-      .map((request) => ({
+    return Array.from(latestByAgent.entries())
+      .map(([key, request]) => ({
+        key,
+        contractAddress: request.contract_address,
         subjectWalletAddress: request.subject_wallet_address,
         latestRequestId: request.id,
         latestStatus: request.request_status,
@@ -173,10 +216,17 @@ export default function App() {
   }, [customerRequests]);
   const activeAgentSummary = useMemo(
     () =>
+      managedAgents.find((agent) => agent.key === selectedAgentKey) ||
+      managedAgents.find(
+        (agent) =>
+          agent.subjectWalletAddress === selectedAgentAddress &&
+          agent.contractAddress === contractAddress,
+      ) ||
       managedAgents.find(
         (agent) => agent.subjectWalletAddress === selectedAgentAddress,
-      ) || null,
-    [managedAgents, selectedAgentAddress],
+      ) ||
+      null,
+    [contractAddress, managedAgents, selectedAgentAddress, selectedAgentKey],
   );
   const userCanOpenAgentFlows = Boolean(activeAgentSummary || newAgentMode);
   const adminDids = useMemo(() => {
@@ -211,10 +261,11 @@ export default function App() {
   }, [adminDidSearch, adminDids]);
   const selectedAdminDid = useMemo(
     () =>
+      adminDids.find((request) => request.id === selectedAdminRequestId) ||
       adminDids.find(
         (request) => request.subject_wallet_address === selectedAgentAddress,
       ) || null,
-    [adminDids, selectedAgentAddress],
+    [adminDids, selectedAdminRequestId, selectedAgentAddress],
   );
   const filteredRegistryDids = useMemo(() => {
     const needle = registryDidSearch.trim().toLowerCase();
@@ -231,16 +282,18 @@ export default function App() {
   }, [registryDidSearch, registryDids]);
   const selectedRegistryDid = useMemo(
     () =>
+      registryDids.find((record) => record.id === selectedRegistryDidId) ||
       registryDids.find(
         (record) => record.subject_wallet_address === selectedAgentAddress,
       ) || null,
-    [registryDids, selectedAgentAddress],
+    [registryDids, selectedAgentAddress, selectedRegistryDidId],
   );
 
   const refreshRequestCollections = useCallback(async () => {
     if (!walletAddress.trim()) {
       setCustomerRequests([]);
       setAdminRequests([]);
+      setCustomerQuotaTotal(0);
       return;
     }
 
@@ -250,11 +303,18 @@ export default function App() {
     ]);
 
     if (customer?.customer?.id) {
+      setCustomerQuotaTotal(
+        customer.subscriptions.reduce(
+          (sum, subscription) => sum + Number(subscription.did_quota_total || 0),
+          0,
+        ),
+      );
       setCustomerRequests(
         await listDidRequests({ customerId: customer.customer.id }),
       );
     } else {
       setCustomerRequests([]);
+      setCustomerQuotaTotal(0);
     }
     setAdminRequests(pendingAdmin);
   }, [walletAddress]);
@@ -270,16 +330,34 @@ export default function App() {
       typeof window !== "undefined"
         ? window.localStorage.getItem(LAST_AGENT_KEY)
         : "";
+    const viewedAgentSelection =
+      typeof window !== "undefined"
+        ? window.localStorage.getItem(LAST_AGENT_SELECTION_KEY)
+        : "";
     if (viewedContract || savedAddress) setContractAddress(viewedContract || savedAddress);
     if (viewedAgent) setSelectedAgentAddress(viewedAgent);
+    if (viewedAgentSelection) setSelectedAgentKey(viewedAgentSelection);
     if (savedDeployment) setDeployResult(savedDeployment);
   }, []);
 
   useEffect(() => {
     if (!walletAddress) {
       setSelectedAgentAddress("");
+      setSelectedAgentKey("");
     }
   }, [walletAddress]);
+
+  useEffect(() => {
+    if (viewMode === "user") {
+      setActiveMainSection(SECTION_IDS.wallet);
+      return;
+    }
+    if (viewMode === "admin") {
+      setActiveMainSection(SECTION_IDS.registry);
+      return;
+    }
+    setActiveMainSection(SECTION_IDS.registryDirectory);
+  }, [viewMode]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -296,37 +374,47 @@ export default function App() {
   }, [selectedAgentAddress]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (selectedAgentKey.trim()) {
+      window.localStorage.setItem(LAST_AGENT_SELECTION_KEY, selectedAgentKey.trim());
+    }
+  }, [selectedAgentKey]);
+
+  useEffect(() => {
     if (viewMode !== "user") return;
     if (newAgentMode) return;
     if (managedAgents.length === 0) {
       setSelectedAgentAddress("");
+      setSelectedAgentKey("");
       return;
     }
     const currentExists = managedAgents.some(
-      (agent) => agent.subjectWalletAddress === selectedAgentAddress,
+      (agent) => agent.key === selectedAgentKey,
     );
     if (!currentExists) {
       setSelectedAgentAddress("");
+      setSelectedAgentKey("");
     }
-  }, [managedAgents, newAgentMode, selectedAgentAddress, viewMode]);
+  }, [managedAgents, newAgentMode, selectedAgentKey, viewMode]);
 
   useEffect(() => {
     if (viewMode !== "admin") return;
     if (adminDids.length === 0) {
       setSelectedAgentAddress("");
+      setSelectedAdminRequestId("");
       return;
     }
-    const currentExists = adminDids.some(
-      (request) => request.subject_wallet_address === selectedAgentAddress,
-    );
+    const currentExists = adminDids.some((request) => request.id === selectedAdminRequestId);
     if (!currentExists) {
+      setSelectedAdminRequestId(adminDids[0].id);
       setSelectedAgentAddress(adminDids[0].subject_wallet_address);
     }
-  }, [adminDids, selectedAgentAddress, viewMode]);
+  }, [adminDids, selectedAdminRequestId, viewMode]);
 
   useEffect(() => {
     if (viewMode === "registry" || viewMode === "user") {
       setSelectedAgentAddress("");
+      setSelectedAgentKey("");
       setDidRecord(null);
       return;
     }
@@ -336,15 +424,22 @@ export default function App() {
     if (viewMode !== "registry") return;
     if (registryDids.length === 0) {
       setSelectedAgentAddress("");
+      setSelectedRegistryDidId("");
       return;
     }
     const currentExists = registryDids.some(
-      (record) => record.subject_wallet_address === selectedAgentAddress,
+      (record) => record.id === selectedRegistryDidId,
     );
     if (!currentExists) {
-      setSelectedAgentAddress("");
+      setSelectedRegistryDidId(registryDids[0].id);
+      setSelectedAgentAddress(registryDids[0].subject_wallet_address);
     }
-  }, [registryDids, selectedAgentAddress, viewMode]);
+  }, [registryDids, selectedRegistryDidId, viewMode]);
+
+  useEffect(() => {
+    if (viewMode !== "user") return;
+    setDidRecord(null);
+  }, [contractAddress, selectedAgentKey, viewMode]);
 
   useEffect(() => {
     if (!providers || !contractAddress.trim()) {
@@ -642,9 +737,8 @@ export default function App() {
 
   useEffect(() => {
     if (
-      viewMode !== "admin" ||
+      (viewMode !== "admin" && viewMode !== "registry") ||
       !providers ||
-      contractAddress.trim() ||
       !walletAddress.trim()
     ) {
       return;
@@ -656,19 +750,26 @@ export default function App() {
     })
       .then((deployment) => {
         if (!deployment?.contract_address) return;
-        setContractAddress(deployment.contract_address);
+        if (
+          viewMode === "registry" ||
+          !contractAddress.trim() ||
+          contractAddress !== deployment.contract_address
+        ) {
+          setContractAddress(deployment.contract_address);
+        }
         setDeployResult((current) =>
-          current ||
-          ({
-            contractAddress: deployment.contract_address,
-            txHash: deployment.deploy_tx_hash || "",
-            txId: deployment.deploy_tx_id || undefined,
-            initializeTxHash: deployment.initialize_tx_hash || undefined,
-            initializeTxId: deployment.initialize_tx_id || undefined,
-            mode: deployment.deployment_mode,
-            deployedAt: deployment.created_at,
-            networkId: deployment.network_id,
-          } satisfies DeployResult),
+          current && current.contractAddress === deployment.contract_address
+            ? current
+            : ({
+                contractAddress: deployment.contract_address,
+                txHash: deployment.deploy_tx_hash || "",
+                txId: deployment.deploy_tx_id || undefined,
+                initializeTxHash: deployment.initialize_tx_hash || undefined,
+                initializeTxId: deployment.initialize_tx_id || undefined,
+                mode: deployment.deployment_mode,
+                deployedAt: deployment.created_at,
+                networkId: deployment.network_id,
+              } satisfies DeployResult),
         );
       })
       .catch((error) => {
@@ -676,35 +777,58 @@ export default function App() {
       });
   }, [viewMode, providers, walletAddress, contractAddress]);
 
-  function scrollToSection(id: string) {
-    if (typeof document === "undefined") return;
-    document.getElementById(id)?.scrollIntoView({
-      behavior: "smooth",
-      block: "start",
-    });
-  }
-
   const sidebarItems: SidebarItem[] =
     viewMode === "admin"
       ? [
           { id: SECTION_IDS.wallet, label: "Wallet", shortLabel: "W" },
           { id: SECTION_IDS.registry, label: "Registry", shortLabel: "R" },
-          { id: SECTION_IDS.workflow, label: "Admin Review", shortLabel: "A" },
+          { id: "admin-subscriptions", label: "Subscriptions", shortLabel: "S" },
+          { id: SECTION_IDS.workflow, label: "Review Queue", shortLabel: "Q" },
           { id: SECTION_IDS.issuer, label: "Issuer", shortLabel: "I" },
+          { id: "owner-vault", label: "Owner Vault", shortLabel: "V" },
           { id: "deploy-did-registry", label: "Deploy DID Registry", shortLabel: "D" },
         ]
       : viewMode === "registry"
-        ? [
-            { id: SECTION_IDS.wallet, label: "Wallet", shortLabel: "W" },
-            { id: SECTION_IDS.registry, label: "Registry", shortLabel: "R" },
-            { id: SECTION_IDS.registryDirectory, label: "Directory", shortLabel: "D" },
-          ]
-      : [
-          { id: SECTION_IDS.wallet, label: "Wallet", shortLabel: "W" },
-          { id: SECTION_IDS.request, label: "Request DID", shortLabel: "D" },
-          { id: SECTION_IDS.credentials, label: "Credentials", shortLabel: "C" },
-          { id: SECTION_IDS.workflow, label: "Human + MCP", shortLabel: "H" },
-        ];
+        ? [{ id: SECTION_IDS.registryDirectory, label: "Directory", shortLabel: "D" }]
+      : [{ id: SECTION_IDS.wallet, label: "Wallet", shortLabel: "W" }];
+
+  const activeSettingsLabel =
+    {
+      overview: "Overview",
+      subscriptions: "Subscriptions",
+      mcp: "MCP Keys",
+      human: "Approvals",
+    }[settingsSection];
+
+  function scrollAgentCarousel(direction: "left" | "right") {
+    const node = agentCarouselRef.current;
+    if (!node) return;
+    const step = node.clientWidth;
+    node.scrollBy({
+      left: direction === "left" ? -step : step,
+      behavior: "smooth",
+    });
+  }
+
+  function scrollAdminDidCarousel(direction: "left" | "right") {
+    const node = adminDidCarouselRef.current;
+    if (!node) return;
+    const step = node.clientWidth;
+    node.scrollBy({
+      left: direction === "left" ? -step : step,
+      behavior: "smooth",
+    });
+  }
+
+  function scrollRegistryCarousel(direction: "left" | "right") {
+    const node = registryCarouselRef.current;
+    if (!node) return;
+    const step = node.clientWidth;
+    node.scrollBy({
+      left: direction === "left" ? -step : step,
+      behavior: "smooth",
+    });
+  }
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
@@ -714,13 +838,13 @@ export default function App() {
             ? `lg:grid lg:min-h-screen ${
                 sidebarCollapsed
                   ? "lg:grid-cols-[88px_minmax(0,1fr)]"
-                  : "lg:grid-cols-[280px_minmax(0,1fr)]"
+                  : "lg:grid-cols-[360px_minmax(0,1fr)]"
               }`
             : ""
         }
       >
         {status === "connected" && (
-          <aside className="relative border-b border-zinc-800 bg-zinc-950/95 lg:sticky lg:top-0 lg:h-screen lg:border-b-0 lg:border-r">
+          <aside className="relative overflow-hidden border-b border-zinc-800 bg-zinc-950/95 lg:sticky lg:top-0 lg:h-screen lg:max-h-screen lg:border-b-0 lg:border-r">
             <button
               type="button"
               onClick={() => setSidebarCollapsed((current) => !current)}
@@ -730,7 +854,7 @@ export default function App() {
               {sidebarCollapsed ? ">" : "<"}
             </button>
             <div
-              className={`flex flex-wrap items-center justify-between gap-3 px-4 py-4 md:px-6 lg:flex-col lg:items-stretch lg:justify-start lg:px-4 lg:py-6 ${
+              className={`flex flex-wrap items-center justify-between gap-3 px-4 py-4 md:px-6 lg:h-full lg:min-h-0 lg:flex-col lg:items-stretch lg:justify-start lg:overflow-y-auto lg:overscroll-contain lg:px-4 lg:py-6 ${
                 sidebarCollapsed ? "lg:gap-4" : "lg:gap-6"
               }`}
             >
@@ -796,19 +920,22 @@ export default function App() {
                   <button
                     key={item.id}
                     type="button"
-                    onClick={() => scrollToSection(item.id)}
+                    onClick={() => setActiveMainSection(item.id as ActiveMainSection)}
                     title={sidebarCollapsed ? item.label : undefined}
                     disabled={
                       (viewMode === "user" &&
                         (item.id === SECTION_IDS.request ||
-                          item.id === SECTION_IDS.credentials ||
-                          item.id === SECTION_IDS.workflow) &&
+                          item.id === SECTION_IDS.credentials) &&
                         !userCanOpenAgentFlows) ||
                       (viewMode === "admin" &&
                         item.id === SECTION_IDS.issuer &&
                         !selectedAdminDid)
                     }
-                    className={`rounded-xl border border-zinc-800 bg-zinc-900 text-zinc-200 transition hover:bg-zinc-800 ${
+                    className={`rounded-xl border text-zinc-200 transition ${
+                      activeMainSection === item.id
+                        ? "border-emerald-600 bg-emerald-950/30 text-white"
+                        : "border-zinc-800 bg-zinc-900 text-zinc-200 hover:bg-zinc-800"
+                    } ${
                       sidebarCollapsed
                         ? "px-0 py-3 text-center text-xs lg:w-full"
                         : "px-3 py-2 text-left text-sm lg:w-full"
@@ -820,6 +947,7 @@ export default function App() {
               </nav>
 
               {viewMode === "user" && !sidebarCollapsed && (
+                <>
                 <div className="w-full rounded-xl border border-zinc-800 bg-zinc-900">
                   <div className="flex items-center justify-between px-3 py-3">
                     <button
@@ -838,8 +966,9 @@ export default function App() {
                       onClick={() => {
                         setNewAgentMode(true);
                         setSelectedAgentAddress("");
+                        setSelectedAgentKey("");
                         setAgentsPanelOpen(true);
-                        scrollToSection(SECTION_IDS.agents);
+                        setActiveMainSection(SECTION_IDS.request);
                       }}
                       className="ml-3 flex h-6 w-6 items-center justify-center rounded-full border border-zinc-700 bg-zinc-950 text-sm text-zinc-200 transition hover:bg-zinc-800"
                     >
@@ -856,36 +985,136 @@ export default function App() {
                           No persisted agents yet in the current DB.
                         </p>
                       ) : (
-                        managedAgents.map((agent) => (
-                          <button
-                            key={agent.subjectWalletAddress}
-                            type="button"
-                            onClick={() => {
-                              setNewAgentMode(false);
-                              setSelectedAgentAddress(agent.subjectWalletAddress);
-                              scrollToSection(SECTION_IDS.request);
-                            }}
-                            className={`w-full rounded-lg border px-3 py-2 text-left text-xs transition ${
-                              selectedAgentAddress === agent.subjectWalletAddress
-                                ? "border-emerald-600 bg-emerald-950/30 text-white"
-                                : "border-zinc-800 bg-zinc-950 text-zinc-300 hover:bg-zinc-800"
-                            }`}
-                          >
-                            <div className="font-medium">
-                              {agent.agentName || "Unnamed agent"}
+                        <>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setActiveMainSection(SECTION_IDS.request)}
+                              disabled={!userCanOpenAgentFlows}
+                              className={`rounded-lg border px-3 py-2 text-left text-xs transition ${
+                                activeMainSection === SECTION_IDS.request
+                                  ? "border-emerald-600 bg-emerald-950/30 text-white"
+                                  : "border-zinc-800 bg-zinc-950 text-zinc-300 hover:bg-zinc-800"
+                              } disabled:cursor-not-allowed disabled:opacity-40`}
+                            >
+                              Agent DID
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setActiveMainSection(SECTION_IDS.credentials)}
+                              disabled={!activeAgentSummary}
+                              className={`rounded-lg border px-3 py-2 text-left text-xs transition ${
+                                activeMainSection === SECTION_IDS.credentials
+                                  ? "border-emerald-600 bg-emerald-950/30 text-white"
+                                  : "border-zinc-800 bg-zinc-950 text-zinc-300 hover:bg-zinc-800"
+                              } disabled:cursor-not-allowed disabled:opacity-40`}
+                            >
+                              Credentials
+                            </button>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => scrollAgentCarousel("left")}
+                              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-800 bg-zinc-950 text-zinc-300 transition hover:bg-zinc-800"
+                              aria-label="Scroll agents left"
+                            >
+                              {"<"}
+                            </button>
+                            <div
+                              ref={agentCarouselRef}
+                              className="min-w-0 flex-1 snap-x snap-mandatory overflow-x-auto pb-1 scroll-smooth"
+                            >
+                              <div className="flex w-full">
+                              {managedAgents.map((agent) => (
+                                <button
+                                  key={agent.key}
+                                  type="button"
+                                  onClick={() => {
+                                    setNewAgentMode(false);
+                                    setSelectedAgentKey(agent.key);
+                                    setSelectedAgentAddress(agent.subjectWalletAddress);
+                                    setContractAddress(agent.contractAddress);
+                                    setActiveMainSection(SECTION_IDS.request);
+                                  }}
+                                  className={`w-full shrink-0 snap-start rounded-lg border px-3 py-2 text-left text-xs transition ${
+                                    selectedAgentAddress === agent.subjectWalletAddress &&
+                                    contractAddress === agent.contractAddress
+                                      ? "border-emerald-600 bg-emerald-950/30 text-white"
+                                      : "border-zinc-800 bg-zinc-950 text-zinc-300 hover:bg-zinc-800"
+                                  }`}
+                                >
+                                  <div className="font-medium">
+                                    {agent.agentName || "Unnamed agent"}
+                                  </div>
+                                  <div className="mt-1 break-all font-mono text-zinc-500">
+                                    {agent.subjectWalletAddress}
+                                  </div>
+                                  <div className="mt-1 break-all text-zinc-500">
+                                    {agent.contractAddress}
+                                  </div>
+                                  <div className="mt-1 text-zinc-500">
+                                    {agent.latestStatus}
+                                  </div>
+                                </button>
+                              ))}
                             </div>
-                            <div className="mt-1 break-all font-mono text-zinc-500">
-                              {agent.subjectWalletAddress}
-                            </div>
-                            <div className="mt-1 text-zinc-500">
-                              {agent.latestStatus}
-                            </div>
-                          </button>
-                        ))
+                          </div>
+                            <button
+                              type="button"
+                              onClick={() => scrollAgentCarousel("right")}
+                              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-800 bg-zinc-950 text-zinc-300 transition hover:bg-zinc-800"
+                              aria-label="Scroll agents right"
+                            >
+                              {">"}
+                            </button>
+                          </div>
+                        </>
                       )}
                     </div>
                   )}
                 </div>
+                <div className="w-full rounded-xl border border-zinc-800 bg-zinc-900">
+                  <button
+                    type="button"
+                    onClick={() => setSettingsPanelOpen((current) => !current)}
+                    className="flex w-full items-center justify-between px-3 py-3 text-left text-sm text-white"
+                  >
+                    <span>Settings</span>
+                    <span className="text-xs text-zinc-400">
+                      {settingsPanelOpen ? "˄" : "˅"}
+                    </span>
+                  </button>
+                  {settingsPanelOpen && (
+                    <div className="space-y-2 border-t border-zinc-800 px-3 py-3">
+                      {(
+                        [
+                          ["overview", "Overview"],
+                          ["subscriptions", "Subscriptions"],
+                          ["mcp", "MCP Keys"],
+                          ["human", "Approvals"],
+                        ] as const
+                      ).map(([id, label]) => (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => {
+                            setSettingsSection(id);
+                            setActiveMainSection(SECTION_IDS.workflow);
+                          }}
+                          className={`w-full rounded-lg border px-3 py-2 text-left text-xs transition ${
+                            settingsSection === id
+                              ? "border-emerald-600 bg-emerald-950/30 text-white"
+                              : "border-zinc-800 bg-zinc-950 text-zinc-300 hover:bg-zinc-800"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                </>
               )}
 
               {viewMode === "admin" && !sidebarCollapsed && (
@@ -913,31 +1142,60 @@ export default function App() {
                           No pending DIDs found for admin review.
                         </p>
                       ) : (
-                        filteredAdminDids.map((request) => (
+                        <div className="flex items-center gap-2">
                           <button
-                            key={request.id}
                             type="button"
-                            onClick={() => {
-                              setSelectedAgentAddress(request.subject_wallet_address);
-                              scrollToSection(SECTION_IDS.issuer);
-                            }}
-                            className={`w-full rounded-lg border px-3 py-2 text-left text-xs transition ${
-                              selectedAgentAddress === request.subject_wallet_address
-                                ? "border-amber-600 bg-amber-950/30 text-white"
-                                : "border-zinc-800 bg-zinc-950 text-zinc-300 hover:bg-zinc-800"
-                            }`}
+                            onClick={() => scrollAdminDidCarousel("left")}
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-800 bg-zinc-950 text-zinc-300 transition hover:bg-zinc-800"
+                            aria-label="Scroll admin DIDs left"
                           >
-                            <div className="font-medium">
-                              {String(request.request_payload?.agentName || "Unnamed DID")}
-                            </div>
-                            <div className="mt-1 break-all font-mono text-zinc-500">
-                              {request.subject_wallet_address}
-                            </div>
-                            <div className="mt-1 text-zinc-500">
-                              {request.request_status}
-                            </div>
+                            {"<"}
                           </button>
-                        ))
+                          <div
+                            ref={adminDidCarouselRef}
+                            className="min-w-0 flex-1 snap-x snap-mandatory overflow-x-auto pb-1 scroll-smooth"
+                          >
+                            <div className="flex w-full">
+                              {filteredAdminDids.map((request) => (
+                                <button
+                                  key={request.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedAdminRequestId(request.id);
+                                    setSelectedAgentAddress(request.subject_wallet_address);
+                                    setActiveMainSection(SECTION_IDS.issuer);
+                                  }}
+                                  className={`w-full shrink-0 snap-start rounded-lg border px-3 py-2 text-left text-xs transition ${
+                                    selectedAdminRequestId === request.id
+                                      ? "border-emerald-600 bg-emerald-950/30 text-white"
+                                      : "border-zinc-800 bg-zinc-950 text-zinc-300 hover:bg-zinc-800"
+                                  }`}
+                                >
+                                  <div className="font-medium">
+                                    {String(request.request_payload?.agentName || "Unnamed DID")}
+                                  </div>
+                                  <div className="mt-1 break-all font-mono text-zinc-500">
+                                    {request.subject_wallet_address}
+                                  </div>
+                                  <div className="mt-1 break-all text-zinc-500">
+                                    {request.requested_did || "pending DID"}
+                                  </div>
+                                  <div className="mt-1 text-zinc-500">
+                                    {request.request_status}
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => scrollAdminDidCarousel("right")}
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-800 bg-zinc-950 text-zinc-300 transition hover:bg-zinc-800"
+                            aria-label="Scroll admin DIDs right"
+                          >
+                            {">"}
+                          </button>
+                        </div>
                       )}
                     </div>
                   )}
@@ -969,65 +1227,99 @@ export default function App() {
                           No public DIDs found for this registry.
                         </p>
                       ) : (
-                        filteredRegistryDids.map((record) => (
+                        <div className="flex items-center gap-2">
                           <button
-                            key={record.id}
                             type="button"
-                            onClick={() => {
-                              setSelectedAgentAddress(record.subject_wallet_address);
-                              scrollToSection(SECTION_IDS.registryDirectory);
-                            }}
-                            className={`w-full rounded-lg border px-3 py-2 text-left text-xs transition ${
-                              selectedAgentAddress === record.subject_wallet_address
-                                ? "border-sky-600 bg-sky-950/30 text-white"
-                                : "border-zinc-800 bg-zinc-950 text-zinc-300 hover:bg-zinc-800"
-                            }`}
+                            onClick={() => scrollRegistryCarousel("left")}
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-800 bg-zinc-950 text-zinc-300 transition hover:bg-zinc-800"
+                            aria-label="Scroll registry agents left"
                           >
-                            <div className="font-medium">
-                              {String(record.public_agent_name || "Unnamed agent")}
-                            </div>
-                            <div className="mt-1 break-all font-mono text-zinc-500">
-                              {record.subject_wallet_address}
-                            </div>
-                            <div className="mt-1 text-zinc-500">{record.status}</div>
+                            {"<"}
                           </button>
-                        ))
+                          <div
+                            ref={registryCarouselRef}
+                            className="min-w-0 flex-1 snap-x snap-mandatory overflow-x-auto pb-1 scroll-smooth"
+                          >
+                            <div className="flex w-full">
+                              {filteredRegistryDids.map((record) => (
+                                <button
+                                  key={record.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedRegistryDidId(record.id);
+                                    setSelectedAgentAddress(record.subject_wallet_address);
+                                    setActiveMainSection(SECTION_IDS.registryDirectory);
+                                  }}
+                                  className={`w-full shrink-0 snap-start rounded-lg border px-3 py-2 text-left text-xs transition ${
+                                    selectedRegistryDidId === record.id
+                                      ? "border-emerald-600 bg-emerald-950/30 text-white"
+                                      : "border-zinc-800 bg-zinc-950 text-zinc-300 hover:bg-zinc-800"
+                                  }`}
+                                >
+                                  <div className="font-medium">
+                                    {String(record.public_agent_name || "Unnamed agent")}
+                                  </div>
+                                  <div className="mt-1 break-all font-mono text-zinc-500">
+                                    {record.subject_wallet_address}
+                                  </div>
+                                  <div className="mt-1 break-all text-zinc-500">
+                                    {record.did}
+                                  </div>
+                                  <div className="mt-1 text-zinc-500">{record.status}</div>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => scrollRegistryCarousel("right")}
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-800 bg-zinc-950 text-zinc-300 transition hover:bg-zinc-800"
+                            aria-label="Scroll registry agents right"
+                          >
+                            {">"}
+                          </button>
+                        </div>
                       )}
                     </div>
                   )}
                 </div>
               )}
-
-              <div className={`grid w-full gap-2 text-xs ${sidebarCollapsed ? "grid-cols-1" : "grid-cols-2 lg:grid-cols-1"}`}>
-                <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-3">
-                  {!sidebarCollapsed && <div className="text-zinc-500">View</div>}
-                  <div className={`font-semibold text-white ${sidebarCollapsed ? "text-center" : "mt-1 capitalize"}`}>
-                    {sidebarCollapsed ? viewMode.slice(0, 1).toUpperCase() : viewMode}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-3">
-                  {!sidebarCollapsed && <div className="text-zinc-500">Agents</div>}
-                  <div className={`font-semibold text-white ${sidebarCollapsed ? "text-center" : "mt-1"}`}>
-                    {managedAgents.length}
-                  </div>
-                </div>
-              </div>
             </div>
           </aside>
         )}
 
-        <main className="mx-auto w-full max-w-6xl space-y-8 px-4 py-6 md:px-8 md:py-10">
-        <header className="space-y-2">
-          <h1 className="text-3xl md:text-4xl font-bold">
-            {versionedAppTitle}
-          </h1>
-          <p className="text-zinc-400 text-sm md:text-base">
-            Connect wallet, register a DID, and track registry state from one
-            interface.
-          </p>
+        <main className="mx-auto w-full max-w-6xl px-4 py-6 md:px-8 md:py-10 lg:h-screen lg:overflow-y-auto">
+        <header className="sticky top-0 z-10 -mx-4 border-b border-zinc-800 bg-zinc-950/95 px-4 pb-4 pt-1 backdrop-blur md:-mx-8 md:px-8">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div className="space-y-2">
+              <h1 className="text-3xl md:text-4xl font-bold">
+                {versionedAppTitle}
+              </h1>
+              <p className="text-zinc-400 text-sm md:text-base">
+                Connect wallet, register a DID, and track registry state from one
+                interface.
+              </p>
+            </div>
+            {status === "connected" && (
+              <div className="flex flex-wrap items-center gap-2 md:justify-end">
+                <div className="rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs text-zinc-300">
+                  <span className="text-zinc-500">View:</span>{" "}
+                  <span className="font-semibold capitalize text-white">{viewMode}</span>
+                </div>
+                {viewMode === "user" && (
+                  <div className="rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs text-zinc-300">
+                    <span className="text-zinc-500">Agents:</span>{" "}
+                    <span className="font-semibold text-white">
+                      {customerRegisteredAgentCount} / {customerQuotaTotal}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </header>
 
-        {viewMode !== "registry" && (
+        {viewMode !== "registry" && activeMainSection === SECTION_IDS.wallet && (
           <section id={SECTION_IDS.wallet} className="scroll-mt-24 space-y-3">
             <div className="flex items-center justify-between">
               <div>
@@ -1056,9 +1348,6 @@ export default function App() {
               availableWallets={availableWallets}
               selectedWalletName={selectedWalletName}
               onSelectWallet={setSelectedWalletName}
-              pendingRemoteProverApproval={pendingRemoteProverApproval}
-              approveRemoteProver={approveRemoteProver}
-              declineRemoteProver={declineRemoteProver}
               storageMode={storageMode}
               onSelectStorageMode={setStorageMode}
             />
@@ -1066,7 +1355,7 @@ export default function App() {
         )}
 
         {status === "connected" && (
-          <div className="space-y-6">
+          <div className="mt-8 space-y-6">
             {walletError && (
               <div className="bg-red-950/50 border border-red-800 rounded-lg p-4 text-red-300 text-sm">
                 <strong>⚠️ Wallet Error:</strong> {walletError}
@@ -1085,7 +1374,7 @@ export default function App() {
               </div>
             )}
 
-            {providers && viewMode === "admin" && (
+            {providers && viewMode === "admin" && activeMainSection === SECTION_IDS.registry && (
               <section id={SECTION_IDS.registry} className="scroll-mt-24 space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
@@ -1160,7 +1449,7 @@ export default function App() {
               </section>
             )}
 
-            {viewMode === "user" && (
+            {viewMode === "user" && activeMainSection === SECTION_IDS.agents && (
               <section id={SECTION_IDS.agents} className="scroll-mt-24 space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
@@ -1177,7 +1466,7 @@ export default function App() {
                       onClick={() => {
                         setNewAgentMode(true);
                         setSelectedAgentAddress("");
-                        scrollToSection(SECTION_IDS.request);
+                        setActiveMainSection(SECTION_IDS.request);
                       }}
                       className="bg-emerald-600 hover:bg-emerald-500 text-white"
                     >
@@ -1200,7 +1489,7 @@ export default function App() {
               </section>
             )}
 
-            {viewMode === "registry" && (
+            {viewMode === "registry" && activeMainSection === SECTION_IDS.registryDirectory && (
               <section
                 id={SECTION_IDS.registryDirectory}
                 className="scroll-mt-24 space-y-4"
@@ -1287,7 +1576,7 @@ export default function App() {
               </section>
             )}
 
-            {viewMode === "user" && (
+            {viewMode === "user" && activeMainSection === SECTION_IDS.request && (
               <section id={SECTION_IDS.request} className="scroll-mt-24 space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
@@ -1322,13 +1611,15 @@ export default function App() {
                       }
                       onRequest={handleRequestDid}
                     />
-                    <DidDisplay record={didRecord} />
+                    <div className="space-y-4">
+                      <DidDisplay record={didRecord} />
+                    </div>
                   </div>
                 )}
               </section>
             )}
 
-            {viewMode === "admin" && selectedAdminDid && didRecord && (
+            {viewMode === "admin" && activeMainSection === SECTION_IDS.issuer && selectedAdminDid && didRecord && (
               <section className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
@@ -1342,7 +1633,7 @@ export default function App() {
               </section>
             )}
 
-            {viewMode === "admin" && (
+            {viewMode === "admin" && activeMainSection === SECTION_IDS.issuer && (
               <section id={SECTION_IDS.issuer} className="scroll-mt-24 space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
@@ -1369,7 +1660,7 @@ export default function App() {
               </section>
             )}
 
-            {viewMode === "user" && (
+            {viewMode === "user" && activeMainSection === SECTION_IDS.credentials && (
               <section id={SECTION_IDS.credentials} className="scroll-mt-24 space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
@@ -1398,38 +1689,53 @@ export default function App() {
               </section>
             )}
 
-            {providers && viewMode !== "registry" && (
+            {providers &&
+              viewMode !== "registry" &&
+              (activeMainSection === SECTION_IDS.workflow ||
+                activeMainSection === "admin-subscriptions") && (
               <section id={SECTION_IDS.workflow} className="scroll-mt-24 space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-lg font-semibold text-white">
-                      {viewMode === "admin" ? "Admin Review Queue" : "Human + MCP Operations"}
+                      {viewMode === "admin"
+                        ? activeMainSection === "admin-subscriptions"
+                          ? "Subscriptions"
+                          : "Review Queue"
+                        : activeSettingsLabel}
                     </h2>
                     <p className="text-sm text-zinc-500">
                       {viewMode === "admin"
-                        ? "Admin-only queue for approved requests that are ready to be issued on-chain."
-                        : "Customer account, MCP keys, request intake, and human approval for multiple managed agents."}
+                        ? activeMainSection === "admin-subscriptions"
+                          ? "Admin controls for customer quota assignment and subscription management."
+                          : "Admin-only queue for approved requests that are ready to be issued on-chain."
+                        : "Customer account controls for subscriptions, MCP keys, and human approvals."}
                     </p>
                   </div>
                 </div>
-                {viewMode === "user" && !userCanOpenAgentFlows ? (
-                  <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-6 text-sm text-zinc-400">
-                    Select an agent from `My Agents` or click `+` before using the request and MCP workflow.
-                  </div>
-                ) : (
-                  <WorkflowPanel
-                    providers={providers}
-                    walletAddress={walletAddress}
-                    contractAddress={contractAddress}
-                    mode={viewMode}
-                    onIssueOnChain={handleIssueDid}
-                  />
-                )}
+                <WorkflowPanel
+                  providers={providers}
+                  walletAddress={walletAddress}
+                  contractAddress={contractAddress}
+                  mode={viewMode}
+                  onIssueOnChain={handleIssueDid}
+                  activeSection={
+                    viewMode === "user"
+                      ? settingsSection
+                      : activeMainSection === "admin-subscriptions"
+                        ? "subscriptions"
+                        : "admin"
+                  }
+                  onActiveSectionChange={
+                    viewMode === "user" ? (section) => setSettingsSection(section as SettingsSection) : undefined
+                  }
+                  showSectionNav={false}
+                  showHeader={false}
+                />
               </section>
             )}
 
-            {providers && viewMode === "admin" && (
-              <section className="scroll-mt-24 space-y-4">
+            {providers && viewMode === "admin" && activeMainSection === "owner-vault" && (
+              <section id="owner-vault" className="scroll-mt-24 space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-lg font-semibold text-white">Owner Vault</h2>
@@ -1445,7 +1751,7 @@ export default function App() {
               </section>
             )}
 
-            {providers && viewMode === "admin" && (
+            {providers && viewMode === "admin" && activeMainSection === "deploy-did-registry" && (
               <section id="deploy-did-registry" className="scroll-mt-24 space-y-4">
                 <div className="flex items-center justify-between">
                   <div>

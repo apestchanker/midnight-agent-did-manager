@@ -37,7 +37,7 @@ export function sendJson(res, status, body) {
   res.setHeader("Content-Type", "application/json");
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-MCP-Key");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-MCP-Key, Authorization");
   res.end(JSON.stringify(body));
 }
 
@@ -46,14 +46,14 @@ export function sendText(res, status, body) {
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-MCP-Key");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-MCP-Key, Authorization");
   res.end(body);
 }
 
 export function setCorsHeaders(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-MCP-Key");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-MCP-Key, Authorization");
 }
 
 export function deriveAgentKey(walletAddress) {

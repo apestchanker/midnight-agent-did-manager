@@ -73,6 +73,41 @@ export async function getCustomerByWallet(walletAddress) {
   };
 }
 
+export async function getCustomerContextById(customerId) {
+  const customerResult = await query(
+    `select *
+     from customers
+     where id = $1
+     limit 1`,
+    [customerId],
+  );
+  const customer = customerResult.rows[0];
+  if (!customer) return null;
+
+  const [subscriptions, mcpKeys] = await Promise.all([
+    query(
+      `select *
+       from subscriptions
+       where customer_id = $1
+       order by created_at desc`,
+      [customer.id],
+    ),
+    query(
+      `select id, customer_id, label, key_id, status, scopes, created_at, last_used_at, expires_at
+       from mcp_keys
+       where customer_id = $1
+       order by created_at desc`,
+      [customer.id],
+    ),
+  ]);
+
+  return {
+    customer,
+    subscriptions: subscriptions.rows,
+    mcpKeys: mcpKeys.rows,
+  };
+}
+
 export async function saveAdminRegistryDeployment(input) {
   return withTransaction(async (client) => {
     const row = (
@@ -274,6 +309,33 @@ export async function createCustomerMcpKey(input) {
       ...result.rows[0],
       plainTextKey: material.plainText,
     };
+  });
+}
+
+export async function revokeCustomerMcpKey(input) {
+  return withTransaction(async (client) => {
+    const result = await client.query(
+      `update mcp_keys
+       set status = 'revoked'
+       where id = $1
+         and customer_id = $2
+         and status = 'active'
+       returning id, customer_id, label, key_id, status, scopes, created_at, last_used_at, expires_at`,
+      [input.keyId, input.customerId],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      throw new Error("MCP key not found or already inactive.");
+    }
+    await audit(client, {
+      actorType: "customer",
+      actorRef: input.customerId,
+      eventType: "mcp_key_revoked",
+      entityType: "mcp_key",
+      entityId: row.id,
+      eventData: { keyId: row.key_id, label: row.label },
+    });
+    return row;
   });
 }
 

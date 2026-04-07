@@ -10,10 +10,11 @@ import {
   approveDidRequest,
   bootstrapCustomer,
   checkDidServiceHealth,
-  createAgentDidRequest,
   createMcpKey,
+  createSubscription,
   getCustomerByWallet,
   listDidRequests,
+  revokeMcpKey,
 } from "../utils/serviceApi";
 
 interface WorkflowPanelProps {
@@ -25,6 +26,10 @@ interface WorkflowPanelProps {
     agentAddress: string;
     didDocument: string;
   }) => Promise<DidRecord>;
+  activeSection?: DashboardSection;
+  onActiveSectionChange?: (section: DashboardSection) => void;
+  showSectionNav?: boolean;
+  showHeader?: boolean;
 }
 
 function requestAgentName(request: DidRequestRow): string {
@@ -34,30 +39,35 @@ function requestAgentName(request: DidRequestRow): string {
 
 type DashboardSection =
   | "overview"
+  | "subscriptions"
   | "mcp"
-  | "requests"
   | "human"
   | "admin";
 
 export function WorkflowPanel({
-  providers,
   walletAddress,
   contractAddress,
   mode,
   onIssueOnChain,
+  activeSection,
+  onActiveSectionChange,
+  showSectionNav = true,
+  showHeader = true,
 }: WorkflowPanelProps) {
   const [serviceHealth, setServiceHealth] = useState<string>("checking");
   const [customerContext, setCustomerContext] = useState<CustomerContext | null>(null);
   const [requests, setRequests] = useState<DidRequestRow[]>([]);
   const [adminQueue, setAdminQueue] = useState<DidRequestRow[]>([]);
   const [latestBootstrap, setLatestBootstrap] = useState<BootstrapResponse | null>(null);
-  const [section, setSection] = useState<DashboardSection>("overview");
+  const [sectionState, setSectionState] = useState<DashboardSection>("overview");
   const [mcpLabel, setMcpLabel] = useState("default-agent-key");
-  const [agentPayloadName, setAgentPayloadName] = useState("Agent Smith");
-  const [organizationName, setOrganizationName] = useState("Matrix Labs");
-  const [organizationDisclosure, setOrganizationDisclosure] = useState<"disclosed" | "undisclosed">("disclosed");
   const [message, setMessage] = useState("");
   const [busyAction, setBusyAction] = useState("");
+  const [adminLookupWallet, setAdminLookupWallet] = useState("");
+  const [adminCustomerContext, setAdminCustomerContext] = useState<CustomerContext | null>(null);
+  const [subscriptionPlanCode, setSubscriptionPlanCode] = useState("manual-grant");
+  const [subscriptionQuota, setSubscriptionQuota] = useState("5");
+  const [subscriptionEndsAt, setSubscriptionEndsAt] = useState("");
 
   const refreshDashboard = useCallback(async () => {
     if (!walletAddress) return;
@@ -122,42 +132,19 @@ export function WorkflowPanel({
     }
   }
 
-  async function handleSimulateAgentRequest() {
-    const plainKey =
-      latestBootstrap?.mcpKey?.plainTextKey || customerContext?.mcpKeys?.[0]?.plainTextKey;
-    if (!plainKey) {
-      setMessage("Create or bootstrap an MCP key first. Existing keys do not expose their secret again.");
-      return;
-    }
-    if (!contractAddress.trim()) {
-      setMessage("Deploy or paste a contract address first.");
-      return;
-    }
-    setBusyAction("agent-request");
+  async function handleRevokeMcpKey(keyId: string) {
+    if (!customerContext?.customer?.id) return;
+    setBusyAction(`revoke-mcp:${keyId}`);
     setMessage("");
     try {
-      const request = await createAgentDidRequest({
-        mcpKey: plainKey,
-        contractAddress,
-        networkId: providers.networkId,
-        requesterWalletAddress: walletAddress,
-        subjectWalletAddress: walletAddress,
-        organizationName,
-        organizationDisclosure,
-        requestPayload: {
-          agentName: agentPayloadName,
-          organizationName,
-          partialDisclosure: {
-            ownership: true,
-            name: true,
-            organization: organizationDisclosure === "disclosed",
-          },
-        },
+      await revokeMcpKey({
+        customerId: customerContext.customer.id,
+        keyId,
       });
-      setMessage(`Agent request created: ${request.id}`);
+      setMessage(`MCP key ${keyId} revoked.`);
       await refreshDashboard();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Agent request failed");
+      setMessage(error instanceof Error ? error.message : "MCP key revocation failed");
     } finally {
       setBusyAction("");
     }
@@ -184,7 +171,7 @@ export function WorkflowPanel({
       const didDocument = {
         id: request.requested_did,
         controller: request.subject_wallet_address,
-        agentName: requestAgentName(request) || agentPayloadName,
+        agentName: requestAgentName(request) || "Agent",
         organization:
           request.organization_disclosure === "disclosed"
             ? request.organization_name
@@ -210,7 +197,81 @@ export function WorkflowPanel({
     }
   }
 
-  const quota = customerContext?.subscriptions?.[0];
+  async function handleAdminLookupCustomer() {
+    if (!adminLookupWallet.trim()) {
+      setMessage("Enter a wallet address to load the customer account.");
+      return;
+    }
+    setBusyAction("subscription-lookup");
+    setMessage("");
+    try {
+      const customer = await getCustomerByWallet(adminLookupWallet.trim());
+      setAdminCustomerContext(customer);
+      setMessage(
+        customer
+          ? `Loaded customer ${customer.customer.email}`
+          : "No customer is linked to that wallet address yet.",
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Customer lookup failed");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function handleAssignSubscription() {
+    if (!adminCustomerContext?.customer?.id) {
+      setMessage("Load a customer by wallet before assigning quota.");
+      return;
+    }
+    const didQuotaTotal = Number(subscriptionQuota);
+    if (!Number.isFinite(didQuotaTotal) || didQuotaTotal < 0) {
+      setMessage("Quota must be a non-negative integer.");
+      return;
+    }
+    const endsAt = subscriptionEndsAt.trim()
+      ? new Date(subscriptionEndsAt).toISOString()
+      : undefined;
+    setBusyAction("subscription-create");
+    setMessage("");
+    try {
+      await createSubscription({
+        customerId: adminCustomerContext.customer.id,
+        planCode: subscriptionPlanCode.trim() || "manual-grant",
+        didQuotaTotal,
+        status: "active",
+        endsAt,
+      });
+      const refreshed = await getCustomerByWallet(adminLookupWallet.trim());
+      setAdminCustomerContext(refreshed);
+      if (
+        refreshed?.customer?.linked_wallet_address &&
+        refreshed.customer.linked_wallet_address === walletAddress
+      ) {
+        setCustomerContext(refreshed);
+      }
+      setMessage(
+        `Assigned ${didQuotaTotal} DID quota to ${adminCustomerContext.customer.email}.`,
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Subscription assignment failed");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  const totalAssignedQuota = customerContext?.subscriptions?.reduce(
+    (sum, subscription) => sum + Number(subscription.did_quota_total || 0),
+    0,
+  ) || 0;
+  const registeredAgentCount = new Set(
+    requests
+      .filter((request) => request.request_status === "issued")
+      .map(
+        (request) => `${request.contract_address}:${request.subject_wallet_address}`,
+      ),
+  ).size;
+  const totalRemainingQuota = Math.max(0, totalAssignedQuota - registeredAgentCount);
   const activeKey = latestBootstrap?.mcpKey?.plainTextKey || null;
   const pendingHumanQueue = requests.filter(
     (request) => request.request_status === "pending_human_approval",
@@ -218,19 +279,60 @@ export function WorkflowPanel({
   const issuedRequests = requests.filter(
     (request) => request.request_status === "issued",
   );
+  const recentRequests = [...requests].sort(
+    (a, b) =>
+      new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+  );
   const visibleSections = useMemo<DashboardSection[]>(
     () =>
       mode === "admin"
-        ? ["overview", "admin"]
-        : ["overview", "mcp", "requests", "human"],
+        ? ["overview", "subscriptions", "admin"]
+        : ["overview", "subscriptions", "mcp", "human"],
     [mode],
   );
 
+  const section = activeSection ?? sectionState;
+  const sectionTitle =
+    mode === "admin"
+      ? "Admin Review"
+      : {
+          overview: "Overview",
+          subscriptions: "Subscriptions",
+          mcp: "MCP Keys",
+          human: "Approvals",
+          admin: "Admin Review",
+        }[section];
+  const sectionDescription =
+    mode === "admin"
+      ? "Review requests already approved by the human account and decide whether to issue them on-chain."
+      : {
+          overview:
+            "Customer account summary, current quota state, and MCP workflow status.",
+          subscriptions:
+            "Inspect the assigned DID quota and active plans for this customer account.",
+          mcp:
+            "Generate, inspect, and revoke MCP keys issued to the customer-controlled agents.",
+          human:
+            "Review and approve incoming DID requests before they move into admin review.",
+          admin:
+            "Review requests already approved by the human account and decide whether to issue them on-chain.",
+        }[section];
+
   useEffect(() => {
     if (!visibleSections.includes(section)) {
-      setSection(visibleSections[0]);
+      if (activeSection == null) {
+        setSectionState(visibleSections[0]);
+      }
+      onActiveSectionChange?.(visibleSections[0]);
     }
-  }, [section, visibleSections]);
+  }, [activeSection, onActiveSectionChange, section, visibleSections]);
+
+  function setSection(nextSection: DashboardSection) {
+    if (activeSection == null) {
+      setSectionState(nextSection);
+    }
+    onActiveSectionChange?.(nextSection);
+  }
 
   function navButton(id: DashboardSection, label: string) {
     const active = section === id;
@@ -251,33 +353,33 @@ export function WorkflowPanel({
 
   return (
     <Card className="bg-zinc-900 border-zinc-800">
-      <CardHeader>
-        <CardTitle className="text-white">
-          {mode === "admin" ? "Admin Review Workflow" : "Customer + MCP Workflow"}
-        </CardTitle>
-        <CardDescription className="text-zinc-400">
-          {mode === "admin"
-            ? "Review requests already approved by the human account and decide whether to issue them on-chain."
-            : "Generate MCP keys, assign them to agents, collect DID requests, and approve the ones that should move to admin review."}
-        </CardDescription>
-      </CardHeader>
+      {showHeader && (
+        <CardHeader>
+          <CardTitle className="text-white">{sectionTitle}</CardTitle>
+          <CardDescription className="text-zinc-400">
+            {sectionDescription}
+          </CardDescription>
+        </CardHeader>
+      )}
       <CardContent className="space-y-6">
-        <div className="flex flex-wrap gap-2">
-          {visibleSections.map((sectionId) => (
-            <div key={sectionId}>
-              {navButton(
-                sectionId,
-                {
-                  overview: "Overview",
-                  mcp: "MCP Keys",
-                  requests: "Requests",
-                  human: "Human Approval",
-                  admin: "Admin Review",
-                }[sectionId],
-              )}
-            </div>
-          ))}
-        </div>
+        {showSectionNav && (
+          <div className="flex flex-wrap gap-2">
+            {visibleSections.map((sectionId) => (
+              <div key={sectionId}>
+                {navButton(
+                  sectionId,
+                  {
+                    overview: "Overview",
+                    subscriptions: "Subscriptions",
+                    mcp: "MCP Keys",
+                    human: "Approvals",
+                    admin: "Admin Review",
+                  }[sectionId],
+                )}
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-300">
           <div>
@@ -290,7 +392,10 @@ export function WorkflowPanel({
             <strong>Customer:</strong> {customerContext?.customer?.email || "not bootstrapped yet"}
           </div>
           <div>
-            <strong>Quota:</strong> {quota ? `${quota.did_quota_remaining} / ${quota.did_quota_total}` : "no subscription"}
+            <strong>Agents / Quota:</strong> {customerContext ? `${registeredAgentCount} / ${totalAssignedQuota}` : "no subscription"}
+          </div>
+          <div>
+            <strong>Remaining DID quota:</strong> {customerContext ? totalRemainingQuota : "n/a"}
           </div>
         </div>
 
@@ -330,7 +435,7 @@ export function WorkflowPanel({
             )}
 
             {customerContext && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+              <div className="grid grid-cols-1 gap-3 text-xs md:grid-cols-3">
                 <div className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-zinc-300">
                   <div className="text-zinc-500">MCP Keys</div>
                   <div className="text-white text-lg">{customerContext.mcpKeys.length}</div>
@@ -345,7 +450,170 @@ export function WorkflowPanel({
                 </div>
               </div>
             )}
+
+            {mode === "user" && (
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-white">Request History</h3>
+                {recentRequests.length === 0 ? (
+                  <p className="text-xs text-zinc-500">
+                    No DID requests stored for this customer account yet.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {recentRequests.map((request) => (
+                      <div
+                        key={request.id}
+                        className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-300 space-y-1"
+                      >
+                        <div className="font-mono break-all">{request.id}</div>
+                        <div><span className="text-zinc-500">Status:</span> {request.request_status}</div>
+                        <div><span className="text-zinc-500">Agent Name:</span> {requestAgentName(request) || "n/a"}</div>
+                        <div><span className="text-zinc-500">Wallet:</span> {request.subject_wallet_address}</div>
+                        <div><span className="text-zinc-500">Requested DID:</span> {request.requested_did || "pending derivation"}</div>
+                        <div><span className="text-zinc-500">Updated:</span> {new Date(request.updated_at).toLocaleString()}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </>
+        )}
+
+        {section === "subscriptions" && (
+          <div className="space-y-4">
+            {mode === "user" && (
+              <>
+                {!customerContext ? (
+                  <p className="text-xs text-zinc-500">
+                    Bootstrap the customer account first. Subscriptions and quota are attached to that customer.
+                  </p>
+                ) : customerContext.subscriptions.length === 0 ? (
+                  <p className="text-xs text-zinc-500">
+                    No subscriptions assigned yet. An admin must grant DID quota before an MCP key can create DID requests.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {customerContext.subscriptions.map((subscription) => (
+                      <div
+                        key={subscription.id}
+                        className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-300 space-y-1"
+                      >
+                        <div><span className="text-zinc-500">Plan:</span> {subscription.plan_code}</div>
+                        <div><span className="text-zinc-500">Status:</span> {subscription.status}</div>
+                        <div><span className="text-zinc-500">Assigned quota:</span> {subscription.did_quota_total}</div>
+                        <div><span className="text-zinc-500">Displayed remaining quota:</span> {Math.max(0, Number(subscription.did_quota_total || 0) - registeredAgentCount)}</div>
+                        <div><span className="text-zinc-500">Started:</span> {new Date(subscription.starts_at).toLocaleString()}</div>
+                        {subscription.ends_at && (
+                          <div><span className="text-zinc-500">Ends:</span> {new Date(subscription.ends_at).toLocaleString()}</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
+            {mode === "admin" && (
+              <div className="space-y-4">
+                <div className="space-y-2 rounded-md border border-zinc-800 bg-zinc-950 p-3">
+                  <Label htmlFor="adminLookupWallet" className="text-zinc-300">
+                    Customer Wallet Address
+                  </Label>
+                  <Input
+                    id="adminLookupWallet"
+                    value={adminLookupWallet}
+                    onChange={(e) => setAdminLookupWallet(e.target.value)}
+                    className="bg-zinc-950 border-zinc-800 text-white"
+                    placeholder="mn_addr_preprod1..."
+                  />
+                  <Button
+                    type="button"
+                    onClick={handleAdminLookupCustomer}
+                    disabled={busyAction !== ""}
+                    className="bg-blue-600 hover:bg-blue-500 text-white"
+                  >
+                    {busyAction === "subscription-lookup" ? "Loading..." : "Load Customer"}
+                  </Button>
+                </div>
+
+                {adminCustomerContext && (
+                  <>
+                    <div className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-300 space-y-1">
+                      <div><span className="text-zinc-500">Customer:</span> {adminCustomerContext.customer.email}</div>
+                      <div><span className="text-zinc-500">Display name:</span> {adminCustomerContext.customer.display_name}</div>
+                      <div><span className="text-zinc-500">Linked wallet:</span> {adminCustomerContext.customer.linked_wallet_address || "n/a"}</div>
+                    </div>
+
+                    <div className="space-y-2 rounded-md border border-zinc-800 bg-zinc-950 p-3">
+                      <Label htmlFor="subscriptionPlanCode" className="text-zinc-300">
+                        Plan Code
+                      </Label>
+                      <Input
+                        id="subscriptionPlanCode"
+                        value={subscriptionPlanCode}
+                        onChange={(e) => setSubscriptionPlanCode(e.target.value)}
+                        className="bg-zinc-950 border-zinc-800 text-white"
+                      />
+                      <Label htmlFor="subscriptionQuota" className="text-zinc-300">
+                        DID Quota
+                      </Label>
+                      <Input
+                        id="subscriptionQuota"
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={subscriptionQuota}
+                        onChange={(e) => setSubscriptionQuota(e.target.value)}
+                        className="bg-zinc-950 border-zinc-800 text-white"
+                      />
+                      <Label htmlFor="subscriptionEndsAt" className="text-zinc-300">
+                        Ends At
+                      </Label>
+                      <Input
+                        id="subscriptionEndsAt"
+                        type="datetime-local"
+                        value={subscriptionEndsAt}
+                        onChange={(e) => setSubscriptionEndsAt(e.target.value)}
+                        className="bg-zinc-950 border-zinc-800 text-white"
+                      />
+                      <Button
+                        type="button"
+                        onClick={handleAssignSubscription}
+                        disabled={busyAction !== ""}
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white"
+                      >
+                        {busyAction === "subscription-create" ? "Assigning..." : "Assign Subscription / Quota"}
+                      </Button>
+                    </div>
+
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-semibold text-white">Existing Subscriptions</h3>
+                      {adminCustomerContext.subscriptions.length === 0 ? (
+                        <p className="text-xs text-zinc-500">No subscriptions assigned yet.</p>
+                      ) : (
+                        adminCustomerContext.subscriptions.map((subscription) => (
+                          <div
+                            key={subscription.id}
+                            className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-300 space-y-1"
+                          >
+                            <div><span className="text-zinc-500">Plan:</span> {subscription.plan_code}</div>
+                            <div><span className="text-zinc-500">Status:</span> {subscription.status}</div>
+                            <div><span className="text-zinc-500">Assigned quota:</span> {subscription.did_quota_total}</div>
+                            <div><span className="text-zinc-500">Displayed remaining quota:</span> {Math.max(0, Number(subscription.did_quota_total || 0) - registeredAgentCount)}</div>
+                            <div><span className="text-zinc-500">Started:</span> {new Date(subscription.starts_at).toLocaleString()}</div>
+                            {subscription.ends_at && (
+                              <div><span className="text-zinc-500">Ends:</span> {new Date(subscription.ends_at).toLocaleString()}</div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
         )}
 
         {section === "mcp" && (
@@ -401,75 +669,16 @@ export function WorkflowPanel({
                         {key.last_used_at && (
                           <div><span className="text-zinc-500">Last used:</span> {new Date(key.last_used_at).toLocaleString()}</div>
                         )}
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            )}
-          </>
-        )}
-
-        {section === "requests" && (
-          <>
-            {!customerContext ? (
-              <p className="text-xs text-zinc-500">
-                Bootstrap the customer account first. Then create an MCP key and use it to submit agent DID requests.
-              </p>
-            ) : (
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label className="text-zinc-300">Agent Name</Label>
-                  <Input
-                    value={agentPayloadName}
-                    onChange={(e) => setAgentPayloadName(e.target.value)}
-                    className="bg-zinc-950 border-zinc-800 text-white"
-                  />
-                  <Label className="text-zinc-300">Organization</Label>
-                  <Input
-                    value={organizationName}
-                    onChange={(e) => setOrganizationName(e.target.value)}
-                    className="bg-zinc-950 border-zinc-800 text-white"
-                  />
-                  <Label className="text-zinc-300">Organization Disclosure</Label>
-                  <select
-                    value={organizationDisclosure}
-                    onChange={(e) =>
-                      setOrganizationDisclosure(
-                        e.target.value as "disclosed" | "undisclosed",
-                      )
-                    }
-                    className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white"
-                  >
-                    <option value="disclosed">disclosed</option>
-                    <option value="undisclosed">undisclosed</option>
-                  </select>
-                  <Button
-                    type="button"
-                    onClick={handleSimulateAgentRequest}
-                    disabled={busyAction !== "" || !contractAddress.trim()}
-                    className="bg-amber-600 hover:bg-amber-500 text-white"
-                  >
-                    {busyAction === "agent-request" ? "Submitting..." : "Simulate Agent DID Request"}
-                  </Button>
-                </div>
-
-                <div className="space-y-3">
-                  <h3 className="text-sm font-semibold text-white">Requests Stored For This Customer</h3>
-                  {requests.length === 0 ? (
-                    <p className="text-xs text-zinc-500">No requests stored yet.</p>
-                  ) : (
-                    requests.map((request) => (
-                      <div
-                        key={request.id}
-                        className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-300 space-y-1"
-                      >
-                        <div className="font-mono break-all">{request.id}</div>
-                        <div><span className="text-zinc-500">Status:</span> {request.request_status}</div>
-                        <div><span className="text-zinc-500">Agent Name:</span> {requestAgentName(request) || "n/a"}</div>
-                        <div><span className="text-zinc-500">Subject Wallet:</span> {request.subject_wallet_address}</div>
-                        <div><span className="text-zinc-500">Requested DID:</span> {request.requested_did || "pending derivation"}</div>
-                        <div><span className="text-zinc-500">Created:</span> {new Date(request.created_at).toLocaleString()}</div>
+                        <div className="pt-2">
+                          <Button
+                            type="button"
+                            onClick={() => handleRevokeMcpKey(key.id)}
+                            disabled={busyAction !== "" || key.status !== "active"}
+                            className="bg-red-700 hover:bg-red-600 text-white"
+                          >
+                            {busyAction === `revoke-mcp:${key.id}` ? "Revoking..." : "Revoke MCP Key"}
+                          </Button>
+                        </div>
                       </div>
                     ))
                   )}

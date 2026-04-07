@@ -214,7 +214,13 @@ async function ensureWalletSession(api: ConnectedAPI): Promise<void> {
 function isWalletDisconnectedError(error: unknown): boolean {
   const message =
     error instanceof Error ? error.message : String(error ?? "");
-  return /not connected to wallet/i.test(message);
+  return (
+    /not connected to wallet/i.test(message) ||
+    /connection timeout/i.test(message) ||
+    /wallet bridge timeout/i.test(message) ||
+    /request timed out/i.test(message) ||
+    /timed out/i.test(message)
+  );
 }
 
 function getManagedContractUrl(): string {

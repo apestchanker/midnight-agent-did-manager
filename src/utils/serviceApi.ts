@@ -6,6 +6,7 @@ import type {
   DidRequestRow,
   McpKey,
   RegistryDidRow,
+  Subscription,
   VerifiableCredentialRow,
 } from "../types/service";
 import type { DeployResult } from "../types/did";
@@ -78,6 +79,39 @@ export function createMcpKey(payload: {
     },
     body: JSON.stringify({
       label: payload.label,
+    }),
+  });
+}
+
+export function revokeMcpKey(payload: {
+  customerId: string;
+  keyId: string;
+}): Promise<McpKey> {
+  return requestJson(`/api/customers/${payload.customerId}/mcp-keys/${payload.keyId}/revoke`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+}
+
+export function createSubscription(payload: {
+  customerId: string;
+  planCode: string;
+  didQuotaTotal: number;
+  status?: "active" | "paused" | "expired";
+  endsAt?: string;
+}): Promise<Subscription> {
+  return requestJson(`/api/customers/${payload.customerId}/subscriptions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      planCode: payload.planCode,
+      didQuotaTotal: payload.didQuotaTotal,
+      status: payload.status,
+      endsAt: payload.endsAt,
     }),
   });
 }
