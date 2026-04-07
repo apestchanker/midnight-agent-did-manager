@@ -15,8 +15,10 @@ interface RequestFormProps {
   contractAddress: string;
   walletAddress: string;
   initialAgentAddress?: string;
+  initialAgentId?: string;
   onRequest: (payload: {
-    agentAddress: string;
+    agentId?: string;
+    subjectWalletAddress: string;
     agentName?: string;
     organization?: string;
     organizationDisclosure: "disclosed" | "undisclosed";
@@ -24,13 +26,19 @@ interface RequestFormProps {
   }) => Promise<DidRecord>;
 }
 
+function createSystemAgentId(): string {
+  return `agent-${crypto.randomUUID().toLowerCase()}`;
+}
+
 export function RequestForm({
   contractAddress,
   walletAddress,
   initialAgentAddress,
+  initialAgentId,
   onRequest,
 }: RequestFormProps) {
   const [agentAddress, setAgentAddress] = useState(initialAgentAddress || "");
+  const [agentId, setAgentId] = useState(initialAgentId || createSystemAgentId());
   const [agentName, setAgentName] = useState("");
   const [organization, setOrganization] = useState("");
   const [organizationDisclosure, setOrganizationDisclosure] = useState<"disclosed" | "undisclosed">("undisclosed");
@@ -42,6 +50,10 @@ export function RequestForm({
   useEffect(() => {
     setAgentAddress(initialAgentAddress || "");
   }, [initialAgentAddress]);
+
+  useEffect(() => {
+    setAgentId(initialAgentId || createSystemAgentId());
+  }, [initialAgentId]);
 
   useEffect(() => {
     if (didDocumentTouched) return;
@@ -82,7 +94,8 @@ export function RequestForm({
     setLoading(true);
     try {
       const record = await onRequest({
-        agentAddress,
+        agentId: agentId.trim() || undefined,
+        subjectWalletAddress: agentAddress,
         agentName,
         organization,
         organizationDisclosure,

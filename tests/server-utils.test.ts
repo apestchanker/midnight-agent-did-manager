@@ -3,6 +3,7 @@ import {
   buildDid,
   createMcpKey,
   deriveAgentKey,
+  generateAgentId,
   normalizeWallet,
   parseRequestPath,
   readJson,
@@ -29,16 +30,25 @@ describe("server/utils", () => {
     expect(key.keyHash).toBe(sha256Hex(key.plainText));
   });
 
-  it("derives a stable agent key and DID from a wallet address", () => {
-    const wallet = "mn_addr_preprod1example";
-    const agentKey = deriveAgentKey(wallet);
+  it("derives a stable agent key and DID from an agent id", () => {
+    const agentId = "agent-academy";
+    const agentKey = deriveAgentKey(agentId);
 
     expect(agentKey).toHaveLength(64);
     expect(buildDid({
       networkId: "preprod",
       contractAddress: "contract123",
-      walletAddress: wallet,
+      agentId,
     })).toBe(`did:midnight:preprod:contract123:${agentKey}`);
+  });
+
+  it("generates system agent ids in the expected format", () => {
+    const one = generateAgentId();
+    const two = generateAgentId();
+
+    expect(one).toMatch(/^agent-[0-9a-f-]{36}$/);
+    expect(two).toMatch(/^agent-[0-9a-f-]{36}$/);
+    expect(one).not.toBe(two);
   });
 
   it("parses request paths into segments", () => {
@@ -101,4 +111,3 @@ describe("server/utils", () => {
     expect(res.body).toBe("bad request");
   });
 });
-

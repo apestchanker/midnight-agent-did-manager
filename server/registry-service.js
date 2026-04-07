@@ -4,10 +4,33 @@ import {
   buildDid,
   createMcpKey,
   deriveAgentKey,
+  generateAgentId,
+  normalizeAgentId,
   normalizeWallet,
   nowIso,
   sha256Hex,
 } from "./utils.js";
+
+const DEFAULT_MCP_SCOPES = [
+  "did.request",
+  "did.status",
+  "did.resolve",
+  "did.validate",
+];
+
+const ALLOWED_MCP_SCOPES = new Set([
+  ...DEFAULT_MCP_SCOPES,
+  "did.credentials",
+]);
+
+function normalizeMcpScopes(scopes) {
+  const normalized = Array.isArray(scopes)
+    ? scopes
+        .map((scope) => String(scope || "").trim())
+        .filter((scope) => ALLOWED_MCP_SCOPES.has(scope))
+    : [];
+  return Array.from(new Set(normalized));
+}
 
 async function audit(client, input) {
   await client.query(
@@ -284,6 +307,7 @@ export async function createSubscription(input) {
 export async function createCustomerMcpKey(input) {
   return withTransaction(async (client) => {
     const material = createMcpKey();
+    const scopes = normalizeMcpScopes(input.scopes);
     const result = await client.query(
       `insert into mcp_keys (customer_id, label, key_id, key_hash, status, scopes, expires_at)
        values ($1, $2, $3, $4, 'active', $5::jsonb, $6)
@@ -293,7 +317,7 @@ export async function createCustomerMcpKey(input) {
         input.label,
         material.keyId,
         material.keyHash,
-        JSON.stringify(input.scopes || ["did.request", "did.status", "did.resolve", "did.validate"]),
+        JSON.stringify(scopes.length ? scopes : DEFAULT_MCP_SCOPES),
         input.expiresAt || null,
       ],
     );
@@ -303,12 +327,42 @@ export async function createCustomerMcpKey(input) {
       eventType: "mcp_key_created",
       entityType: "mcp_key",
       entityId: result.rows[0].id,
-      eventData: { label: input.label, scopes: input.scopes || null },
+      eventData: { label: input.label, scopes: scopes.length ? scopes : DEFAULT_MCP_SCOPES },
     });
     return {
       ...result.rows[0],
       plainTextKey: material.plainText,
     };
+  });
+}
+
+export async function updateCustomerMcpKeyScopes(input) {
+  return withTransaction(async (client) => {
+    const scopes = normalizeMcpScopes(input.scopes);
+    if (scopes.length === 0) {
+      throw new Error("At least one MCP scope must be selected.");
+    }
+    const result = await client.query(
+      `update mcp_keys
+       set scopes = $3::jsonb
+       where id = $1
+         and customer_id = $2
+       returning id, customer_id, label, key_id, status, scopes, created_at, last_used_at, expires_at`,
+      [input.keyId, input.customerId, JSON.stringify(scopes)],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      throw new Error("MCP key not found.");
+    }
+    await audit(client, {
+      actorType: "customer",
+      actorRef: input.customerId,
+      eventType: "mcp_key_scopes_updated",
+      entityType: "mcp_key",
+      entityId: row.id,
+      eventData: { keyId: row.key_id, scopes },
+    });
+    return row;
   });
 }
 
@@ -463,12 +517,13 @@ async function createOrUpdateDidRequestRecord(client, input) {
   const subjectWallet = normalizeWallet(
     input.subjectWalletAddress || input.requesterWalletAddress,
   );
+  const agentId = normalizeAgentId(input.agentId || generateAgentId());
   const requestedDid =
     input.requestedDid ||
     buildDid({
       networkId: input.networkId,
       contractAddress: input.contractAddress,
-      walletAddress: subjectWallet,
+      agentId,
     });
   const organizationDisclosure =
     input.organizationDisclosure === "disclosed" ? "disclosed" : "undisclosed";
@@ -483,11 +538,11 @@ async function createOrUpdateDidRequestRecord(client, input) {
         `select *
          from did_requests
          where contract_address = $1
-           and subject_wallet_address = $2
+           and agent_id = $2
            and request_status in ('pending_human_approval', 'pending_admin_review')
          order by created_at desc
          limit 1`,
-        [input.contractAddress, subjectWallet],
+        [input.contractAddress, agentId],
       )
     ).rows[0];
 
@@ -504,6 +559,7 @@ async function createOrUpdateDidRequestRecord(client, input) {
                requested_did = $8,
                onchain_request_tx_id = $9,
                onchain_request_tx_hash = $10,
+               agent_id = $11,
                updated_at = now()
            where id = $1
            returning *`,
@@ -518,6 +574,7 @@ async function createOrUpdateDidRequestRecord(client, input) {
             requestedDid,
             input.onchainRequestTxId || null,
             input.onchainRequestTxHash || null,
+            agentId,
           ],
         )
       ).rows[0];
@@ -533,6 +590,7 @@ async function createOrUpdateDidRequestRecord(client, input) {
        mcp_key_id,
        contract_address,
        network_id,
+       agent_id,
        requester_wallet_address,
        subject_wallet_address,
        request_status,
@@ -547,7 +605,7 @@ async function createOrUpdateDidRequestRecord(client, input) {
        human_approved_by_wallet
      )
      values (
-       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13, $14, $15, $16, $17
+       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, $14, $15, $16, $17, $18
      )
      returning *`,
     [
@@ -556,6 +614,7 @@ async function createOrUpdateDidRequestRecord(client, input) {
       input.mcpKeyId || null,
       input.contractAddress,
       input.networkId,
+      agentId,
       requesterWallet,
       subjectWallet,
       input.requestStatus,
@@ -571,7 +630,7 @@ async function createOrUpdateDidRequestRecord(client, input) {
     ],
   );
 
-  return { row: result.rows[0], subjectWallet, requestedDid, created: true };
+  return { row: result.rows[0], subjectWallet, requestedDid, agentId, created: true };
 }
 
 function defaultClaimsManifest(input) {
@@ -587,7 +646,8 @@ async function upsertIssuedDidRecord(client, input) {
   const issuerWallet = normalizeWallet(input.issuerWalletAddress);
   const subjectWallet = normalizeWallet(input.subjectWalletAddress);
   const customer = await ensureCustomerForWallet(client, subjectWallet);
-  const agentKey = deriveAgentKey(subjectWallet);
+  const agentId = normalizeAgentId(input.agentId);
+  const agentKey = deriveAgentKey(agentId);
   const organizationName =
     input.organizationDisclosure === "disclosed"
       ? input.organizationName || null
@@ -615,6 +675,7 @@ async function upsertIssuedDidRecord(client, input) {
            did,
            contract_address,
            network_id,
+           agent_id,
            subject_wallet_address,
            subject_agent_key,
            issuer_wallet_address,
@@ -630,7 +691,7 @@ async function upsertIssuedDidRecord(client, input) {
            updated_at
          )
          values (
-           $1, $2, $3, $4, $5, $6, $7, 'active', $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, now(), now()
+           $1, $2, $3, $4, $5, $6, $7, $8, 'active', $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb, now(), now()
          )
          returning *`,
         [
@@ -638,6 +699,7 @@ async function upsertIssuedDidRecord(client, input) {
           input.did,
           input.contractAddress,
           input.networkId,
+          agentId,
           subjectWallet,
           agentKey,
           issuerWallet,
@@ -683,6 +745,7 @@ async function upsertIssuedDidRecord(client, input) {
              proof_commitment = $7,
              did_document = $8::jsonb,
              claims_manifest = $9::jsonb,
+             agent_id = $10,
              updated_at = now(),
              revoked_at = null
          where id = $1
@@ -697,12 +760,13 @@ async function upsertIssuedDidRecord(client, input) {
           input.proofCommitment || null,
           didDocument,
           claimsManifest,
+          agentId,
         ],
       )
     ).rows[0];
   }
 
-  return { record, customerId: customer.id, agentKey, issuerWallet };
+  return { record, customerId: customer.id, agentKey, agentId, issuerWallet };
 }
 
 export async function createDidRequest(input) {
@@ -725,6 +789,7 @@ export async function createDidRequest(input) {
         contractAddress: input.contractAddress,
         networkId: input.networkId,
         requesterWalletAddress: input.requesterWalletAddress,
+        agentId: input.agentId,
         subjectWalletAddress: input.subjectWalletAddress,
         requestStatus: "pending_human_approval",
         organizationName: input.organizationName,
@@ -763,6 +828,7 @@ export async function createWalletDidRequest(input) {
         contractAddress: input.contractAddress,
         networkId: input.networkId,
         requesterWalletAddress: walletAddress,
+        agentId: input.agentId,
         subjectWalletAddress: input.subjectWalletAddress || walletAddress,
         requestStatus: "pending_admin_review",
         organizationName: input.organizationName,
@@ -810,11 +876,20 @@ export async function approveDidRequestByHuman(input) {
        set request_status = 'pending_admin_review',
            human_approved_at = now(),
            human_approved_by_wallet = $2,
+           requested_did = coalesce($3, requested_did),
+           onchain_request_tx_id = coalesce($4, onchain_request_tx_id),
+           onchain_request_tx_hash = coalesce($5, onchain_request_tx_hash),
            updated_at = now()
        where id = $1
          and request_status = 'pending_human_approval'
        returning *`,
-      [input.requestId, normalizeWallet(input.humanWalletAddress)],
+      [
+        input.requestId,
+        normalizeWallet(input.humanWalletAddress),
+        input.requestedDid || null,
+        input.onchainRequestTxId || null,
+        input.onchainRequestTxHash || null,
+      ],
     );
     const row = result.rows[0];
     if (!row) {
@@ -916,13 +991,17 @@ export async function issueApprovedDidRequest(input) {
 
     const issuerWallet = normalizeWallet(input.issuerWalletAddress);
     const subjectWallet = normalizeWallet(request.subject_wallet_address);
-    const agentKey = deriveAgentKey(subjectWallet);
+    const agentId = normalizeAgentId(request.agent_id);
+    if (!agentId) {
+      throw new Error("DID request is missing agent_id.");
+    }
+    const agentKey = deriveAgentKey(agentId);
     const requestedDid =
       request.requested_did ||
       buildDid({
         networkId: request.network_id,
         contractAddress: request.contract_address,
-        walletAddress: subjectWallet,
+        agentId,
       });
     const didDocument = input.didDocument || {};
     const didCommitment = sha256Hex(JSON.stringify({ did: requestedDid, subjectWallet }));
@@ -949,6 +1028,7 @@ export async function issueApprovedDidRequest(input) {
       requestId: request.id,
       customerId: request.customer_id,
       issuerWalletAddress: issuerWallet,
+      agentId,
       subjectWalletAddress: subjectWallet,
       did: requestedDid,
       contractAddress: request.contract_address,
@@ -968,15 +1048,19 @@ export async function issueApprovedDidRequest(input) {
        set request_status = 'issued',
            admin_decision_at = now(),
            admin_decision_by = $2,
-           onchain_issue_tx_id = $3,
-           onchain_issue_tx_hash = $4,
-           requested_did = $5,
+           onchain_request_tx_id = coalesce($3, onchain_request_tx_id),
+           onchain_request_tx_hash = coalesce($4, onchain_request_tx_hash),
+           onchain_issue_tx_id = $5,
+           onchain_issue_tx_hash = $6,
+           requested_did = $7,
            updated_at = now()
        where id = $1
        returning *`,
       [
         request.id,
         issuerWallet,
+        input.onchainRequestTxId || null,
+        input.onchainRequestTxHash || null,
         input.onchainIssueTxId || null,
         input.onchainIssueTxHash || null,
         requestedDid,
@@ -1007,16 +1091,20 @@ export async function syncWalletIssuedDid(input) {
     const issuerWallet = normalizeWallet(input.issuerWalletAddress);
     const subjectWallet = normalizeWallet(input.subjectWalletAddress);
     const customer = await ensureCustomerForWallet(client, subjectWallet);
-    const agentKey = deriveAgentKey(subjectWallet);
+    const agentId = normalizeAgentId(input.agentId);
+    if (!agentId) {
+      throw new Error("Agent ID is required for DID sync.");
+    }
+    const agentKey = deriveAgentKey(agentId);
     const request = (
       await client.query(
         `select *
          from did_requests
          where contract_address = $1
-           and subject_wallet_address = $2
+           and agent_id = $2
          order by created_at desc
          limit 1`,
-        [input.contractAddress, subjectWallet],
+        [input.contractAddress, agentId],
       )
     ).rows[0];
 
@@ -1024,6 +1112,7 @@ export async function syncWalletIssuedDid(input) {
       requestId: request?.id || null,
       customerId: customer.id,
       issuerWalletAddress: issuerWallet,
+      agentId,
       subjectWalletAddress: subjectWallet,
       did: input.did,
       contractAddress: input.contractAddress,
@@ -1108,16 +1197,19 @@ export async function syncWalletRevokedDid(input) {
 }
 
 export async function getPersistedDidState(input) {
-  const walletAddress = normalizeWallet(input.walletAddress);
+  const agentId = normalizeAgentId(input.agentId);
+  if (!agentId) {
+    throw new Error("Agent ID is required.");
+  }
   const request = (
     await query(
       `select *
        from did_requests
        where contract_address = $1
-         and subject_wallet_address = $2
+         and agent_id = $2
        order by created_at desc
        limit 1`,
-      [input.contractAddress, walletAddress],
+      [input.contractAddress, agentId],
     )
   ).rows[0] || null;
 
@@ -1126,10 +1218,10 @@ export async function getPersistedDidState(input) {
       `select *
        from did_records
        where contract_address = $1
-         and subject_wallet_address = $2
+         and agent_id = $2
        order by issued_at desc
        limit 1`,
-      [input.contractAddress, walletAddress],
+      [input.contractAddress, agentId],
     )
   ).rows[0] || null;
 
@@ -1208,6 +1300,7 @@ export async function listRegistryDidRecords(contractAddress) {
        dr.did,
        dr.contract_address,
        dr.network_id,
+       dr.agent_id,
        dr.subject_wallet_address,
        dr.subject_agent_key,
        dr.issuer_wallet_address,

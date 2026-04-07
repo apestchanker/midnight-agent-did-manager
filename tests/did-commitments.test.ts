@@ -15,9 +15,9 @@ function toHex(value: Uint8Array): string {
 }
 
 describe("did commitments", () => {
-  it("creates stable agent keys from normalized wallet addresses", async () => {
-    const one = await createAgentKey("  ADDR_test_User  ");
-    const two = await createAgentKey("addr_test_user");
+  it("creates stable agent keys from normalized agent ids", async () => {
+    const one = await createAgentKey("  Agent_Academy  ");
+    const two = await createAgentKey("agent_academy");
 
     expect(toHex(one)).toBe(toHex(two));
     expect(one).toHaveLength(32);
@@ -45,7 +45,7 @@ describe("did commitments", () => {
   it("hashes request and document payloads deterministically", async () => {
     const requestCommitment = await createRequestCommitment({
       contractAddress: "contract123",
-      agentAddress: "addr_test1",
+      agentId: "agent-academy",
       agentName: "Alice",
       organization: "Matrix Labs",
       organizationDisclosure: "disclosed",
@@ -60,4 +60,3 @@ describe("did commitments", () => {
     expect(toHex(requestCommitment)).not.toBe(toHex(documentCommitment));
   });
 });
-

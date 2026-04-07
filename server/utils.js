@@ -8,6 +8,14 @@ export function normalizeWallet(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+export function normalizeAgentId(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+export function generateAgentId() {
+  return `agent-${crypto.randomUUID().toLowerCase()}`;
+}
+
 export function sha256Hex(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
@@ -56,12 +64,12 @@ export function setCorsHeaders(res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-MCP-Key, Authorization");
 }
 
-export function deriveAgentKey(walletAddress) {
-  return sha256Hex(normalizeWallet(walletAddress));
+export function deriveAgentKey(agentId) {
+  return sha256Hex(normalizeAgentId(agentId));
 }
 
-export function buildDid({ networkId, contractAddress, walletAddress }) {
-  return `did:midnight:${networkId}:${contractAddress}:${deriveAgentKey(walletAddress)}`;
+export function buildDid({ networkId, contractAddress, agentId }) {
+  return `did:midnight:${networkId}:${contractAddress}:${deriveAgentKey(agentId)}`;
 }
 
 export function parseRequestPath(pathname) {

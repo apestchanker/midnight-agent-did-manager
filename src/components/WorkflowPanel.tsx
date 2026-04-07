@@ -15,7 +15,16 @@ import {
   getCustomerByWallet,
   listDidRequests,
   revokeMcpKey,
+  updateMcpKeyScopes,
 } from "../utils/serviceApi";
+
+const MCP_SCOPE_OPTIONS = [
+  "did.request",
+  "did.status",
+  "did.resolve",
+  "did.validate",
+  "did.credentials",
+];
 
 interface WorkflowPanelProps {
   providers: AppProviders;
@@ -23,7 +32,19 @@ interface WorkflowPanelProps {
   contractAddress: string;
   mode: "user" | "admin";
   onIssueOnChain: (payload: {
-    agentAddress: string;
+    requestId?: string;
+    agentId: string;
+    subjectWalletAddress?: string;
+    didDocument: string;
+  }) => Promise<DidRecord>;
+  onApproveOnChain: (payload: {
+    requestId: string;
+    agentId: string;
+    requesterWalletAddress: string;
+    subjectWalletAddress: string;
+    agentName?: string;
+    organization?: string;
+    organizationDisclosure: "disclosed" | "undisclosed";
     didDocument: string;
   }) => Promise<DidRecord>;
   activeSection?: DashboardSection;
@@ -49,6 +70,7 @@ export function WorkflowPanel({
   contractAddress,
   mode,
   onIssueOnChain,
+  onApproveOnChain,
   activeSection,
   onActiveSectionChange,
   showSectionNav = true,
@@ -68,6 +90,7 @@ export function WorkflowPanel({
   const [subscriptionPlanCode, setSubscriptionPlanCode] = useState("manual-grant");
   const [subscriptionQuota, setSubscriptionQuota] = useState("5");
   const [subscriptionEndsAt, setSubscriptionEndsAt] = useState("");
+  const [scopeDrafts, setScopeDrafts] = useState<Record<string, string[]>>({});
 
   const refreshDashboard = useCallback(async () => {
     if (!walletAddress) return;
@@ -94,6 +117,19 @@ export function WorkflowPanel({
       console.error("[WorkflowPanel] dashboard refresh failed", error);
     });
   }, [refreshDashboard]);
+
+  useEffect(() => {
+    if (!customerContext?.mcpKeys) return;
+    setScopeDrafts((current) => {
+      const next = { ...current };
+      for (const key of customerContext.mcpKeys) {
+        if (!next[key.id]) {
+          next[key.id] = Array.isArray(key.scopes) ? key.scopes : [];
+        }
+      }
+      return next;
+    });
+  }, [customerContext]);
 
   async function handleBootstrap() {
     setBusyAction("bootstrap");
@@ -150,12 +186,82 @@ export function WorkflowPanel({
     }
   }
 
-  async function handleApproveRequest(requestId: string) {
-    setBusyAction(`approve:${requestId}`);
+  function toggleScopeDraft(keyId: string, scope: string, checked: boolean) {
+    setScopeDrafts((current) => {
+      const existing = current[keyId] || [];
+      const nextScopes = checked
+        ? Array.from(new Set([...existing, scope]))
+        : existing.filter((value) => value !== scope);
+      return {
+        ...current,
+        [keyId]: nextScopes,
+      };
+    });
+  }
+
+  async function handleSaveMcpScopes(keyId: string) {
+    if (!customerContext?.customer?.id) return;
+    setBusyAction(`save-scopes:${keyId}`);
     setMessage("");
     try {
-      await approveDidRequest(requestId, walletAddress);
-      setMessage(`Human approval recorded for request ${requestId}`);
+      await updateMcpKeyScopes({
+        customerId: customerContext.customer.id,
+        keyId,
+        scopes: scopeDrafts[keyId] || [],
+      });
+      setMessage(`Updated scopes for MCP key ${keyId}.`);
+      await refreshDashboard();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "MCP scope update failed");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function handleApproveRequest(request: DidRequestRow) {
+    setBusyAction(`approve:${request.id}`);
+    setMessage("");
+    try {
+      const rawDidDocument = request.request_payload?.didDocument;
+      const didDocument =
+        typeof rawDidDocument === "string"
+          ? rawDidDocument
+          : JSON.stringify(
+              {
+                id: request.requested_did || "",
+                controller: request.subject_wallet_address,
+                agentName: requestAgentName(request) || "Agent",
+                organization:
+                  request.organization_disclosure === "disclosed"
+                    ? request.organization_name
+                    : "undisclosed",
+                service: [
+                  {
+                    id: "#agent-endpoint",
+                    type: "AgentEndpoint",
+                    serviceEndpoint: "https://agent.example.com",
+                  },
+                ],
+              },
+              null,
+              2,
+            );
+      const onchainRequest = await onApproveOnChain({
+        requestId: request.id,
+        agentId: request.agent_id || "",
+        requesterWalletAddress: request.requester_wallet_address,
+        subjectWalletAddress: request.subject_wallet_address,
+        agentName: requestAgentName(request) || undefined,
+        organization: request.organization_name || undefined,
+        organizationDisclosure: request.organization_disclosure,
+        didDocument,
+      });
+      await approveDidRequest(request.id, walletAddress, {
+        requestedDid: onchainRequest.did,
+        onchainRequestTxId: onchainRequest.txId,
+        onchainRequestTxHash: onchainRequest.txHash,
+      });
+      setMessage(`Human approval recorded and request registered on-chain for ${request.id}`);
       await refreshDashboard();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Approval failed");
@@ -185,7 +291,9 @@ export function WorkflowPanel({
         ],
       };
       await onIssueOnChain({
-        agentAddress: request.subject_wallet_address,
+        requestId: request.id,
+        agentId: request.agent_id || "",
+        subjectWalletAddress: request.subject_wallet_address,
         didDocument: JSON.stringify(didDocument, null, 2),
       });
       setMessage(`Request ${request.id} issued on-chain and persisted in the DID service.`);
@@ -267,9 +375,7 @@ export function WorkflowPanel({
   const registeredAgentCount = new Set(
     requests
       .filter((request) => request.request_status === "issued")
-      .map(
-        (request) => `${request.contract_address}:${request.subject_wallet_address}`,
-      ),
+      .map((request) => `${request.contract_address}:${request.agent_id}`),
   ).size;
   const totalRemainingQuota = Math.max(0, totalAssignedQuota - registeredAgentCount);
   const activeKey = latestBootstrap?.mcpKey?.plainTextKey || null;
@@ -468,6 +574,7 @@ export function WorkflowPanel({
                         <div className="font-mono break-all">{request.id}</div>
                         <div><span className="text-zinc-500">Status:</span> {request.request_status}</div>
                         <div><span className="text-zinc-500">Agent Name:</span> {requestAgentName(request) || "n/a"}</div>
+                        <div><span className="text-zinc-500">Agent ID:</span> {request.agent_id || "n/a"}</div>
                         <div><span className="text-zinc-500">Wallet:</span> {request.subject_wallet_address}</div>
                         <div><span className="text-zinc-500">Requested DID:</span> {request.requested_did || "pending derivation"}</div>
                         <div><span className="text-zinc-500">Updated:</span> {new Date(request.updated_at).toLocaleString()}</div>
@@ -666,6 +773,37 @@ export function WorkflowPanel({
                         <div><span className="text-zinc-500">Status:</span> {key.status}</div>
                         <div><span className="text-zinc-500">Scopes:</span> {Array.isArray(key.scopes) ? key.scopes.join(", ") : "n/a"}</div>
                         <div><span className="text-zinc-500">Created:</span> {new Date(key.created_at).toLocaleString()}</div>
+                        <div className="space-y-2 pt-2">
+                          <div className="text-zinc-500">Edit scopes</div>
+                          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                            {MCP_SCOPE_OPTIONS.map((scope) => {
+                              const checked = (scopeDrafts[key.id] || []).includes(scope);
+                              return (
+                                <label
+                                  key={scope}
+                                  className="flex items-center gap-2 rounded border border-zinc-800 px-2 py-1.5"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(e) =>
+                                      toggleScopeDraft(key.id, scope, e.target.checked)
+                                    }
+                                  />
+                                  <span className="font-mono text-[11px]">{scope}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                          <Button
+                            type="button"
+                            onClick={() => handleSaveMcpScopes(key.id)}
+                            disabled={busyAction !== "" || (scopeDrafts[key.id] || []).length === 0}
+                            className="bg-emerald-600 hover:bg-emerald-500 text-white"
+                          >
+                            {busyAction === `save-scopes:${key.id}` ? "Saving..." : "Save Scopes"}
+                          </Button>
+                        </div>
                         {key.last_used_at && (
                           <div><span className="text-zinc-500">Last used:</span> {new Date(key.last_used_at).toLocaleString()}</div>
                         )}
@@ -698,11 +836,12 @@ export function WorkflowPanel({
                 <div key={request.id} className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-300 space-y-2">
                   <div className="font-mono break-all">{request.id}</div>
                   <div>Subject wallet: {request.subject_wallet_address}</div>
+                  <div>Agent ID: {request.agent_id || "n/a"}</div>
                   <div>Status: {request.request_status}</div>
                   <div>Agent Name: {requestAgentName(request) || "n/a"}</div>
                   <Button
                     type="button"
-                    onClick={() => handleApproveRequest(request.id)}
+                    onClick={() => handleApproveRequest(request)}
                     disabled={busyAction !== ""}
                     className="bg-emerald-600 hover:bg-emerald-500 text-white"
                   >
@@ -724,6 +863,7 @@ export function WorkflowPanel({
                 <div key={request.id} className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-300 space-y-2">
                   <div className="font-mono break-all">{request.id}</div>
                   <div>Subject wallet: {request.subject_wallet_address}</div>
+                  <div>Agent ID: {request.agent_id || "n/a"}</div>
                   <div>Requested DID: {request.requested_did}</div>
                   <div>Agent Name: {requestAgentName(request) || "n/a"}</div>
                   <div>Org disclosure: {request.organization_disclosure}</div>

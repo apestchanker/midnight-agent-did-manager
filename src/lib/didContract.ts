@@ -52,7 +52,8 @@ export async function requestDid(
   input: {
     contractAddress: string;
     requesterWalletAddress: string;
-    agentAddress: string;
+    agentId: string;
+    subjectWalletAddress: string;
     agentName?: string;
     organization?: string;
     organizationDisclosure: "disclosed" | "undisclosed";
@@ -62,7 +63,8 @@ export async function requestDid(
   const api = await joinDidRegistryApi(providers, input.contractAddress);
   return requestDidWithSync(api, {
     requesterWalletAddress: input.requesterWalletAddress,
-    agentAddress: input.agentAddress,
+    agentId: input.agentId,
+    subjectWalletAddress: input.subjectWalletAddress,
     agentName: input.agentName,
     organization: input.organization,
     organizationDisclosure: input.organizationDisclosure,
@@ -97,10 +99,11 @@ export async function revokeDid(
 export async function fetchDidRecord(
   providers: AppProviders,
   contractAddress: string,
-  agentAddress: string,
+  agentId: string,
+  subjectWalletAddress?: string,
 ): Promise<DidRecord | null> {
   const api = await joinDidRegistryApi(providers, contractAddress);
-  return api.fetchDidRecord(agentAddress);
+  return api.fetchDidRecord(agentId, subjectWalletAddress);
 }
 
 export async function fetchRegistrySummary(

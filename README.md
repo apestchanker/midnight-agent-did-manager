@@ -4,6 +4,12 @@ Midnight Agent DID Manager is a React + Vite application plus a local Node/Postg
 
 This repository is an open-source research project focused on decentralized identity flows aimed to provide a DID and Selective disclosure Verifiable Credential for AI agents on Midnight.
 
+## Non-Production Warning
+
+This version is still NOT HARDENED to facilitate testing and debugging.
+
+IT SHALL NOT USE NOR IT IS INTENDED FOR PRODUCTION USAGE.
+
 If you want to read more about what inspired me to build this repo, - Article: [Selective Disclosure & Self-Managing DIDs for AI Agents](https://dev.to/midnight-aliit/selective-disclosure-self-managing-dids-for-ai-agents-3kcl)
 
 ## Project Metadata
@@ -473,7 +479,7 @@ Adjust `DATABASE_URL` if you use an external Postgres host.
 If you already have a running Postgres server, skip Docker and point the API to it:
 
 ```bash
-DATABASE_URL=postgresql://postgres:YOUR_DB_PASSWORD_HERE@10.0.0.10:5432/agent_registry_db
+DATABASE_URL=postgresql://postgres:YOUR_DB_PASSWORD_HERE@YOUR_DB_HOST:5432/agent_registry_db
 npm run dev:api
 ```
 

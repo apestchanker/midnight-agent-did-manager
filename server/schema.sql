@@ -51,6 +51,7 @@ create table if not exists did_requests (
   mcp_key_id uuid references mcp_keys(id) on delete set null,
   contract_address text not null,
   network_id text not null,
+  agent_id text,
   requester_wallet_address text not null,
   subject_wallet_address text not null,
   request_status text not null default 'pending_human_approval'
@@ -93,6 +94,7 @@ create table if not exists did_records (
   did text not null unique,
   contract_address text not null,
   network_id text not null,
+  agent_id text,
   subject_wallet_address text not null,
   subject_agent_key text not null,
   issuer_wallet_address text not null,
@@ -112,13 +114,24 @@ create table if not exists did_records (
   revoked_at timestamptz
 );
 
+alter table if exists did_requests add column if not exists agent_id text;
+alter table if exists did_records add column if not exists agent_id text;
+update did_requests
+set agent_id = lower(coalesce(agent_id, subject_wallet_address))
+where agent_id is null;
+update did_records
+set agent_id = lower(coalesce(agent_id, subject_wallet_address))
+where agent_id is null;
+
 create index if not exists idx_customer_wallets_customer_id on customer_wallets(customer_id);
 create index if not exists idx_subscriptions_customer_id on subscriptions(customer_id);
 create index if not exists idx_mcp_keys_customer_id on mcp_keys(customer_id);
 create index if not exists idx_did_requests_customer_id on did_requests(customer_id);
 create index if not exists idx_did_requests_subject_wallet on did_requests(subject_wallet_address);
+create index if not exists idx_did_requests_agent_id on did_requests(agent_id);
 create index if not exists idx_did_requests_status on did_requests(request_status);
 create index if not exists idx_did_records_subject_wallet on did_records(subject_wallet_address);
+create index if not exists idx_did_records_agent_id on did_records(agent_id);
 create index if not exists idx_did_records_contract_address on did_records(contract_address);
 
 create table if not exists admin_registry_deployments (

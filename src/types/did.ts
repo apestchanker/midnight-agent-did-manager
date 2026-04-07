@@ -23,7 +23,8 @@ export interface DeployResult {
 
 export interface RequestDidInput {
   contractAddress: string;
-  agentAddress: string;
+  agentId: string;
+  subjectWalletAddress: string;
   agentName?: string;
   organization?: string;
   organizationDisclosure: "disclosed" | "undisclosed";
@@ -32,24 +33,28 @@ export interface RequestDidInput {
 
 export interface IssueDidInput {
   contractAddress: string;
-  agentAddress: string;
+  agentId: string;
+  subjectWalletAddress?: string;
   didDocument: string;
 }
 
 export interface UpdateDidInput {
   contractAddress: string;
-  agentAddress: string;
+  agentId: string;
+  subjectWalletAddress?: string;
   didDocument: string;
 }
 
 export interface RevokeDidInput {
   contractAddress: string;
-  agentAddress: string;
+  agentId: string;
+  subjectWalletAddress?: string;
   reason: string;
 }
 
 export interface DidRecord {
-  agentAddress: string;
+  agentId: string;
+  subjectWalletAddress?: string;
   agentName?: string;
   organization?: string;
   organizationDisclosure?: "disclosed" | "undisclosed";

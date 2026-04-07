@@ -145,12 +145,70 @@ describe("MCP server core", () => {
     expect(response?.result.structuredContent.id).toBe("request-1");
   });
 
+  it("publishes the request payload guide in resources/list and resources/read", async () => {
+    const server = createMcpServer(createDeps());
+    const listResponse = await server.handleRequest(
+      {
+        jsonrpc: "2.0",
+        id: 6,
+        method: "resources/list",
+      },
+      { transport: "http", headers: {} },
+    );
+
+    expect(
+      listResponse?.result.resources.some(
+        (resource: { uri: string }) => resource.uri === "didmn://guide/request-payload",
+      ),
+    ).toBe(true);
+
+    const readResponse = await server.handleRequest(
+      {
+        jsonrpc: "2.0",
+        id: 7,
+        method: "resources/read",
+        params: {
+          uri: "didmn://guide/request-payload",
+        },
+      },
+      { transport: "http", headers: {} },
+    );
+
+    const guide = JSON.parse(readResponse?.result.contents[0].text || "{}");
+    expect(guide.requiredFields).not.toContain("agentId");
+    expect(guide.fieldNotes.agentId).toContain("server will generate");
+  });
+
+  it("includes agentId guidance in the request workflow prompt", async () => {
+    const server = createMcpServer(createDeps());
+    const response = await server.handleRequest(
+      {
+        jsonrpc: "2.0",
+        id: 8,
+        method: "prompts/get",
+        params: {
+          name: "request_did_workflow",
+          arguments: {
+            contractAddress: "contract-1",
+            networkId: "preprod",
+          },
+        },
+      },
+      { transport: "http", headers: {} },
+    );
+
+    expect(response?.result.messages[0].content.text).toContain("The server will generate the unique agentId automatically");
+    expect(response?.result.messages[0].content.text).toContain(
+      "didmn://guide/request-payload",
+    );
+  });
+
   it("rejects customer-scoped resource reads without authentication", async () => {
     const server = createMcpServer(createDeps());
     const response = await server.handleRequest(
       {
         jsonrpc: "2.0",
-        id: 4,
+        id: 9,
         method: "resources/read",
         params: {
           uri: "didmn://customer/context",
@@ -171,7 +229,7 @@ describe("MCP server core", () => {
     const response = await server.handleRequest(
       {
         jsonrpc: "2.0",
-        id: 5,
+        id: 10,
         method: "resources/read",
         params: {
           uri: "didmn://customer/context",

@@ -63,6 +63,7 @@ function buildToolDefinitions(auth) {
         properties: {
           contractAddress: { type: "string" },
           networkId: { type: "string" },
+          agentId: { type: "string" },
           requesterWalletAddress: { type: "string" },
           subjectWalletAddress: { type: "string" },
           organizationName: { type: "string" },
@@ -399,10 +400,12 @@ function getPublicGuideResource(uri, auth) {
         contractAddress:
           "Midnight DID registry contract address that will own the DID lifecycle.",
         networkId: "Midnight network identifier such as preprod.",
+        agentId:
+          "Optional internal agent identifier. If omitted, the server will generate one automatically and use it as the DID subject key.",
         requesterWalletAddress:
           "Wallet address acting as requester under the authenticated customer account.",
         subjectWalletAddress:
-          "Wallet address that the DID will bind to. If omitted, the server will use requesterWalletAddress.",
+          "Wallet address that the DID will bind to. If omitted, the server will use requesterWalletAddress. Multiple agents may share this wallet.",
         organizationDisclosure:
           "Use disclosed if organizationName may be published or included in credentials; otherwise use undisclosed.",
         organizationName:
@@ -452,6 +455,10 @@ function getPublicGuideResource(uri, auth) {
           allowOrganizationDisclosure: true,
           allowOwnershipProofOnly: true,
         },
+      },
+      responseNotes: {
+        generatedAgentId:
+          "If agentId is omitted, the created DID request row will include the system-generated agent_id that uniquely identifies the agent going forward.",
       },
     };
   }
@@ -736,6 +743,7 @@ export function createMcpServer(deps) {
                 `Prepare a DID request for contract ${args?.contractAddress} on ${args?.networkId}.\n` +
                 `Include requesterWalletAddress, optional subjectWalletAddress, organizationDisclosure, and a requestPayload object.\n` +
                 `The requestPayload should at minimum include agentName and a didDocument draft.\n` +
+                `The server will generate the unique agentId automatically if you do not supply one.\n` +
                 `Read didmn://guide/request-payload for the exact payload shape and example.\n` +
                 `Then call did_request_create. Poll did_request_get or did_request_list for approval and issuance progress.\n` +
                 `If the request is rejected because quota is missing, a human/admin must assign an active subscription with remaining DID quota to the customer associated with the MCP key.`,

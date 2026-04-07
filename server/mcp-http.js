@@ -2,11 +2,14 @@ import "./load-env.js";
 import { createServer } from "http";
 import { URL } from "url";
 import { initializeDatabase } from "./db.js";
+import { getRecentLogs, installProcessLogger } from "./log-store.js";
 import { createDidMcpApp } from "./mcp-app.js";
 import { readJson, sendJson, sendText, setCorsHeaders } from "./utils.js";
 
 const PORT = Number(process.env.DID_MCP_PORT || 8788);
 const app = createDidMcpApp();
+
+installProcessLogger("mcp-http");
 
 const server = createServer(async (req, res) => {
   if (!req.url || !req.method) {
@@ -22,9 +25,17 @@ const server = createServer(async (req, res) => {
   }
 
   const url = new URL(req.url, `http://localhost:${PORT}`);
+  console.info(`[mcp-http] ${req.method} ${url.pathname}`);
 
   if (req.method === "GET" && url.pathname === "/health") {
     sendJson(res, 200, { ok: true, transport: "http", protocol: "mcp" });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/logs") {
+    sendJson(res, 200, {
+      entries: getRecentLogs(Number(url.searchParams.get("limit") || "200")),
+    });
     return;
   }
 

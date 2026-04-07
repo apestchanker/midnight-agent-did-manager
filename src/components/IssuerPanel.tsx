@@ -13,22 +13,26 @@ import type { DidRecord } from "../types/did";
 
 interface IssuerPanelProps {
   contractAddress: string;
-  targetAgentAddress: string;
+  requestId?: string;
+  targetAgentId: string;
+  targetSubjectWalletAddress?: string;
   record: DidRecord | null;
-  onIssue: (payload: { agentAddress: string; didDocument: string }) => Promise<DidRecord>;
-  onUpdate: (payload: { agentAddress: string; didDocument: string }) => Promise<DidRecord>;
-  onRevoke: (payload: { agentAddress: string; reason: string }) => Promise<DidRecord>;
+  onIssue: (payload: { requestId?: string; agentId: string; subjectWalletAddress?: string; didDocument: string }) => Promise<DidRecord>;
+  onUpdate: (payload: { agentId: string; subjectWalletAddress?: string; didDocument: string }) => Promise<DidRecord>;
+  onRevoke: (payload: { agentId: string; subjectWalletAddress?: string; reason: string }) => Promise<DidRecord>;
 }
 
 export function IssuerPanel({
   contractAddress,
-  targetAgentAddress,
+  requestId,
+  targetAgentId,
+  targetSubjectWalletAddress,
   record,
   onIssue,
   onUpdate,
   onRevoke,
 }: IssuerPanelProps) {
-  const [agentAddress, setAgentAddress] = useState(targetAgentAddress);
+  const [agentId, setAgentId] = useState(targetAgentId);
   const [didDocument, setDidDocument] = useState("");
   const [revocationReason, setRevocationReason] = useState("");
   const [loadingAction, setLoadingAction] = useState<"issue" | "update" | "revoke" | "">("");
@@ -42,8 +46,8 @@ export function IssuerPanel({
         {
           id:
           record?.did ||
-          `did:midnight:preprod:${contractAddress || "contract"}:${agentAddress || "agent"}`,
-        controller: agentAddress || targetAgentAddress,
+          `did:midnight:preprod:${contractAddress || "contract"}:${agentId || "agent"}`,
+        controller: targetSubjectWalletAddress || record?.subjectWalletAddress || "",
         agentName: record?.agentName || null,
         organization:
           record?.organizationDisclosure === "disclosed"
@@ -62,7 +66,7 @@ export function IssuerPanel({
       2,
     );
   }, [
-    agentAddress,
+    agentId,
     contractAddress,
     record?.agentName,
     record?.did,
@@ -70,12 +74,13 @@ export function IssuerPanel({
     record?.organization,
     record?.organizationDisclosure,
     record?.proofCommitmentHex,
-    targetAgentAddress,
+    targetAgentId,
+    targetSubjectWalletAddress,
   ]);
 
   useEffect(() => {
-    setAgentAddress(targetAgentAddress);
-  }, [targetAgentAddress]);
+    setAgentId(targetAgentId);
+  }, [targetAgentId]);
 
   useEffect(() => {
     setDidDocument(buildDefaultDidDocument());
@@ -87,8 +92,8 @@ export function IssuerPanel({
       setMessage("Deploy or paste a contract address first.");
       return;
     }
-    if (!agentAddress.trim()) {
-      setMessage("Target agent wallet address is required.");
+    if (!agentId.trim()) {
+      setMessage("Target agent ID is required.");
       return;
     }
     if (!didDocument.trim()) {
@@ -98,7 +103,7 @@ export function IssuerPanel({
 
     setLoadingAction("issue");
     try {
-      const updated = await onIssue({ agentAddress, didDocument });
+      const updated = await onIssue({ requestId, agentId, subjectWalletAddress: targetSubjectWalletAddress, didDocument });
       setMessage(`DID issued on-chain. Tx: ${updated.txHash || "confirmed"}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Failed to issue DID");
@@ -113,8 +118,8 @@ export function IssuerPanel({
       setMessage("Deploy or paste a contract address first.");
       return;
     }
-    if (!agentAddress.trim()) {
-      setMessage("Target agent wallet address is required.");
+    if (!agentId.trim()) {
+      setMessage("Target agent ID is required.");
       return;
     }
     if (!didDocument.trim()) {
@@ -124,7 +129,7 @@ export function IssuerPanel({
 
     setLoadingAction("update");
     try {
-      const updated = await onUpdate({ agentAddress, didDocument });
+      const updated = await onUpdate({ agentId, subjectWalletAddress: targetSubjectWalletAddress, didDocument });
       setMessage(`DID updated on-chain. Tx: ${updated.txHash || "confirmed"}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Failed to update DID");
@@ -139,8 +144,8 @@ export function IssuerPanel({
       setMessage("Deploy or paste a contract address first.");
       return;
     }
-    if (!agentAddress.trim()) {
-      setMessage("Target agent wallet address is required.");
+    if (!agentId.trim()) {
+      setMessage("Target agent ID is required.");
       return;
     }
     if (!revocationReason.trim()) {
@@ -150,7 +155,7 @@ export function IssuerPanel({
 
     setLoadingAction("revoke");
     try {
-      const updated = await onRevoke({ agentAddress, reason: revocationReason });
+      const updated = await onRevoke({ agentId, subjectWalletAddress: targetSubjectWalletAddress, reason: revocationReason });
       setMessage(`DID revoked on-chain. Tx: ${updated.txHash || "confirmed"}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Failed to revoke DID");
@@ -174,12 +179,12 @@ export function IssuerPanel({
       <CardContent className="space-y-4">
         <div>
           <Label htmlFor="issuerAgentAddress" className="text-zinc-300">
-            Target Agent Wallet
+            Target Agent ID
           </Label>
           <Input
             id="issuerAgentAddress"
-            value={agentAddress}
-            onChange={(e) => setAgentAddress(e.target.value)}
+            value={agentId}
+            onChange={(e) => setAgentId(e.target.value)}
             className="mt-1 bg-zinc-950 border-zinc-800 text-white"
           />
         </div>

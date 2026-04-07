@@ -1,8 +1,8 @@
 import type { CachedDidMetadata, SavedCompileArtifact, SavedDeployment } from "./types";
 import { COMPILE_KEY, DEPLOY_KEY, DID_CACHE_PREFIX } from "./types";
 
-function cacheKey(contractAddress: string, agentAddress: string): string {
-  return `${DID_CACHE_PREFIX}:${contractAddress}:${agentAddress.toLowerCase()}`;
+function cacheKey(contractAddress: string, agentId: string): string {
+  return `${DID_CACHE_PREFIX}:${contractAddress}:${agentId.toLowerCase()}`;
 }
 
 export function saveCompileArtifact(data: SavedCompileArtifact): void {
@@ -18,17 +18,17 @@ export function saveDeployment(result: SavedDeployment): void {
 export function saveDidMetadata(metadata: CachedDidMetadata): void {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(
-    cacheKey(metadata.contractAddress, metadata.agentAddress),
+    cacheKey(metadata.contractAddress, metadata.agentId),
     JSON.stringify(metadata),
   );
 }
 
 export function getDidMetadata(
   contractAddress: string,
-  agentAddress: string,
+  agentId: string,
 ): CachedDidMetadata | null {
   if (typeof window === "undefined") return null;
-  const raw = window.localStorage.getItem(cacheKey(contractAddress, agentAddress));
+  const raw = window.localStorage.getItem(cacheKey(contractAddress, agentId));
   if (!raw) return null;
 
   try {
@@ -52,13 +52,13 @@ export function readSavedJson<T>(key: string): T | null {
 
 export function mergeDidMetadata(
   contractAddress: string,
-  agentAddress: string,
+  agentId: string,
   patch: Partial<CachedDidMetadata>,
 ): CachedDidMetadata {
-  const existing = getDidMetadata(contractAddress, agentAddress);
+  const existing = getDidMetadata(contractAddress, agentId);
   const merged: CachedDidMetadata = {
     contractAddress,
-    agentAddress,
+    agentId,
     createdAt: existing?.createdAt || new Date().toISOString(),
     ...existing,
     ...patch,
@@ -78,4 +78,3 @@ export function getSavedDeployment(): SavedDeployment | null {
 export function getSavedCompileArtifact(): SavedCompileArtifact | null {
   return readSavedJson<SavedCompileArtifact>(COMPILE_KEY);
 }
-

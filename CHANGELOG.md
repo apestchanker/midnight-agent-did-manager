@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.4.4
+
+### Changed
+- Bumped the application version to `0.4.4` while keeping the contract version at `0.3.5`.
+  Reason/impact: captures the latest app-only MCP management fix without changing contract semantics.
+
+### Fixed
+- Fixed MCP key scope management so editing scopes updates the selected existing key instead of accidentally creating a duplicate key.
+  Reason/impact: makes scope changes reliable, prevents silent key duplication, and keeps agent permissions aligned with the intended MCP key.
+
+## v0.4.3
+
+### Changed
+- Bumped the application version to `0.4.3` while keeping the contract version at `0.3.5`.
+  Reason/impact: captures the latest app-only workflow fix without changing contract semantics.
+
+### Fixed
+- Fixed the agent-submitted DID flow so the human owner registers the request on-chain at approval time, and admin issuance only performs the final on-chain issue step.
+  Reason/impact: restores the intended separation of responsibilities and prevents admin issuance from failing on agent-submitted requests that were never registered on-chain by the owner.
+
+## v0.4.2
+
+### Changed
+- Bumped the application version to `0.4.2` while keeping the contract version at `0.3.5`.
+  Reason/impact: captures the current app/backend integration and security-posture documentation updates without changing contract semantics.
+
+### Added
+- Added an admin `Logs` view that shows live backend API and MCP HTTP logs side by side from the admin menu.
+  Reason/impact: makes local testing and debugging easier without requiring direct terminal access while verifying runtime behavior.
+
+### Documentation
+- Added an explicit non-production warning to the README stating that this version is still not hardened and is intended for testing and debugging only.
+  Reason/impact: makes the current security posture unambiguous and reduces the risk of accidental production use.
+
 ## v0.4.1
 
 ### Changed

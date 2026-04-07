@@ -1,8 +1,10 @@
 import "./load-env.js";
 import { initializeDatabase } from "./db.js";
+import { installProcessLogger } from "./log-store.js";
 import { createDidMcpApp } from "./mcp-app.js";
 
 const app = createDidMcpApp();
+installProcessLogger("mcp-stdio");
 const session = {
   mcpKey: process.env.MCP_KEY || "",
   auth: null,

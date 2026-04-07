@@ -3,7 +3,7 @@ import type { DeployResult } from "../../types/did";
 
 export const DEPLOY_KEY = "did-registry:last-deploy:v6";
 export const COMPILE_KEY = "did-registry:last-compile:v4";
-export const DID_CACHE_PREFIX = "did-registry:request-cache:v1";
+export const DID_CACHE_PREFIX = "did-registry:request-cache:v2";
 export const OWNER_PRIVATE_STATE_ID = "issuer-owner-state:v1";
 export const MANAGED_CONTRACT_BASE_PATH =
   (import.meta.env.VITE_MANAGED_CONTRACT_PATH || "").trim() ||
@@ -79,7 +79,8 @@ export type SavedDeployment = DeployResult & {
 
 export type CachedDidMetadata = {
   contractAddress: string;
-  agentAddress: string;
+  agentId: string;
+  subjectWalletAddress?: string;
   agentName?: string;
   organization?: string;
   organizationDisclosure?: "disclosed" | "undisclosed";
@@ -115,4 +116,3 @@ export interface CompileResult {
   success: boolean;
   message: string;
 }
-

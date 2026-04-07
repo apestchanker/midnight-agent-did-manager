@@ -139,13 +139,14 @@ export class DidRegistryAPI {
 
   async requestDid(input: {
     requesterWalletAddress: string;
-    agentAddress: string;
+    agentId: string;
+    subjectWalletAddress: string;
     agentName?: string;
     organization?: string;
     organizationDisclosure: "disclosed" | "undisclosed";
     didDocument: string;
   }): Promise<DidRecord> {
-    const agentKey = await createAgentKey(input.agentAddress);
+    const agentKey = await createAgentKey(input.agentId);
     const requestCommitment = await createRequestCommitment({
       ...input,
       contractAddress: this.contractAddress,
@@ -168,7 +169,8 @@ export class DidRegistryAPI {
 
     const now = new Date().toISOString();
     return {
-      agentAddress: input.agentAddress,
+      agentId: input.agentId,
+      subjectWalletAddress: input.subjectWalletAddress,
       agentName: input.agentName,
       organization:
         input.organizationDisclosure === "disclosed"
@@ -192,7 +194,7 @@ export class DidRegistryAPI {
 
   async issueDid(input: IssueDidInput): Promise<DidRecord> {
     const ownerContract = await this.getOwnerContract();
-    const agentKey = await createAgentKey(input.agentAddress);
+    const agentKey = await createAgentKey(input.agentId);
     const agentKeyHex = toHex(agentKey);
     const did = await createDidIdentifier(
       this.providers.networkId,
@@ -202,18 +204,18 @@ export class DidRegistryAPI {
     const didCommitment = await createDidCommitment({
       did,
       contractAddress: this.contractAddress,
-      agentAddress: input.agentAddress,
+      agentId: input.agentId,
     });
     const documentCommitment = await createDocumentCommitment(input.didDocument);
     const proofCommitment = await createLifecycleProofCommitment({
       action: "issue_did",
       networkId: this.providers.networkId,
       contractAddress: this.contractAddress,
-      agentAddress: input.agentAddress,
+      agentId: input.agentId,
       did,
       didDocument: input.didDocument,
     });
-    const existing = getDidMetadata(this.contractAddress, input.agentAddress);
+    const existing = getDidMetadata(this.contractAddress, input.agentId);
     const organization = existing?.organization;
     const organizationDisclosureValue = existing?.organizationDisclosure || "undisclosed";
     const organizationLabel = encodeFixedBytes(
@@ -232,7 +234,8 @@ export class DidRegistryAPI {
     ) => Promise<TxResult>)(agentKey, didCommitment, documentCommitment, proofCommitment, organizationLabel, organizationDisclosure);
 
     const now = new Date().toISOString();
-    const cached = mergeDidMetadata(this.contractAddress, input.agentAddress, {
+    const cached = mergeDidMetadata(this.contractAddress, input.agentId, {
+      subjectWalletAddress: input.subjectWalletAddress,
       updatedAt: now,
       issuedAt: now,
       revokedAt: undefined,
@@ -245,7 +248,8 @@ export class DidRegistryAPI {
     });
 
     return {
-      agentAddress: input.agentAddress,
+      agentId: input.agentId,
+      subjectWalletAddress: input.subjectWalletAddress,
       agentName: cached.agentName,
       organization: cached.organization,
       organizationDisclosure: cached.organizationDisclosure,
@@ -271,7 +275,7 @@ export class DidRegistryAPI {
 
   async updateDid(input: UpdateDidInput): Promise<DidRecord> {
     const ownerContract = await this.getOwnerContract();
-    const agentKey = await createAgentKey(input.agentAddress);
+    const agentKey = await createAgentKey(input.agentId);
     const agentKeyHex = toHex(agentKey);
     const did = await createDidIdentifier(
       this.providers.networkId,
@@ -281,18 +285,18 @@ export class DidRegistryAPI {
     const didCommitment = await createDidCommitment({
       did,
       contractAddress: this.contractAddress,
-      agentAddress: input.agentAddress,
+      agentId: input.agentId,
     });
     const documentCommitment = await createDocumentCommitment(input.didDocument);
     const proofCommitment = await createLifecycleProofCommitment({
       action: "update_did",
       networkId: this.providers.networkId,
       contractAddress: this.contractAddress,
-      agentAddress: input.agentAddress,
+      agentId: input.agentId,
       did,
       didDocument: input.didDocument,
     });
-    const existing = getDidMetadata(this.contractAddress, input.agentAddress);
+    const existing = getDidMetadata(this.contractAddress, input.agentId);
     const organization = existing?.organization;
     const organizationDisclosureValue = existing?.organizationDisclosure || "undisclosed";
     const organizationLabel = encodeFixedBytes(
@@ -311,7 +315,8 @@ export class DidRegistryAPI {
     ) => Promise<TxResult>)(agentKey, didCommitment, documentCommitment, proofCommitment, organizationLabel, organizationDisclosure);
 
     const now = new Date().toISOString();
-    const cached = mergeDidMetadata(this.contractAddress, input.agentAddress, {
+    const cached = mergeDidMetadata(this.contractAddress, input.agentId, {
+      subjectWalletAddress: input.subjectWalletAddress,
       updatedAt: now,
       txHash: String(tx.public.txHash || ""),
       txId: String(tx.public.txId || ""),
@@ -322,7 +327,8 @@ export class DidRegistryAPI {
     });
 
     return {
-      agentAddress: input.agentAddress,
+      agentId: input.agentId,
+      subjectWalletAddress: input.subjectWalletAddress,
       agentName: cached.agentName,
       organization: cached.organization,
       organizationDisclosure: cached.organizationDisclosure,
@@ -349,7 +355,7 @@ export class DidRegistryAPI {
 
   async revokeDid(input: RevokeDidInput): Promise<DidRecord> {
     const ownerContract = await this.getOwnerContract();
-    const agentKey = await createAgentKey(input.agentAddress);
+    const agentKey = await createAgentKey(input.agentId);
     const agentKeyHex = toHex(agentKey);
     const did = await createDidIdentifier(
       this.providers.networkId,
@@ -359,7 +365,7 @@ export class DidRegistryAPI {
     const revocationCommitment = await createRevocationCommitment({
       networkId: this.providers.networkId,
       contractAddress: this.contractAddress,
-      agentAddress: input.agentAddress,
+      agentId: input.agentId,
       did,
       reason: input.reason,
     });
@@ -370,7 +376,8 @@ export class DidRegistryAPI {
     ) => Promise<TxResult>)(agentKey, revocationCommitment);
 
     const now = new Date().toISOString();
-    const cached = mergeDidMetadata(this.contractAddress, input.agentAddress, {
+    const cached = mergeDidMetadata(this.contractAddress, input.agentId, {
+      subjectWalletAddress: input.subjectWalletAddress,
       updatedAt: now,
       revokedAt: now,
       txHash: String(tx.public.txHash || ""),
@@ -379,7 +386,8 @@ export class DidRegistryAPI {
     });
 
     return {
-      agentAddress: input.agentAddress,
+      agentId: input.agentId,
+      subjectWalletAddress: input.subjectWalletAddress,
       agentName: cached.agentName,
       organization: cached.organization,
       organizationDisclosure: cached.organizationDisclosure,
@@ -405,8 +413,8 @@ export class DidRegistryAPI {
     };
   }
 
-  async fetchDidRecord(agentAddress: string): Promise<DidRecord | null> {
-    if (!this.contractAddress.trim() || !agentAddress.trim()) return null;
+  async fetchDidRecord(agentId: string, subjectWalletAddress?: string): Promise<DidRecord | null> {
+    if (!this.contractAddress.trim() || !agentId.trim()) return null;
 
     const state = await this.providers.publicDataProvider.queryContractState(
       this.contractAddress as never,
@@ -415,7 +423,8 @@ export class DidRegistryAPI {
 
     return this.buildDidRecordFromLedger(
       this.module.ledger((state as { data: unknown }).data),
-      agentAddress,
+      agentId,
+      subjectWalletAddress,
     );
   }
 
@@ -468,18 +477,21 @@ export class DidRegistryAPI {
     );
   }
 
-  agentRecord$(agentAddress: string): Observable<DidRecord | null> {
-    if (!agentAddress.trim()) return of(null);
+  agentRecord$(agentId: string, subjectWalletAddress?: string): Observable<DidRecord | null> {
+    if (!agentId.trim()) return of(null);
     return this.ledgerState$.pipe(
-      switchMap((ledgerState) => from(this.buildDidRecordFromLedger(ledgerState, agentAddress))),
+      switchMap((ledgerState) =>
+        from(this.buildDidRecordFromLedger(ledgerState, agentId, subjectWalletAddress)),
+      ),
     );
   }
 
   private async buildDidRecordFromLedger(
     ledgerState: Record<string, unknown>,
-    agentAddress: string,
+    agentId: string,
+    subjectWalletAddress?: string,
   ): Promise<DidRecord | null> {
-    const agentKey = await createAgentKey(agentAddress);
+    const agentKey = await createAgentKey(agentId);
     const agentKeyHex = toHex(agentKey);
     const statusCode = bigintishToNumber(
       mapLookupByHexKey(ledgerState.status_by_agent, agentKeyHex, fromHex, toHex),
@@ -512,12 +524,13 @@ export class DidRegistryAPI {
     const organizationDisclosure = disclosureFromValue(
       mapLookupByHexKey(ledgerState.organization_disclosures, agentKeyHex, fromHex, toHex),
     );
-    const cached = getDidMetadata(this.contractAddress, agentAddress);
+    const cached = getDidMetadata(this.contractAddress, agentId);
     let persisted: Awaited<ReturnType<typeof getPersistedDidState>> | null = null;
     try {
       persisted = await getPersistedDidState({
         contractAddress: this.contractAddress,
-        walletAddress: agentAddress,
+        walletAddress: subjectWalletAddress || cached?.subjectWalletAddress || "",
+        agentId,
       });
     } catch {
       persisted = null;
@@ -529,7 +542,11 @@ export class DidRegistryAPI {
       : undefined;
 
     return {
-      agentAddress,
+      agentId,
+      subjectWalletAddress:
+        persistedRecord?.subject_wallet_address ||
+        persistedRequest?.subject_wallet_address ||
+        cached?.subjectWalletAddress,
       agentName:
         (typeof persistedRequest?.request_payload?.agentName === "string"
           ? persistedRequest.request_payload.agentName

@@ -24,8 +24,12 @@ async function sha256Bytes(value: string): Promise<Uint8Array> {
   return new Uint8Array(hash);
 }
 
-export async function createAgentKey(agentAddress: string): Promise<Uint8Array> {
-  return sha256Bytes(agentAddress.trim().toLowerCase());
+function normalizeAgentId(agentId: string): string {
+  return agentId.trim().toLowerCase();
+}
+
+export async function createAgentKey(agentId: string): Promise<Uint8Array> {
+  return sha256Bytes(normalizeAgentId(agentId));
 }
 
 function padBytes(value: Uint8Array, length: number): Uint8Array {
@@ -204,7 +208,7 @@ export async function decryptOwnerVaultBackup(
 
 export async function createRequestCommitment(input: {
   contractAddress: string;
-  agentAddress: string;
+  agentId: string;
   agentName?: string;
   organization?: string;
   organizationDisclosure: "disclosed" | "undisclosed";
@@ -213,7 +217,7 @@ export async function createRequestCommitment(input: {
   return sha256Bytes(
     JSON.stringify({
       contractAddress: input.contractAddress.trim(),
-      agentAddress: input.agentAddress.trim().toLowerCase(),
+      agentId: normalizeAgentId(input.agentId),
       agentName: (input.agentName || "").trim(),
       organization: (input.organization || "").trim(),
       organizationDisclosure: input.organizationDisclosure,
@@ -225,7 +229,7 @@ export async function createRequestCommitment(input: {
 export async function createProofCommitment(input: {
   networkId: string;
   contractAddress: string;
-  agentAddress: string;
+  agentId: string;
   agentName?: string;
   organization?: string;
   organizationDisclosure: "disclosed" | "undisclosed";
@@ -235,7 +239,7 @@ export async function createProofCommitment(input: {
     [
       input.networkId,
       input.contractAddress.trim(),
-      input.agentAddress.trim().toLowerCase(),
+      normalizeAgentId(input.agentId),
       (input.agentName || "").trim(),
       (input.organization || "").trim(),
       input.organizationDisclosure,
@@ -286,13 +290,13 @@ export async function createDidIdentifier(
 export async function createDidCommitment(input: {
   did: string;
   contractAddress: string;
-  agentAddress: string;
+  agentId: string;
 }): Promise<Uint8Array> {
   return sha256Bytes(
     JSON.stringify({
       did: input.did,
       contractAddress: input.contractAddress.trim(),
-      agentAddress: input.agentAddress.trim().toLowerCase(),
+      agentId: normalizeAgentId(input.agentId),
     }),
   );
 }
@@ -305,7 +309,7 @@ export async function createLifecycleProofCommitment(input: {
   action: "issue_did" | "update_did";
   networkId: string;
   contractAddress: string;
-  agentAddress: string;
+  agentId: string;
   did: string;
   didDocument: string;
 }): Promise<Uint8Array> {
@@ -314,7 +318,7 @@ export async function createLifecycleProofCommitment(input: {
       action: input.action,
       networkId: input.networkId,
       contractAddress: input.contractAddress.trim(),
-      agentAddress: input.agentAddress.trim().toLowerCase(),
+      agentId: normalizeAgentId(input.agentId),
       did: input.did,
       didDocument: input.didDocument.trim(),
     }),
@@ -324,7 +328,7 @@ export async function createLifecycleProofCommitment(input: {
 export async function createRevocationCommitment(input: {
   networkId: string;
   contractAddress: string;
-  agentAddress: string;
+  agentId: string;
   did: string;
   reason: string;
 }): Promise<Uint8Array> {
@@ -333,10 +337,9 @@ export async function createRevocationCommitment(input: {
       action: "revoke_did",
       networkId: input.networkId,
       contractAddress: input.contractAddress.trim(),
-      agentAddress: input.agentAddress.trim().toLowerCase(),
+      agentId: normalizeAgentId(input.agentId),
       did: input.did,
       reason: input.reason.trim(),
     }),
   );
 }
-

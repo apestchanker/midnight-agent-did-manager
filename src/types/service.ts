@@ -44,6 +44,7 @@ export interface DidRequestRow {
   mcp_key_id?: string | null;
   contract_address: string;
   network_id: string;
+  agent_id?: string | null;
   requester_wallet_address: string;
   subject_wallet_address: string;
   request_status: string;
@@ -101,6 +102,7 @@ export interface RegistryDidRow {
   did: string;
   contract_address: string;
   network_id: string;
+  agent_id?: string | null;
   subject_wallet_address: string;
   subject_agent_key: string;
   issuer_wallet_address: string;
@@ -117,4 +119,12 @@ export interface RegistryDidRow {
   issued_at: string;
   updated_at: string;
   revoked_at?: string | null;
+}
+
+export interface LogEntry {
+  id: string;
+  ts: string;
+  level: string;
+  scope: string;
+  message: string;
 }

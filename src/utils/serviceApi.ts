@@ -4,6 +4,7 @@ import type {
   CredentialBundle,
   CustomerContext,
   DidRequestRow,
+  LogEntry,
   McpKey,
   RegistryDidRow,
   Subscription,
@@ -13,9 +14,15 @@ import type { DeployResult } from "../types/did";
 
 const API_BASE =
   (import.meta.env.VITE_DID_API_BASE_URL || "").trim() || "http://localhost:8787";
+const MCP_BASE =
+  (import.meta.env.VITE_DID_MCP_BASE_URL || "").trim() || "http://localhost:8788";
 
 function apiUrl(path: string): string {
   return `${API_BASE}${path}`;
+}
+
+function mcpUrl(path: string): string {
+  return `${MCP_BASE}${path}`;
 }
 
 async function readError(response: Response): Promise<string> {
@@ -38,6 +45,18 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function checkDidServiceHealth(): Promise<{ ok: boolean }> {
   return requestJson("/health");
+}
+
+export function fetchBackendLogs(limit = 200): Promise<{ entries: LogEntry[] }> {
+  return requestJson(`/api/admin/logs?limit=${encodeURIComponent(String(limit))}`);
+}
+
+export async function fetchMcpLogs(limit = 200): Promise<{ entries: LogEntry[] }> {
+  const response = await fetch(mcpUrl(`/logs?limit=${encodeURIComponent(String(limit))}`));
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return (await response.json()) as { entries: LogEntry[] };
 }
 
 export async function getCustomerByWallet(
@@ -95,6 +114,22 @@ export function revokeMcpKey(payload: {
   });
 }
 
+export function updateMcpKeyScopes(payload: {
+  customerId: string;
+  keyId: string;
+  scopes: string[];
+}): Promise<McpKey> {
+  return requestJson(`/api/customers/${payload.customerId}/mcp-keys/${payload.keyId}/scopes`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      scopes: payload.scopes,
+    }),
+  });
+}
+
 export function createSubscription(payload: {
   customerId: string;
   planCode: string;
@@ -120,6 +155,7 @@ export function createAgentDidRequest(payload: {
   mcpKey: string;
   contractAddress: string;
   networkId: string;
+  agentId?: string;
   requesterWalletAddress: string;
   subjectWalletAddress: string;
   organizationName?: string;
@@ -138,6 +174,7 @@ export function createAgentDidRequest(payload: {
 
 export function createWalletDidRequest(payload: {
   walletAddress: string;
+  agentId?: string;
   subjectWalletAddress: string;
   contractAddress: string;
   networkId: string;
@@ -160,12 +197,14 @@ export function createWalletDidRequest(payload: {
 export function getPersistedDidState(payload: {
   contractAddress: string;
   walletAddress: string;
+  agentId?: string;
 }): Promise<{
   request: DidRequestRow | null;
   record: {
     did?: string;
     contract_address: string;
     network_id: string;
+    agent_id?: string | null;
     subject_wallet_address: string;
     subject_agent_key: string;
     issuer_wallet_address: string;
@@ -187,6 +226,7 @@ export function getPersistedDidState(payload: {
     contractAddress: payload.contractAddress,
     walletAddress: payload.walletAddress,
   });
+  if (payload.agentId) params.set("agentId", payload.agentId);
   return requestJson(`/api/wallet/did-state?${params.toString()}`);
 }
 
@@ -205,13 +245,26 @@ export function getDidRequest(requestId: string): Promise<DidRequestRow> {
   return requestJson(`/api/did-requests/${requestId}`);
 }
 
-export function approveDidRequest(requestId: string, humanWalletAddress: string) {
+export function approveDidRequest(
+  requestId: string,
+  humanWalletAddress: string,
+  onchainRequest?: {
+    requestedDid?: string;
+    onchainRequestTxId?: string;
+    onchainRequestTxHash?: string;
+  },
+) {
   return requestJson<DidRequestRow>(`/api/human/did-requests/${requestId}/approve`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ humanWalletAddress }),
+    body: JSON.stringify({
+      humanWalletAddress,
+      requestedDid: onchainRequest?.requestedDid,
+      onchainRequestTxId: onchainRequest?.onchainRequestTxId,
+      onchainRequestTxHash: onchainRequest?.onchainRequestTxHash,
+    }),
   });
 }
 
@@ -230,6 +283,8 @@ export function finalizeIssuedDid(payload: {
   issuerWalletAddress: string;
   didDocument: Record<string, unknown>;
   didRecord: DidRecord;
+  onchainRequestTxId?: string;
+  onchainRequestTxHash?: string;
 }) {
   return requestJson(`/api/admin/did-requests/${payload.requestId}/issue`, {
     method: "POST",
@@ -239,6 +294,8 @@ export function finalizeIssuedDid(payload: {
     body: JSON.stringify({
       issuerWalletAddress: payload.issuerWalletAddress,
       didDocument: payload.didDocument,
+      onchainRequestTxId: payload.onchainRequestTxId,
+      onchainRequestTxHash: payload.onchainRequestTxHash,
       onchainIssueTxId: payload.didRecord.txId,
       onchainIssueTxHash: payload.didRecord.txHash,
       didCommitment: payload.didRecord.didCommitmentHex,
@@ -250,6 +307,7 @@ export function finalizeIssuedDid(payload: {
 
 export function syncWalletIssuedDid(payload: {
   issuerWalletAddress: string;
+  agentId: string;
   subjectWalletAddress: string;
   contractAddress: string;
   networkId: string;

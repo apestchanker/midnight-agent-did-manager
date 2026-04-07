@@ -13,7 +13,7 @@ import { OwnerVaultPanel } from "./components/OwnerVaultPanel";
 import { WorkflowPanel } from "./components/WorkflowPanel";
 import { VcPanel } from "./components/VcPanel";
 import type { DidRecord, DeployResult, RegistryAccess, RegistrySummary } from "./types/did";
-import type { DidRequestRow, RegistryDidRow } from "./types/service";
+import type { DidRequestRow, LogEntry, RegistryDidRow } from "./types/service";
 import { APP_VERSION } from "./lib/version";
 import {
   DidRegistryAPI,
@@ -21,13 +21,15 @@ import {
   getSavedDeployment,
 } from "./lib/didContract";
 import {
-  issueDidWithSync,
   requestDidWithSync,
   revokeDidWithSync,
   updateDidWithSync,
 } from "./lib/did/app-api";
 import {
   createWalletDidRequest,
+  fetchBackendLogs,
+  fetchMcpLogs,
+  finalizeIssuedDid,
   getCustomerByWallet,
   getLatestAdminRegistryDeployment,
   listDidRequests,
@@ -47,6 +49,9 @@ const SECTION_IDS = {
 } as const;
 
 export default function App() {
+  function createSystemAgentId() {
+    return `agent-${crypto.randomUUID().toLowerCase()}`;
+  }
   type ViewMode = "user" | "admin" | "registry";
   type ActiveMainSection =
     | typeof SECTION_IDS.wallet
@@ -58,6 +63,7 @@ export default function App() {
     | typeof SECTION_IDS.credentials
     | typeof SECTION_IDS.workflow
     | "admin-subscriptions"
+    | "admin-logs"
     | "owner-vault"
     | "deploy-did-registry";
   type SidebarItem = {
@@ -68,6 +74,7 @@ export default function App() {
   type SettingsSection = "overview" | "subscriptions" | "mcp" | "human";
   type AgentSummary = {
     key: string;
+    agentId: string;
     contractAddress: string;
     subjectWalletAddress: string;
     latestRequestId: string;
@@ -121,6 +128,7 @@ export default function App() {
   }, [storageMode]);
 
   const [contractAddress, setContractAddress] = useState("");
+  const [selectedAgentId, setSelectedAgentId] = useState("");
   const [selectedAgentAddress, setSelectedAgentAddress] = useState("");
   const [selectedAgentKey, setSelectedAgentKey] = useState("");
   const [didRecord, setDidRecord] = useState<DidRecord | null>(null);
@@ -148,6 +156,9 @@ export default function App() {
   const [registryDids, setRegistryDids] = useState<RegistryDidRow[]>([]);
   const [registryApi, setRegistryApi] = useState<DidRegistryAPI | null>(null);
   const [customerQuotaTotal, setCustomerQuotaTotal] = useState(0);
+  const [backendLogs, setBackendLogs] = useState<LogEntry[]>([]);
+  const [mcpLogs, setMcpLogs] = useState<LogEntry[]>([]);
+  const [logsError, setLogsError] = useState("");
   const agentCarouselRef = useRef<HTMLDivElement | null>(null);
   const adminDidCarouselRef = useRef<HTMLDivElement | null>(null);
   const registryCarouselRef = useRef<HTMLDivElement | null>(null);
@@ -156,10 +167,7 @@ export default function App() {
       new Set(
         customerRequests
           .filter((request) => request.request_status === "issued")
-          .map(
-            (request) =>
-              `${request.contract_address}:${request.subject_wallet_address}`,
-          ),
+          .map((request) => `${request.contract_address}:${request.agent_id}`),
       ).size,
     [customerRequests],
   );
@@ -182,8 +190,7 @@ export default function App() {
     for (const request of customerRequests) {
       const agentKey = [
         request.contract_address,
-        request.subject_wallet_address,
-        getRequestAgentName(request) || request.requested_did || request.id,
+        request.agent_id,
       ].join(":");
       const current = latestByAgent.get(agentKey);
       if (!current) {
@@ -200,6 +207,7 @@ export default function App() {
     return Array.from(latestByAgent.entries())
       .map(([key, request]) => ({
         key,
+        agentId: request.agent_id || "",
         contractAddress: request.contract_address,
         subjectWalletAddress: request.subject_wallet_address,
         latestRequestId: request.id,
@@ -219,29 +227,16 @@ export default function App() {
       managedAgents.find((agent) => agent.key === selectedAgentKey) ||
       managedAgents.find(
         (agent) =>
-          agent.subjectWalletAddress === selectedAgentAddress &&
+          agent.agentId === selectedAgentId &&
           agent.contractAddress === contractAddress,
       ) ||
-      managedAgents.find(
-        (agent) => agent.subjectWalletAddress === selectedAgentAddress,
-      ) ||
+      managedAgents.find((agent) => agent.agentId === selectedAgentId) ||
       null,
-    [contractAddress, managedAgents, selectedAgentAddress, selectedAgentKey],
+    [contractAddress, managedAgents, selectedAgentId, selectedAgentKey],
   );
   const userCanOpenAgentFlows = Boolean(activeAgentSummary || newAgentMode);
   const adminDids = useMemo(() => {
-    const latestByWallet = new Map<string, DidRequestRow>();
-    for (const request of adminRequests) {
-      const current = latestByWallet.get(request.subject_wallet_address);
-      if (
-        !current ||
-        new Date(request.updated_at).getTime() >=
-          new Date(current.updated_at).getTime()
-      ) {
-        latestByWallet.set(request.subject_wallet_address, request);
-      }
-    }
-    return Array.from(latestByWallet.values()).sort(
+    return [...adminRequests].sort(
       (a, b) =>
         new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
     );
@@ -261,11 +256,8 @@ export default function App() {
   }, [adminDidSearch, adminDids]);
   const selectedAdminDid = useMemo(
     () =>
-      adminDids.find((request) => request.id === selectedAdminRequestId) ||
-      adminDids.find(
-        (request) => request.subject_wallet_address === selectedAgentAddress,
-      ) || null,
-    [adminDids, selectedAdminRequestId, selectedAgentAddress],
+      adminDids.find((request) => request.id === selectedAdminRequestId) || null,
+    [adminDids, selectedAdminRequestId],
   );
   const filteredRegistryDids = useMemo(() => {
     const needle = registryDidSearch.trim().toLowerCase();
@@ -283,10 +275,8 @@ export default function App() {
   const selectedRegistryDid = useMemo(
     () =>
       registryDids.find((record) => record.id === selectedRegistryDidId) ||
-      registryDids.find(
-        (record) => record.subject_wallet_address === selectedAgentAddress,
-      ) || null,
-    [registryDids, selectedAgentAddress, selectedRegistryDidId],
+      registryDids.find((record) => (record.agent_id || record.subject_wallet_address) === selectedAgentId) || null,
+    [registryDids, selectedAgentId, selectedRegistryDidId],
   );
 
   const refreshRequestCollections = useCallback(async () => {
@@ -320,6 +310,40 @@ export default function App() {
   }, [walletAddress]);
 
   useEffect(() => {
+    if (!(status === "connected" && viewMode === "admin" && activeMainSection === "admin-logs")) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const refreshLogs = async () => {
+      try {
+        const [backend, mcp] = await Promise.all([
+          fetchBackendLogs(200),
+          fetchMcpLogs(200),
+        ]);
+        if (cancelled) return;
+        setBackendLogs(backend.entries);
+        setMcpLogs(mcp.entries);
+        setLogsError("");
+      } catch (error) {
+        if (cancelled) return;
+        setLogsError(error instanceof Error ? error.message : String(error));
+      }
+    };
+
+    void refreshLogs();
+    const timer = window.setInterval(() => {
+      void refreshLogs();
+    }, 2000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeMainSection, status, viewMode]);
+
+  useEffect(() => {
     const savedAddress = getSavedContractAddress();
     const savedDeployment = getSavedDeployment();
     const viewedContract =
@@ -342,6 +366,7 @@ export default function App() {
 
   useEffect(() => {
     if (!walletAddress) {
+      setSelectedAgentId("");
       setSelectedAgentAddress("");
       setSelectedAgentKey("");
     }
@@ -384,6 +409,7 @@ export default function App() {
     if (viewMode !== "user") return;
     if (newAgentMode) return;
     if (managedAgents.length === 0) {
+      setSelectedAgentId("");
       setSelectedAgentAddress("");
       setSelectedAgentKey("");
       return;
@@ -392,6 +418,7 @@ export default function App() {
       (agent) => agent.key === selectedAgentKey,
     );
     if (!currentExists) {
+      setSelectedAgentId("");
       setSelectedAgentAddress("");
       setSelectedAgentKey("");
     }
@@ -400,6 +427,7 @@ export default function App() {
   useEffect(() => {
     if (viewMode !== "admin") return;
     if (adminDids.length === 0) {
+      setSelectedAgentId("");
       setSelectedAgentAddress("");
       setSelectedAdminRequestId("");
       return;
@@ -407,12 +435,14 @@ export default function App() {
     const currentExists = adminDids.some((request) => request.id === selectedAdminRequestId);
     if (!currentExists) {
       setSelectedAdminRequestId(adminDids[0].id);
+      setSelectedAgentId(adminDids[0].agent_id || "");
       setSelectedAgentAddress(adminDids[0].subject_wallet_address);
     }
   }, [adminDids, selectedAdminRequestId, viewMode]);
 
   useEffect(() => {
     if (viewMode === "registry" || viewMode === "user") {
+      setSelectedAgentId("");
       setSelectedAgentAddress("");
       setSelectedAgentKey("");
       setDidRecord(null);
@@ -423,6 +453,7 @@ export default function App() {
   useEffect(() => {
     if (viewMode !== "registry") return;
     if (registryDids.length === 0) {
+      setSelectedAgentId("");
       setSelectedAgentAddress("");
       setSelectedRegistryDidId("");
       return;
@@ -432,6 +463,7 @@ export default function App() {
     );
     if (!currentExists) {
       setSelectedRegistryDidId(registryDids[0].id);
+      setSelectedAgentId(registryDids[0].agent_id || "");
       setSelectedAgentAddress(registryDids[0].subject_wallet_address);
     }
   }, [registryDids, selectedRegistryDidId, viewMode]);
@@ -439,7 +471,7 @@ export default function App() {
   useEffect(() => {
     if (viewMode !== "user") return;
     setDidRecord(null);
-  }, [contractAddress, selectedAgentKey, viewMode]);
+  }, [contractAddress, selectedAgentId, selectedAgentKey, viewMode]);
 
   useEffect(() => {
     if (!providers || !contractAddress.trim()) {
@@ -463,12 +495,12 @@ export default function App() {
   }, [contractAddress, providers]);
 
   useEffect(() => {
-    if (!registryApi || !selectedAgentAddress) {
+    if (!registryApi || !selectedAgentId) {
       setDidRecord(null);
       return;
     }
 
-    const subscription = registryApi.agentRecord$(selectedAgentAddress).subscribe({
+    const subscription = registryApi.agentRecord$(selectedAgentId, selectedAgentAddress).subscribe({
       next: async (record) => {
         setDidRecord(record);
         await refreshRequestCollections();
@@ -480,17 +512,17 @@ export default function App() {
     });
 
     return () => subscription.unsubscribe();
-  }, [refreshRequestCollections, registryApi, selectedAgentAddress, walletAddress]);
+  }, [refreshRequestCollections, registryApi, selectedAgentAddress, selectedAgentId, walletAddress]);
 
   useEffect(() => {
     if (
       viewMode !== "user" ||
       !walletAddress.trim() ||
       !contractAddress.trim() ||
-      !selectedAgentAddress.trim() ||
+      !selectedAgentId.trim() ||
       !didRecord ||
       customerRequests.some(
-        (request) => request.subject_wallet_address === selectedAgentAddress,
+        (request) => request.agent_id === selectedAgentId,
       )
     ) {
       return;
@@ -498,12 +530,14 @@ export default function App() {
 
     createWalletDidRequest({
       walletAddress,
-      subjectWalletAddress: selectedAgentAddress,
+      agentId: selectedAgentId,
+      subjectWalletAddress: selectedAgentAddress || didRecord.subjectWalletAddress || walletAddress,
       contractAddress,
       networkId: providers?.networkId || "preprod",
       organizationName: didRecord.organization,
       organizationDisclosure: didRecord.organizationDisclosure || "undisclosed",
       requestPayload: {
+        agentId: selectedAgentId,
         agentName: didRecord.agentName || null,
         didDocument: didRecord.didDocument || null,
       },
@@ -524,6 +558,7 @@ export default function App() {
     providers?.networkId,
     refreshRequestCollections,
     selectedAgentAddress,
+    selectedAgentId,
     viewMode,
     walletAddress,
   ]);
@@ -555,7 +590,113 @@ export default function App() {
   }
 
   async function handleRequestDid(payload: {
-    agentAddress: string;
+    agentId?: string;
+    subjectWalletAddress: string;
+    agentName?: string;
+    organization?: string;
+    organizationDisclosure: "disclosed" | "undisclosed";
+    didDocument: string;
+  }) {
+    if (!registryApi) throw new Error("Wallet providers not ready");
+    if (!walletAddress) throw new Error("Connect wallet first");
+    if (!contractAddress.trim()) throw new Error("Contract address is required");
+    const agentId = (payload.agentId || createSystemAgentId()).trim().toLowerCase();
+
+    const record = await requestDidWithSync(registryApi, {
+      requesterWalletAddress: walletAddress,
+      agentId,
+      subjectWalletAddress: payload.subjectWalletAddress,
+      agentName: payload.agentName,
+      organization: payload.organization,
+      organizationDisclosure: payload.organizationDisclosure,
+      didDocument: payload.didDocument,
+    });
+
+    setDidRecord(record);
+    setSelectedAgentId(agentId);
+    setSelectedAgentAddress(payload.subjectWalletAddress);
+    setNewAgentMode(false);
+    await refreshRequestCollections();
+    return record;
+  }
+
+  async function refreshAgentRecord(agentId: string, subjectWalletAddress?: string) {
+    if (!registryApi) throw new Error("Wallet providers not ready");
+    const [record, summary] = await Promise.all([
+      registryApi.fetchDidRecord(agentId, subjectWalletAddress),
+      registryApi.fetchRegistrySummary(),
+    ]);
+    setDidRecord(record);
+    setRegistrySummary(summary);
+    setSelectedAgentId(agentId);
+    if (subjectWalletAddress) setSelectedAgentAddress(subjectWalletAddress);
+    await refreshRequestCollections();
+    if (!record) {
+      throw new Error("The registry transaction was confirmed but the updated agent record could not be read back from the indexer yet.");
+    }
+    return record;
+  }
+
+  async function handleRefreshRecord() {
+    if (!selectedAgentId.trim()) {
+      throw new Error("Agent ID is required");
+    }
+    return refreshAgentRecord(selectedAgentId.trim(), selectedAgentAddress.trim());
+  }
+
+  async function handleIssueDid(payload: {
+    requestId?: string;
+    agentId: string;
+    subjectWalletAddress?: string;
+    didDocument: string;
+  }) {
+    if (!registryApi) throw new Error("Wallet providers not ready");
+    if (!contractAddress.trim())
+      throw new Error("Contract address is required");
+    const request =
+      (payload.requestId
+        ? adminRequests.find((item) => item.id === payload.requestId)
+        : null) ||
+      (selectedAdminDid?.id === payload.requestId ? selectedAdminDid : null);
+    const parsedDidDocument = JSON.parse(payload.didDocument) as Record<string, unknown>;
+    if (request && !request.onchain_request_tx_id) {
+      throw new Error(
+        "This request has not been registered on-chain by the human owner yet. Approve it from the human approvals flow first.",
+      );
+    }
+
+    const issuedRecord = await registryApi.issueDid({
+      contractAddress: registryApi.contractAddress,
+      agentId: payload.agentId,
+      subjectWalletAddress: payload.subjectWalletAddress,
+      didDocument: payload.didDocument,
+    });
+
+    setDidRecord(issuedRecord);
+
+    if (request) {
+      await finalizeIssuedDid({
+        requestId: request.id,
+        issuerWalletAddress: walletAddress,
+        didDocument: parsedDidDocument,
+        didRecord: issuedRecord,
+      });
+    }
+
+    try {
+      return await refreshAgentRecord(payload.agentId, payload.subjectWalletAddress);
+    } catch (error) {
+      console.warn("[App] Falling back to locally issued DID state while indexer catches up:", error);
+      await refreshRequestCollections();
+      return issuedRecord;
+    }
+  }
+
+  async function handleApproveDidRequestOnChain(payload: {
+    requestId: string;
+    agentId: string;
+    requesterWalletAddress: string;
+    subjectWalletAddress: string;
     agentName?: string;
     organization?: string;
     organizationDisclosure: "disclosed" | "undisclosed";
@@ -565,9 +706,10 @@ export default function App() {
     if (!walletAddress) throw new Error("Connect wallet first");
     if (!contractAddress.trim()) throw new Error("Contract address is required");
 
-    const record = await requestDidWithSync(registryApi, {
-      requesterWalletAddress: walletAddress,
-      agentAddress: payload.agentAddress,
+    const record = await registryApi.requestDid({
+      requesterWalletAddress: payload.requesterWalletAddress || walletAddress,
+      agentId: payload.agentId,
+      subjectWalletAddress: payload.subjectWalletAddress,
       agentName: payload.agentName,
       organization: payload.organization,
       organizationDisclosure: payload.organizationDisclosure,
@@ -575,62 +717,14 @@ export default function App() {
     });
 
     setDidRecord(record);
-    setSelectedAgentAddress(payload.agentAddress);
-    setNewAgentMode(false);
-    await refreshRequestCollections();
+    setSelectedAgentId(payload.agentId);
+    setSelectedAgentAddress(payload.subjectWalletAddress);
     return record;
-  }
-
-  async function refreshAgentRecord(agentAddress: string) {
-    if (!registryApi) throw new Error("Wallet providers not ready");
-    const [record, summary] = await Promise.all([
-      registryApi.fetchDidRecord(agentAddress),
-      registryApi.fetchRegistrySummary(),
-    ]);
-    setDidRecord(record);
-    setRegistrySummary(summary);
-    setSelectedAgentAddress(agentAddress);
-    await refreshRequestCollections();
-    if (!record) {
-      throw new Error("The registry transaction was confirmed but the updated agent record could not be read back from the indexer yet.");
-    }
-    return record;
-  }
-
-  async function handleRefreshRecord() {
-    if (!selectedAgentAddress.trim()) {
-      throw new Error("Agent record address is required");
-    }
-    return refreshAgentRecord(selectedAgentAddress.trim());
-  }
-
-  async function handleIssueDid(payload: {
-    agentAddress: string;
-    didDocument: string;
-  }) {
-    if (!registryApi) throw new Error("Wallet providers not ready");
-    if (!contractAddress.trim())
-      throw new Error("Contract address is required");
-
-    const issuedRecord = await issueDidWithSync(registryApi, {
-      contractAddress: registryApi.contractAddress,
-      agentAddress: payload.agentAddress,
-      didDocument: payload.didDocument,
-    });
-
-    setDidRecord(issuedRecord);
-
-    try {
-      return await refreshAgentRecord(payload.agentAddress);
-    } catch (error) {
-      console.warn("[App] Falling back to locally issued DID state while indexer catches up:", error);
-      await refreshRequestCollections();
-      return issuedRecord;
-    }
   }
 
   async function handleUpdateDid(payload: {
-    agentAddress: string;
+    agentId: string;
+    subjectWalletAddress?: string;
     didDocument: string;
   }) {
     if (!registryApi) throw new Error("Wallet providers not ready");
@@ -639,15 +733,17 @@ export default function App() {
 
     await updateDidWithSync(registryApi, {
       contractAddress: registryApi.contractAddress,
-      agentAddress: payload.agentAddress,
+      agentId: payload.agentId,
+      subjectWalletAddress: payload.subjectWalletAddress,
       didDocument: payload.didDocument,
     });
 
-    return refreshAgentRecord(payload.agentAddress);
+    return refreshAgentRecord(payload.agentId, payload.subjectWalletAddress);
   }
 
   async function handleRevokeDid(payload: {
-    agentAddress: string;
+    agentId: string;
+    subjectWalletAddress?: string;
     reason: string;
   }) {
     if (!registryApi) throw new Error("Wallet providers not ready");
@@ -656,11 +752,12 @@ export default function App() {
 
     await revokeDidWithSync(registryApi, {
       contractAddress: registryApi.contractAddress,
-      agentAddress: payload.agentAddress,
+      agentId: payload.agentId,
+      subjectWalletAddress: payload.subjectWalletAddress,
       reason: payload.reason,
     });
 
-    return refreshAgentRecord(payload.agentAddress);
+    return refreshAgentRecord(payload.agentId, payload.subjectWalletAddress);
   }
 
   useEffect(() => {
@@ -785,6 +882,7 @@ export default function App() {
           { id: "admin-subscriptions", label: "Subscriptions", shortLabel: "S" },
           { id: SECTION_IDS.workflow, label: "Review Queue", shortLabel: "Q" },
           { id: SECTION_IDS.issuer, label: "Issuer", shortLabel: "I" },
+          { id: "admin-logs", label: "Logs", shortLabel: "L" },
           { id: "owner-vault", label: "Owner Vault", shortLabel: "V" },
           { id: "deploy-did-registry", label: "Deploy DID Registry", shortLabel: "D" },
         ]
@@ -965,6 +1063,7 @@ export default function App() {
                       title="Add new Agent"
                       onClick={() => {
                         setNewAgentMode(true);
+                        setSelectedAgentId("");
                         setSelectedAgentAddress("");
                         setSelectedAgentKey("");
                         setAgentsPanelOpen(true);
@@ -1033,12 +1132,13 @@ export default function App() {
                                   onClick={() => {
                                     setNewAgentMode(false);
                                     setSelectedAgentKey(agent.key);
+                                    setSelectedAgentId(agent.agentId);
                                     setSelectedAgentAddress(agent.subjectWalletAddress);
                                     setContractAddress(agent.contractAddress);
                                     setActiveMainSection(SECTION_IDS.request);
                                   }}
                                   className={`w-full shrink-0 snap-start rounded-lg border px-3 py-2 text-left text-xs transition ${
-                                    selectedAgentAddress === agent.subjectWalletAddress &&
+                                    selectedAgentId === agent.agentId &&
                                     contractAddress === agent.contractAddress
                                       ? "border-emerald-600 bg-emerald-950/30 text-white"
                                       : "border-zinc-800 bg-zinc-950 text-zinc-300 hover:bg-zinc-800"
@@ -1162,6 +1262,7 @@ export default function App() {
                                   type="button"
                                   onClick={() => {
                                     setSelectedAdminRequestId(request.id);
+                                    setSelectedAgentId(request.agent_id || "");
                                     setSelectedAgentAddress(request.subject_wallet_address);
                                     setActiveMainSection(SECTION_IDS.issuer);
                                   }}
@@ -1247,6 +1348,7 @@ export default function App() {
                                   type="button"
                                   onClick={() => {
                                     setSelectedRegistryDidId(record.id);
+                                    setSelectedAgentId(record.agent_id || "");
                                     setSelectedAgentAddress(record.subject_wallet_address);
                                     setActiveMainSection(SECTION_IDS.registryDirectory);
                                   }}
@@ -1465,6 +1567,7 @@ export default function App() {
                       type="button"
                       onClick={() => {
                         setNewAgentMode(true);
+                        setSelectedAgentId("");
                         setSelectedAgentAddress("");
                         setActiveMainSection(SECTION_IDS.request);
                       }}
@@ -1517,11 +1620,12 @@ export default function App() {
                         <button
                           key={record.id}
                           type="button"
-                          onClick={() =>
-                            setSelectedAgentAddress(record.subject_wallet_address)
-                          }
+                          onClick={() => {
+                            setSelectedAgentId(record.agent_id || "");
+                            setSelectedAgentAddress(record.subject_wallet_address);
+                          }}
                           className={`rounded-xl border p-5 text-left transition ${
-                            selectedAgentAddress === record.subject_wallet_address
+                            selectedAgentId === record.agent_id
                               ? "border-sky-600 bg-sky-950/30 text-white"
                               : "border-zinc-800 bg-zinc-900 text-zinc-200 hover:bg-zinc-800"
                           }`}
@@ -1606,6 +1710,7 @@ export default function App() {
                     <RequestForm
                       contractAddress={contractAddress}
                       walletAddress={walletAddress}
+                      initialAgentId={newAgentMode ? "" : activeAgentSummary?.agentId}
                       initialAgentAddress={
                         newAgentMode ? "" : selectedAgentAddress
                       }
@@ -1650,7 +1755,9 @@ export default function App() {
                 ) : (
                   <IssuerPanel
                     contractAddress={contractAddress}
-                    targetAgentAddress={selectedAgentAddress}
+                    requestId={selectedAdminDid.id}
+                    targetAgentId={selectedAdminDid.agent_id || ""}
+                    targetSubjectWalletAddress={selectedAdminDid.subject_wallet_address}
                     record={didRecord}
                     onIssue={handleIssueDid}
                     onUpdate={handleUpdateDid}
@@ -1718,6 +1825,7 @@ export default function App() {
                   contractAddress={contractAddress}
                   mode={viewMode}
                   onIssueOnChain={handleIssueDid}
+                  onApproveOnChain={handleApproveDidRequestOnChain}
                   activeSection={
                     viewMode === "user"
                       ? settingsSection
@@ -1731,6 +1839,64 @@ export default function App() {
                   showSectionNav={false}
                   showHeader={false}
                 />
+              </section>
+            )}
+
+            {viewMode === "admin" && activeMainSection === "admin-logs" && (
+              <section id="admin-logs" className="scroll-mt-24 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-lg font-semibold text-white">Logs</h2>
+                    <p className="text-sm text-zinc-500">
+                      Live process output for the local backend API and MCP HTTP server.
+                    </p>
+                  </div>
+                </div>
+                {logsError && (
+                  <div className="rounded-lg border border-red-800 bg-red-950/40 p-3 text-sm text-red-200">
+                    {logsError}
+                  </div>
+                )}
+                <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                  {(
+                    [
+                      ["Backend", backendLogs],
+                      ["MCP", mcpLogs],
+                    ] as const
+                  ).map(([label, entries]) => (
+                    <div
+                      key={label}
+                      className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900"
+                    >
+                      <div className="border-b border-zinc-800 px-4 py-3">
+                        <h3 className="text-sm font-semibold text-white">{label} Logs</h3>
+                      </div>
+                      <div className="max-h-[32rem] space-y-2 overflow-y-auto px-4 py-4 font-mono text-xs">
+                        {entries.length === 0 ? (
+                          <div className="text-zinc-500">No log entries captured yet.</div>
+                        ) : (
+                          entries.map((entry) => (
+                            <div
+                              key={entry.id}
+                              className="rounded-lg border border-zinc-800 bg-zinc-950/80 p-3"
+                            >
+                              <div className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-500">
+                                <span>{new Date(entry.ts).toLocaleTimeString()}</span>
+                                <span className="rounded-full border border-zinc-700 px-2 py-0.5 uppercase tracking-wide">
+                                  {entry.level}
+                                </span>
+                                <span>{entry.scope}</span>
+                              </div>
+                              <div className="mt-2 whitespace-pre-wrap break-words text-zinc-200">
+                                {entry.message}
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </section>
             )}
 

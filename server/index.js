@@ -1,7 +1,8 @@
 import "./load-env.js";
 import { createServer } from "http";
 import { URL } from "url";
-import { getDatabaseUrl, initializeDatabase } from "./db.js";
+import { initializeDatabase } from "./db.js";
+import { getRecentLogs, installProcessLogger } from "./log-store.js";
 import {
   approveDidRequestByHuman,
   bootstrapDemoCustomer,
@@ -11,6 +12,7 @@ import {
   createWalletDidRequest,
   createSubscription,
   revokeCustomerMcpKey,
+  updateCustomerMcpKeyScopes,
   getLatestAdminRegistryDeployment,
   getCustomerByWallet,
   getDidRequestById,
@@ -46,6 +48,8 @@ import {
 
 const PORT = Number(process.env.DID_API_PORT || 8787);
 
+installProcessLogger("backend");
+
 const server = createServer(async (req, res) => {
   if (!req.url || !req.method) {
     sendText(res, 400, "Invalid request");
@@ -61,13 +65,20 @@ const server = createServer(async (req, res) => {
 
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const parts = parseRequestPath(url.pathname);
+  console.info(`[backend] ${req.method} ${url.pathname}`);
 
   try {
     if (req.method === "GET" && url.pathname === "/health") {
       sendJson(res, 200, {
         ok: true,
-        databaseUrl: getDatabaseUrl(),
         time: new Date().toISOString(),
+      });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/admin/logs") {
+      sendJson(res, 200, {
+        entries: getRecentLogs(Number(url.searchParams.get("limit") || "200")),
       });
       return;
     }
@@ -124,7 +135,31 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === "POST" && parts[0] === "api" && parts[1] === "customers" && parts[3] === "mcp-keys") {
+    if (
+      req.method === "POST" &&
+      parts[0] === "api" &&
+      parts[1] === "customers" &&
+      parts[3] === "mcp-keys" &&
+      parts[5] === "revoke"
+    ) {
+      sendJson(
+        res,
+        200,
+        await revokeCustomerMcpKey({
+          customerId: parts[2],
+          keyId: parts[4],
+        }),
+      );
+      return;
+    }
+
+    if (
+      req.method === "POST" &&
+      parts[0] === "api" &&
+      parts[1] === "customers" &&
+      parts[3] === "mcp-keys" &&
+      parts.length === 4
+    ) {
       const body = await readJson(req);
       sendJson(
         res,
@@ -144,14 +179,16 @@ const server = createServer(async (req, res) => {
       parts[0] === "api" &&
       parts[1] === "customers" &&
       parts[3] === "mcp-keys" &&
-      parts[5] === "revoke"
+      parts[5] === "scopes"
     ) {
+      const body = await readJson(req);
       sendJson(
         res,
         200,
-        await revokeCustomerMcpKey({
+        await updateCustomerMcpKeyScopes({
           customerId: parts[2],
           keyId: parts[4],
+          scopes: body.scopes,
         }),
       );
       return;
@@ -183,6 +220,7 @@ const server = createServer(async (req, res) => {
         await getPersistedDidState({
           contractAddress: url.searchParams.get("contractAddress") || "",
           walletAddress: url.searchParams.get("walletAddress") || "",
+          agentId: url.searchParams.get("agentId") || "",
         }),
       );
       return;
@@ -260,6 +298,9 @@ const server = createServer(async (req, res) => {
         await approveDidRequestByHuman({
           requestId: parts[3],
           humanWalletAddress: body.humanWalletAddress,
+          requestedDid: body.requestedDid,
+          onchainRequestTxId: body.onchainRequestTxId,
+          onchainRequestTxHash: body.onchainRequestTxHash,
         }),
       );
       return;
@@ -288,6 +329,8 @@ const server = createServer(async (req, res) => {
           requestId: parts[3],
           issuerWalletAddress: body.issuerWalletAddress,
           didDocument: body.didDocument,
+          onchainRequestTxId: body.onchainRequestTxId,
+          onchainRequestTxHash: body.onchainRequestTxHash,
           claimsManifest: body.claimsManifest,
           onchainIssueTxId: body.onchainIssueTxId,
           onchainIssueTxHash: body.onchainIssueTxHash,
@@ -384,6 +427,7 @@ const server = createServer(async (req, res) => {
     sendText(res, 404, "Not found");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    console.error("[did-api] request failed", error);
     sendJson(res, 500, {
       ok: false,
       error: message,
@@ -395,7 +439,6 @@ initializeDatabase()
   .then(() => {
     server.listen(PORT, () => {
       console.log(`[did-api] listening on http://localhost:${PORT}`);
-      console.log(`[did-api] database: ${getDatabaseUrl()}`);
     });
   })
   .catch((error) => {

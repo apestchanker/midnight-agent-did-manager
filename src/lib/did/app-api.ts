@@ -66,7 +66,8 @@ export async function requestDidWithSync(
   api: DidRegistryAPI,
   input: {
     requesterWalletAddress: string;
-    agentAddress: string;
+    agentId: string;
+    subjectWalletAddress: string;
     agentName?: string;
     organization?: string;
     organizationDisclosure: "disclosed" | "undisclosed";
@@ -75,7 +76,8 @@ export async function requestDidWithSync(
 ): Promise<DidRecord> {
   const record = await api.requestDid(input);
   const now = new Date().toISOString();
-  mergeDidMetadata(api.contractAddress, input.agentAddress, {
+  mergeDidMetadata(api.contractAddress, input.agentId, {
+    subjectWalletAddress: input.subjectWalletAddress,
     agentName: input.agentName,
     organization:
       input.organizationDisclosure === "disclosed"
@@ -100,12 +102,14 @@ export async function requestDidWithSync(
   try {
     await createWalletDidRequest({
       walletAddress: input.requesterWalletAddress,
-      subjectWalletAddress: input.agentAddress,
+      agentId: input.agentId,
+      subjectWalletAddress: input.subjectWalletAddress,
       contractAddress: api.contractAddress,
       networkId: api.providers.networkId,
       organizationName: input.organization,
       organizationDisclosure: input.organizationDisclosure,
       requestPayload: {
+        agentId: input.agentId,
         agentName: input.agentName || null,
         didDocument: input.didDocument.trim(),
       },
@@ -132,13 +136,15 @@ export async function issueDidWithSync(
   try {
     await syncWalletIssuedDidStorage({
       issuerWalletAddress: api.providers.unshieldedAddress,
-      subjectWalletAddress: input.agentAddress,
+      agentId: input.agentId,
+      subjectWalletAddress: input.subjectWalletAddress || "",
       contractAddress: api.contractAddress,
       networkId: api.providers.networkId,
       did: record.did || "",
       organizationName: record.organization,
       organizationDisclosure: record.organizationDisclosure || "undisclosed",
       requestPayload: {
+        agentId: input.agentId,
         agentName: record.agentName || null,
         didDocument: input.didDocument.trim(),
       },

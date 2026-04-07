@@ -45,6 +45,18 @@ export function DidDisplay({ record }: DidDisplayProps) {
               </p>
             )}
             <p className="text-sm text-zinc-300">
+              <span className="text-zinc-500">Agent ID:</span>{" "}
+              <span className="font-mono break-all text-emerald-400">
+                {record.agentId}
+              </span>
+            </p>
+            {record.subjectWalletAddress && (
+              <p className="text-sm text-zinc-300">
+                <span className="text-zinc-500">Subject Wallet:</span>{" "}
+                <span className="font-mono break-all">{record.subjectWalletAddress}</span>
+              </p>
+            )}
+            <p className="text-sm text-zinc-300">
               <span className="text-zinc-500">Agent Key:</span>{" "}
               <span className="font-mono break-all text-emerald-400">
                 {record.agentKeyHex}
