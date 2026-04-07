@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.5
+
+### Changed
+- Bumped the application version to `0.4.5` while keeping the contract version at `0.3.5`.
+  Reason/impact: captures the latest app-only presentation update before refreshing README screenshots.
+
 ## v0.4.4
 
 ### Changed
