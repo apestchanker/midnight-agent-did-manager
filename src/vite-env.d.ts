@@ -7,6 +7,7 @@ interface ImportMetaEnv {
   readonly VITE_NODE_URI?: string;
   readonly VITE_PROVER_SERVER_URI?: string;
   readonly VITE_MANAGED_CONTRACT_PATH?: string;
+  readonly VITE_NATIVE_OWNERSHIP_MANAGED_CONTRACT_PATH?: string;
 }
 
 interface ImportMeta {

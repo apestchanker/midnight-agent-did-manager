@@ -22,6 +22,11 @@ type WalletPanelProps = {
   storageMode: StorageMode;
   onSelectStorageMode: (mode: StorageMode) => void;
   onConnect?: (address: string) => void;
+  proofService?: {
+    source: "configured_env" | "wallet";
+    proverServerUrl?: string;
+    warningRequired: boolean;
+  } | null;
 };
 
 const STORAGE_MODE_LABELS: Record<StorageMode, string> = {
@@ -41,6 +46,7 @@ export function WalletPanel({
   storageMode,
   onSelectStorageMode,
   onConnect,
+  proofService,
 }: WalletPanelProps) {
   const [showStorageSettings, setShowStorageSettings] = useState(false);
   const canChangeStorageMode = status !== "connected" && status !== "connecting";
@@ -67,6 +73,13 @@ export function WalletPanel({
         </div>
         {walletName ? (
           <div className="mt-1 text-xs text-emerald-300">Wallet: {walletName}</div>
+        ) : null}
+        {proofService?.proverServerUrl ? (
+          <div className="mt-1 text-xs text-emerald-300">
+            Proof service: {proofService.source === "configured_env" ? "Configured env" : "Wallet"}
+            {" · "}
+            {proofService.proverServerUrl}
+          </div>
         ) : null}
         <div className="mt-1 font-mono text-xs text-zinc-400 truncate">
           {address}
@@ -207,16 +220,18 @@ export function WalletPanel({
               ? "No Wallet Detected"
               : `Connect ${selectedWalletName} Wallet`}
       </button>
-      <div className="rounded-lg border border-amber-700 bg-amber-950/20 p-3 text-sm text-amber-100">
-        <div className="font-medium">PRIVACY WARNING</div>
-        <div className="mt-2 text-xs text-amber-200/90">
-          This app is currenty configured to use the proof service in the CLOUD
-          provided by the connected wallet. BEWARE that any private DATA you use
-          while generating PROOFs will be sent to that CLOUD provider, with the
-          associated privacy RISK it implies. IF you do not trust the WALLET
-          PROVIDER, configure a local PROOF-Server before using this App.
+      {proofService?.warningRequired !== false ? (
+        <div className="rounded-lg border border-amber-700 bg-amber-950/20 p-3 text-sm text-amber-100">
+          <div className="font-medium">PRIVACY WARNING</div>
+          <div className="mt-2 text-xs text-amber-200/90">
+            This app is currenty configured to use the proof service in the CLOUD
+            provided by the connected wallet. BEWARE that any private DATA you use
+            while generating PROOFs will be sent to that CLOUD provider, with the
+            associated privacy RISK it implies. IF you do not trust the WALLET
+            PROVIDER, configure a local PROOF-Server before using this App.
+          </div>
         </div>
-      </div>
+      ) : null}
       {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
     </div>
   );

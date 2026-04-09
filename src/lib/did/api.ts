@@ -115,7 +115,6 @@ export class DidRegistryAPI {
     const contract = await findDeployedContract(providers as never, {
       compiledContract: compiledContract as never,
       contractAddress: contractAddress as never,
-      privateStateId: OWNER_PRIVATE_STATE_ID,
     });
 
     return new DidRegistryAPI(

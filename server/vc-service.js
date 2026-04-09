@@ -1,5 +1,6 @@
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { jwtVerify, SignJWT } from "jose";
+import { buildNativeOwnershipMaterial } from "../lib/native-ownership-proof.js";
 import { query, withTransaction } from "./db.js";
 import { getIssuerKeys } from "./issuer-keys.js";
 
@@ -137,6 +138,67 @@ export async function issueAtomicCredentials(input) {
   return withTransaction(run);
 }
 
+export async function rotateCredentialsForDid(input, deps = {}) {
+  const issueAtomicCredentialsFn =
+    deps.issueAtomicCredentials || issueAtomicCredentials;
+  return withTransaction(async (client) => {
+    const recordResult = await client.query(
+      `select dr.*, req.customer_id
+       from did_records dr
+       left join did_requests req on req.id = dr.request_id
+       where dr.did = $1
+       limit 1`,
+      [input.did],
+    );
+    const record = recordResult.rows[0];
+    if (!record) {
+      throw new Error("DID record not found.");
+    }
+    if (record.status !== "active") {
+      throw new Error("Credentials can only be rotated for an active DID.");
+    }
+
+    const revoked = await client.query(
+      `update verifiable_credentials
+       set status = 'revoked',
+           revoked_at = now()
+       where did_record_id = $1
+         and status = 'active'
+       returning id`,
+      [record.id],
+    );
+
+    const didDocument =
+      record.did_document && typeof record.did_document === "object"
+        ? record.did_document
+        : {};
+
+    const issued = await issueAtomicCredentialsFn({
+      client,
+      didRecordId: record.id,
+      requestId: record.request_id || null,
+      customerId: record.customer_id || null,
+      subjectDid: record.did,
+      subjectWalletAddress: record.subject_wallet_address,
+      subjectAgentKey: record.subject_agent_key,
+      contractAddress: record.contract_address,
+      networkId: record.network_id,
+      status: record.status,
+      organizationName: record.organization_name || null,
+      organizationDisclosure: record.organization_disclosure || "undisclosed",
+      profileName:
+        typeof didDocument.agentName === "string" ? didDocument.agentName : null,
+    });
+
+    return {
+      did: record.did,
+      revokedCount: revoked.rowCount || 0,
+      issuedCount: issued.length,
+      credentials: issued,
+    };
+  });
+}
+
 export async function listCredentialsForDid(did) {
   const result = await query(
     `select id, credential_type, disclosure_scope, issuer_id, subject_did, claims, status, issued_at, expires_at, jwt
@@ -177,6 +239,130 @@ export async function getCredentialBundle(input) {
       verifiableCredential: verifiableCredentials,
     },
   };
+}
+
+function canonicalize(value) {
+  if (Array.isArray(value)) {
+    return value.map(canonicalize);
+  }
+  if (value && typeof value === "object") {
+    return Object.keys(value)
+      .sort()
+      .reduce((acc, key) => {
+        acc[key] = canonicalize(value[key]);
+        return acc;
+      }, {});
+  }
+  return value;
+}
+
+function sha256Hex(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function normalizeScopes(scopes) {
+  return Array.isArray(scopes)
+    ? [...new Set(scopes.map((scope) => String(scope).trim()).filter(Boolean))]
+    : [];
+}
+
+function buildCredentialCommitment(row) {
+  const claimObject =
+    row?.claims && typeof row.claims === "object" && !Array.isArray(row.claims)
+      ? row.claims
+      : {};
+  const normalizedClaims = canonicalize(claimObject);
+  const commitmentPayload = JSON.stringify({
+    subjectDid: row.subject_did,
+    issuerId: row.issuer_id,
+    disclosureScope: row.disclosure_scope,
+    credentialType: row.credential_type,
+    claims: normalizedClaims,
+  });
+
+  return {
+    scope: row.disclosure_scope,
+    credentialType: row.credential_type,
+    claimKeys: Object.keys(normalizedClaims),
+    commitment: sha256Hex(commitmentPayload),
+  };
+}
+
+export async function createMidnightProofMaterialFromRows(input) {
+  const scopes = normalizeScopes(input.scopes);
+  const filteredRows = input.credentialRows.filter((row) => {
+    if (row.status !== "active") return false;
+    if (!scopes.length) return true;
+    return scopes.includes(row.disclosure_scope);
+  });
+  const credentialCommitments = filteredRows.map(buildCredentialCommitment);
+  const commitmentList = credentialCommitments.map((item) => item.commitment);
+  const challenge = String(input.challenge || randomUUID());
+  const verifier = input.verifier ? String(input.verifier) : undefined;
+  const purpose = String(input.purpose || "did-authentication");
+  const bundleCommitment = sha256Hex(
+    JSON.stringify({
+      did: input.did,
+      scopes,
+      commitments: commitmentList,
+    }),
+  );
+  const holderBindingCommitment = sha256Hex(
+    JSON.stringify({
+      holder: input.did,
+      challenge,
+      verifier: verifier || "",
+      purpose,
+      bundleCommitment,
+    }),
+  );
+  const ownershipRow = filteredRows.find(
+    (row) =>
+      row.disclosure_scope === "ownership" &&
+      row.claims &&
+      typeof row.claims === "object" &&
+      typeof row.claims.walletAddress === "string" &&
+      typeof row.claims.agentKey === "string" &&
+      typeof row.claims.contractAddress === "string",
+  );
+
+  const material = {
+    did: input.did,
+    holder: input.did,
+    network: "midnight",
+    proofType: "midnight-credential-commitment",
+    challenge,
+    ...(verifier ? { verifier } : {}),
+    purpose,
+    disclosedScopes: scopes,
+    credentialCount: credentialCommitments.length,
+    credentialCommitments,
+    bundleCommitment,
+    holderBindingCommitment,
+    verificationHints: {
+      statusCheck: "resolve-did-and-check-active",
+      issuerCheck: "verify-vc-jwt-signatures",
+      holderBinding: "holder-binding-midnight-proof-required",
+    },
+  };
+
+  if (ownershipRow) {
+    material.nativeOwnership = await buildNativeOwnershipMaterial({
+      did: input.did,
+      challenge,
+      holderWalletAddress: ownershipRow.claims.walletAddress,
+    });
+  }
+
+  return material;
+}
+
+export async function getMidnightProofMaterial(input) {
+  const credentialRows = await listCredentialsForDid(input.did);
+  return createMidnightProofMaterialFromRows({
+    ...input,
+    credentialRows,
+  });
 }
 
 export async function verifyCredentialJwt(jwt) {

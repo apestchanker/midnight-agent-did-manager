@@ -26,6 +26,7 @@ The project supports:
 - a Postgres-backed service for customer accounts, MCP keys, request persistence, DID records, and credentials
 - user, admin, and public registry views in the UI
 - W3C-aligned DID resolution and JWT Verifiable Credentials
+- commitment-based Midnight proof material for holder-side selective disclosure
 
 ## Research Status and Disclaimer
 
@@ -101,6 +102,7 @@ Verifiable Credentials and disclosure bundle view:
 ## Further Reading
 
 - Article: [Selective Disclosure & Self-Managing DIDs for AI Agents](https://dev.to/midnight-aliit/selective-disclosure-self-managing-dids-for-ai-agents-3kcl)
+- DID / VC implementation specification: [docs/did-vc-specification.md](./docs/did-vc-specification.md)
 
 ### On-chain
 
@@ -138,6 +140,7 @@ The local DID service stores:
 - issued DID records
 - audit events
 - verifiable credentials
+- Midnight proof material derived from disclosed credential commitments
 
 For the sake of experimentation and local development, this repository uses PostgreSQL as the off-chain persistence layer for request payloads, DID records, and credential data.
 
@@ -146,6 +149,22 @@ That is a convenience choice for research and prototyping, not a recommended pro
 In a production deployment, off-chain identity payloads, credentials, and other sensitive holder material should be moved to a proper vault or secure custody system so that only the agent, the human owner/operator, or another explicitly authorized principal can access them.
 
 In this repository, the owner witness secret is cached in Midnight private state and can be exported as an encrypted backup from the UI. In production, recovery and custody should move to a proper secure vault or custody system.
+
+## Midnight-Centered Credential Direction
+
+The current implementation still issues issuer-signed JWT Verifiable Credentials and can assemble W3C-shaped presentation bundles.
+
+The repo now also exposes commitment-based Midnight proof material for issued credentials:
+
+- per-credential commitments for the selected disclosure scopes
+- a bundle commitment across those credentials
+- a holder-binding commitment tied to the DID and challenge
+
+That material is the intended proving boundary for a production Midnight holder-proof flow. The long-term target is:
+
+- holder generates the selective-disclosure proof locally in the wallet or local proof server
+- verifier checks DID status on Midnight plus issuer signatures and the holder proof
+- the registry service orchestrates the flow but is not the final proving authority
 
 ## Patched SDK Tarball
 
@@ -262,6 +281,7 @@ Current limitation:
 See:
 
 - `docs/did-midnight-method.md`
+- `docs/did-vc-specification.md`
 - `docs/identity-architecture.md`
 - `docs/w3c-compatibility-report.md`
 
@@ -597,6 +617,7 @@ Current MCP tools include:
 - `issuer_descriptor_get`
 - `credential_bundle_get`
 - `credential_list`
+- `credential_rotate`
 
 Example request:
 
@@ -640,6 +661,44 @@ Minimal local sequence:
 6. In `User`, create/select an agent and request a DID
 7. In `Human + MCP`, bootstrap customer / create MCP key if you want agent-driven requests
 8. In `Admin`, review and issue the DID on-chain
+
+## Offline JWT VC Verification
+
+Third parties can verify the JWT credentials issued by this registry without calling the UI.
+
+The basic process is:
+
+1. Obtain the VC JWT.
+2. Obtain the issuer descriptor and public JWK:
+   - REST: `GET /api/issuer`
+   - MCP: `issuer_descriptor_get`
+3. Verify the JWT signature offline with the issuer public JWK.
+4. Check:
+   - `iss` matches the issuer descriptor `id`
+   - `sub` matches the DID holder
+   - the `vc.credentialSubject.id` matches the same DID
+   - the DID itself is still active through `did_resolve` or `did_validate`
+
+Minimal example with `jose`:
+
+```ts
+import { importJWK, jwtVerify } from "jose";
+
+const issuerDescriptor = await fetch("http://localhost:8787/api/issuer").then((r) => r.json());
+const publicKey = await importJWK(issuerDescriptor.publicJwk, "EdDSA");
+
+const verified = await jwtVerify(vcJwt, publicKey, {
+  issuer: issuerDescriptor.id,
+});
+
+console.log(verified.payload);
+```
+
+Important:
+
+- This verifies the JWT VC signature offline.
+- It does not by itself prove the DID is still active; the verifier should also resolve or validate the DID against the registry.
+- `credential_rotate` can be used to revoke currently active JWT VCs for a DID and issue fresh ones while keeping the DID itself unchanged.
 9. In `Registry`, inspect the public directory
 
 ## Main API Endpoints

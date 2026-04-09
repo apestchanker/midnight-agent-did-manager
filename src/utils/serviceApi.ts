@@ -6,6 +6,11 @@ import type {
   DidRequestRow,
   LogEntry,
   McpKey,
+  MidnightProofMaterial,
+  MidnightProofRequest,
+  MidnightProofSubmission,
+  MidnightProofVerificationResult,
+  ProofRequestRow,
   RegistryDidRow,
   Subscription,
   VerifiableCredentialRow,
@@ -26,11 +31,14 @@ function mcpUrl(path: string): string {
 }
 
 async function readError(response: Response): Promise<string> {
+  const text = await response.text();
+  if (!text) {
+    return `Request failed with status ${response.status}`;
+  }
   try {
-    const body = await response.json();
+    const body = JSON.parse(text);
     return body.error || JSON.stringify(body);
   } catch {
-    const text = await response.text();
     return text || `Request failed with status ${response.status}`;
   }
 }
@@ -194,6 +202,40 @@ export function createWalletDidRequest(payload: {
   });
 }
 
+export function createAgentProofRequest(payload: {
+  mcpKey: string;
+  did: string;
+  requesterWalletAddress: string;
+  scopes: string[];
+  verifier?: string;
+  purpose?: string;
+}): Promise<ProofRequestRow> {
+  return requestJson("/api/agent/proof-requests", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-MCP-Key": payload.mcpKey,
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function createWalletProofRequest(payload: {
+  walletAddress: string;
+  did: string;
+  scopes: string[];
+  verifier?: string;
+  purpose?: string;
+}): Promise<ProofRequestRow> {
+  return requestJson("/api/wallet/proof-requests", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
 export function getPersistedDidState(payload: {
   contractAddress: string;
   walletAddress: string;
@@ -243,6 +285,88 @@ export function listDidRequests(filters: {
 
 export function getDidRequest(requestId: string): Promise<DidRequestRow> {
   return requestJson(`/api/did-requests/${requestId}`);
+}
+
+export function listProofRequests(filters: {
+  customerId?: string;
+  status?: string;
+}): Promise<ProofRequestRow[]> {
+  const params = new URLSearchParams();
+  if (filters.customerId) params.set("customerId", filters.customerId);
+  if (filters.status) params.set("status", filters.status);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return requestJson(`/api/proof-requests${suffix}`);
+}
+
+export function approveProofRequest(
+  proofRequestId: string,
+  humanWalletAddress: string,
+  holderSignature: {
+    data: string;
+    signature: string;
+    verifyingKey: string;
+  },
+): Promise<ProofRequestRow> {
+  return requestJson(`/api/human/proof-requests/${proofRequestId}/approve`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      humanWalletAddress,
+      holderSignature,
+    }),
+  });
+}
+
+export function rejectProofRequest(
+  proofRequestId: string,
+  humanWalletAddress: string,
+  reason?: string,
+): Promise<ProofRequestRow> {
+  return requestJson(`/api/human/proof-requests/${proofRequestId}/reject`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      humanWalletAddress,
+      reason,
+    }),
+  });
+}
+
+export function deleteProofRequest(
+  proofRequestId: string,
+  adminWalletAddress: string,
+): Promise<ProofRequestRow & { deleted: boolean; deleted_by_wallet: string }> {
+  return requestJson(`/api/admin/proof-requests/${proofRequestId}`, {
+    method: "DELETE",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      adminWalletAddress,
+    }),
+  });
+}
+
+export function submitProofRequestProof(
+  proofRequestId: string,
+  submission: MidnightProofSubmission,
+): Promise<{
+  proofRequest: ProofRequestRow;
+  verification: MidnightProofVerificationResult;
+}> {
+  return requestJson(`/api/proof-requests/${proofRequestId}/submit`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      submission,
+    }),
+  });
 }
 
 export function approveDidRequest(
@@ -423,6 +547,67 @@ export function createCredentialBundle(payload: {
   scopes: string[];
 }): Promise<CredentialBundle> {
   return requestJson("/api/vcs/bundle", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function rotateCredentialsByDid(payload: {
+  did: string;
+}): Promise<{
+  did: string;
+  revokedCount: number;
+  issuedCount: number;
+}> {
+  return requestJson("/api/vcs/rotate", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function createMidnightProofMaterial(payload: {
+  did: string;
+  scopes: string[];
+  challenge?: string;
+  verifier?: string;
+  purpose?: string;
+}): Promise<MidnightProofMaterial> {
+  return requestJson("/api/vcs/midnight-proof", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function createMidnightProofRequest(payload: {
+  did: string;
+  scopes: string[];
+  challenge?: string;
+  verifier?: string;
+  purpose?: string;
+}): Promise<MidnightProofRequest> {
+  return requestJson("/api/vps/midnight/request", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function verifyMidnightProofRequest(payload: {
+  proofRequest: MidnightProofRequest;
+  submission: MidnightProofSubmission;
+}): Promise<MidnightProofVerificationResult> {
+  return requestJson("/api/vps/midnight/verify", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

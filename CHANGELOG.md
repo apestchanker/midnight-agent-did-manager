@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.5.0
+
+### Changed
+- Bumped the application version to `0.5.0` while keeping the contract version at `0.3.5`.
+  Reason/impact: captures the first full Midnight-native VC proof release in the app/backend stack without changing the deployed DID registry contract semantics.
+
+### Added
+- Added a separate Compact-based native ownership proof artifact and the corresponding proving/verification flow for VC ownership claims.
+  Reason/impact: enables real Midnight ZK proof generation and cryptographic verification for the ownership VC path instead of relying only on preview proof envelopes.
+
+- Added wallet-bound proof request approval, proof submission persistence, and reusable proof verification packages.
+  Reason/impact: approved proofs now remain reusable artifacts, can be copied again without silently re-triggering the wallet, and only regenerate when explicitly requested.
+
+- Added proof history and proof-management controls in the user/admin workflows, including approval/rejection history, queue handling, and persisted verification-package access.
+  Reason/impact: makes proof lifecycle testing and review understandable from the UI and reduces stale/manual DB cleanup during operator testing.
+
+- Added a formal DID and VC specification document with field tables and JSON examples.
+  Reason/impact: documents the protocol surface more clearly for integrators, reviewers, and third-party verifiers.
+
+### Fixed
+- Fixed multiple native-proof generation failures across wallet key decoding, artifact resolution, proof-server fallback usage, and native-vs-preview verification rendering.
+  Reason/impact: makes the wallet/cloud prover path actually usable for native cryptographic proof generation and removes misleading verification output in the registry UI.
+
+- Fixed proof-request persistence and reuse so proof-ready entries default to reading stored proof submissions instead of regenerating them implicitly.
+  Reason/impact: keeps previously generated proofs stable and avoids unnecessary wallet prompts when users only want to copy or inspect an existing proof.
+
 ## v0.4.5
 
 ### Changed

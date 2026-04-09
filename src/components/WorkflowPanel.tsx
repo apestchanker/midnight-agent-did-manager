@@ -1,22 +1,45 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import type { ConnectedAPI } from "@midnight-ntwrk/dapp-connector-api";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import type { AppProviders } from "../../lib/providers";
 import type { DidRecord } from "../types/did";
-import type { BootstrapResponse, CustomerContext, DidRequestRow } from "../types/service";
+import type {
+  BootstrapResponse,
+  CustomerContext,
+  DidRequestRow,
+  MidnightProofSubmission,
+  MidnightProofVerificationPackage,
+  ProofRequestRow,
+} from "../types/service";
 import {
+  approveProofRequest,
   approveDidRequest,
   bootstrapCustomer,
   checkDidServiceHealth,
   createMcpKey,
   createSubscription,
+  deleteProofRequest,
   getCustomerByWallet,
   listDidRequests,
+  listProofRequests,
+  rejectProofRequest,
   revokeMcpKey,
+  submitProofRequestProof,
   updateMcpKeyScopes,
 } from "../utils/serviceApi";
+import {
+  isWalletApprovalRejected,
+  signProofApprovalPayload,
+} from "../lib/proof-approval";
+import {
+  createPreviewProofVerificationPackage,
+  toMidnightProofRequest,
+} from "../lib/proof-request";
+import { createNativeOwnershipProofPackage } from "../lib/native-ownership-proof";
+import { createLocalPreviewProofSubmission } from "../../lib/midnight-proof-envelope.js";
 
 const MCP_SCOPE_OPTIONS = [
   "did.request",
@@ -28,6 +51,7 @@ const MCP_SCOPE_OPTIONS = [
 
 interface WorkflowPanelProps {
   providers: AppProviders;
+  connectedApi: ConnectedAPI | null;
   walletAddress: string;
   contractAddress: string;
   mode: "user" | "admin";
@@ -65,7 +89,17 @@ type DashboardSection =
   | "human"
   | "admin";
 
+type HumanProofView = "pending" | "history";
+
+interface ExpandableListItem {
+  id: string;
+  summary: ReactNode;
+  details: ReactNode;
+}
+
 export function WorkflowPanel({
+  providers,
+  connectedApi,
   walletAddress,
   contractAddress,
   mode,
@@ -79,6 +113,7 @@ export function WorkflowPanel({
   const [serviceHealth, setServiceHealth] = useState<string>("checking");
   const [customerContext, setCustomerContext] = useState<CustomerContext | null>(null);
   const [requests, setRequests] = useState<DidRequestRow[]>([]);
+  const [proofRequests, setProofRequests] = useState<ProofRequestRow[]>([]);
   const [adminQueue, setAdminQueue] = useState<DidRequestRow[]>([]);
   const [latestBootstrap, setLatestBootstrap] = useState<BootstrapResponse | null>(null);
   const [sectionState, setSectionState] = useState<DashboardSection>("overview");
@@ -91,18 +126,25 @@ export function WorkflowPanel({
   const [subscriptionQuota, setSubscriptionQuota] = useState("5");
   const [subscriptionEndsAt, setSubscriptionEndsAt] = useState("");
   const [scopeDrafts, setScopeDrafts] = useState<Record<string, string[]>>({});
+  const [humanProofView, setHumanProofView] = useState<HumanProofView>("pending");
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, Record<string, boolean>>>({});
+  const [proofPackages, setProofPackages] = useState<Record<string, MidnightProofVerificationPackage>>({});
 
   const refreshDashboard = useCallback(async () => {
     if (!walletAddress) return;
-    const [customer, customerRequests, pendingAdmin] = await Promise.all([
+    const [customer, customerRequests, customerProofRequests, pendingAdmin] = await Promise.all([
       getCustomerByWallet(walletAddress),
       getCustomerByWallet(walletAddress).then((ctx) =>
         ctx?.customer?.id ? listDidRequests({ customerId: ctx.customer.id }) : [],
+      ),
+      getCustomerByWallet(walletAddress).then((ctx) =>
+        ctx?.customer?.id ? listProofRequests({ customerId: ctx.customer.id }) : [],
       ),
       listDidRequests({ status: "pending_admin_review" }),
     ]);
     setCustomerContext(customer);
     setRequests(customerRequests);
+    setProofRequests(customerProofRequests);
     setAdminQueue(pendingAdmin);
   }, [walletAddress]);
 
@@ -305,6 +347,202 @@ export function WorkflowPanel({
     }
   }
 
+  async function handleApproveProofQueueRequest(request: ProofRequestRow) {
+    setBusyAction(`approve-proof:${request.id}`);
+    setMessage("");
+    try {
+      if (!connectedApi) {
+        throw new Error("Connect the wallet before approving a proof request.");
+      }
+      const holderSignature = await signProofApprovalPayload(
+        connectedApi,
+        request.approval_payload,
+      );
+      await approveProofRequest(request.id, walletAddress, holderSignature);
+      setMessage(`Proof request ${request.id} approved by the connected wallet.`);
+      await refreshDashboard();
+    } catch (error) {
+      if (isWalletApprovalRejected(error)) {
+        try {
+          await rejectProofRequest(
+            request.id,
+            walletAddress,
+            "Rejected by holder wallet from the approvals queue.",
+          );
+          setMessage(`Proof request ${request.id} was rejected in the wallet.`);
+          await refreshDashboard();
+          return;
+        } catch (rejectError) {
+          setMessage(
+            rejectError instanceof Error
+              ? rejectError.message
+              : "Wallet rejected the proof request, but cleanup failed",
+          );
+          return;
+        }
+      }
+      setMessage(error instanceof Error ? error.message : "Proof request approval failed");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function handleRejectProofQueueRequest(request: ProofRequestRow) {
+    setBusyAction(`reject-proof:${request.id}`);
+    setMessage("");
+    try {
+      await rejectProofRequest(
+        request.id,
+        walletAddress,
+        "Rejected by holder wallet from approvals queue.",
+      );
+      setMessage(`Proof request ${request.id} rejected.`);
+      await refreshDashboard();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Proof request rejection failed");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function handleDeleteProofQueueRequest(request: ProofRequestRow) {
+    setBusyAction(`delete-proof:${request.id}`);
+    setMessage("");
+    try {
+      await deleteProofRequest(request.id, walletAddress);
+      setMessage(`Proof request ${request.id} deleted.`);
+      await refreshDashboard();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Proof request deletion failed");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function buildProofPackage(request: ProofRequestRow): Promise<MidnightProofVerificationPackage> {
+    if (request.proof_material.nativeOwnership) {
+      try {
+        return await createNativeOwnershipProofPackage(providers, request);
+      } catch (error) {
+        console.warn("[WorkflowPanel] native proof package generation failed, falling back to preview envelope", error);
+      }
+    }
+
+    const basePackage = createPreviewProofVerificationPackage(request);
+    const previewSubmission = await createLocalPreviewProofSubmission({
+      proofRequest: basePackage.proofRequest,
+      submission: basePackage.submission,
+    });
+    return {
+      proofRequest: basePackage.proofRequest,
+      submission: previewSubmission,
+    };
+  }
+
+  function getPersistedProofPackage(
+    request: ProofRequestRow,
+  ): MidnightProofVerificationPackage | null {
+    if (!request.proof_submission) return null;
+    return {
+      proofRequest: toMidnightProofRequest(request),
+      submission: request.proof_submission as unknown as MidnightProofSubmission,
+    };
+  }
+
+  async function handleRegenerateProofPackage(request: ProofRequestRow) {
+    setBusyAction(`regenerate-proof-package:${request.id}`);
+    setMessage("");
+    try {
+      const nextPackage = await buildProofPackage(request);
+      const submitted = await submitProofRequestProof(request.id, nextPackage.submission);
+      const persistedPackage = {
+        proofRequest: nextPackage.proofRequest,
+        submission:
+          submitted.proofRequest.proof_submission as unknown as MidnightProofSubmission,
+      };
+      setProofPackages((current) => ({
+        ...current,
+        [request.id]: persistedPackage,
+      }));
+      setProofRequests((current) =>
+        current.map((row) => (row.id === request.id ? submitted.proofRequest : row)),
+      );
+      setExpandedGroups((current) => ({
+        ...current,
+        "proof-history": {
+          ...(current["proof-history"] || {}),
+          [request.id]: true,
+        },
+        "admin-proof-requests": {
+          ...(current["admin-proof-requests"] || {}),
+          [request.id]: true,
+        },
+      }));
+      setMessage(`Verification package regenerated and persisted for proof request ${request.id}.`);
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Failed to regenerate verification package",
+      );
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function handleViewProofPackage(request: ProofRequestRow) {
+    setBusyAction(`proof-package:${request.id}`);
+    setMessage("");
+    try {
+      const nextPackage = getPersistedProofPackage(request);
+      if (!nextPackage) {
+        throw new Error("No persisted verification package found. Use Regenerate Proof to create one.");
+      }
+      setProofPackages((current) => ({
+        ...current,
+        [request.id]: nextPackage,
+      }));
+      setExpandedGroups((current) => ({
+        ...current,
+        "proof-history": {
+          ...(current["proof-history"] || {}),
+          [request.id]: true,
+        },
+        "admin-proof-requests": {
+          ...(current["admin-proof-requests"] || {}),
+          [request.id]: true,
+        },
+      }));
+      setMessage(`Verification package generated for proof request ${request.id}.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to build verification package");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function handleCopyProofPackage(request: ProofRequestRow) {
+    setBusyAction(`copy-proof-package:${request.id}`);
+    setMessage("");
+    try {
+      const nextPackage =
+        proofPackages[request.id] || getPersistedProofPackage(request);
+      if (!nextPackage) {
+        throw new Error("No persisted verification package found. Use Regenerate Proof to create one.");
+      }
+      setProofPackages((current) => ({
+        ...current,
+        [request.id]: nextPackage,
+      }));
+      await navigator.clipboard.writeText(JSON.stringify(nextPackage, null, 2));
+      setMessage(`Verification package copied for proof request ${request.id}.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to copy verification package");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
   async function handleAdminLookupCustomer() {
     if (!adminLookupWallet.trim()) {
       setMessage("Enter a wallet address to load the customer account.");
@@ -382,6 +620,252 @@ export function WorkflowPanel({
   const pendingHumanQueue = requests.filter(
     (request) => request.request_status === "pending_human_approval",
   );
+  const pendingHumanProofQueue = proofRequests.filter(
+    (request) => request.request_status === "pending_human_approval",
+  );
+  const approvedProofRequests = proofRequests.filter((request) =>
+    ["proof_ready", "submitted", "verified"].includes(request.request_status),
+  );
+  const rejectedProofRequests = proofRequests.filter((request) =>
+    ["human_rejected", "rejected"].includes(request.request_status),
+  );
+  const proofHistory = [...proofRequests]
+    .filter((request) =>
+      ["proof_ready", "submitted", "verified", "human_rejected", "rejected"].includes(
+        request.request_status,
+      ),
+    )
+    .sort(
+      (a, b) =>
+        new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+    );
+  const pendingDidApprovalItems: ExpandableListItem[] = pendingHumanQueue.map((request) => ({
+    id: request.id,
+    summary: (
+      <div className="space-y-1">
+        <div className="font-mono break-all">{request.id}</div>
+        <div className="text-zinc-500">
+          DID · {requestAgentName(request) || "Unnamed agent"} · {request.subject_wallet_address}
+        </div>
+      </div>
+    ),
+    details: (
+      <div className="space-y-2">
+        <div>Subject wallet: {request.subject_wallet_address}</div>
+        <div>Agent ID: {request.agent_id || "n/a"}</div>
+        <div>Status: {request.request_status}</div>
+        <div>Agent Name: {requestAgentName(request) || "n/a"}</div>
+        <Button
+          type="button"
+          onClick={() => handleApproveRequest(request)}
+          disabled={busyAction !== ""}
+          className="bg-emerald-600 hover:bg-emerald-500 text-white"
+        >
+          {busyAction === `approve:${request.id}` ? "Approving..." : "Approve DID Request"}
+        </Button>
+      </div>
+    ),
+  }));
+  const pendingProofApprovalItems: ExpandableListItem[] = pendingHumanProofQueue.map((request) => ({
+    id: request.id,
+    summary: (
+      <div className="space-y-1">
+        <div className="font-mono break-all">{request.id}</div>
+        <div className="text-zinc-500">
+          Proof · {request.agent_id || "n/a"} · {Array.isArray(request.scopes) ? request.scopes.join(", ") : "n/a"}
+        </div>
+      </div>
+    ),
+    details: (
+      <div className="space-y-2">
+        <div>DID: <span className="font-mono break-all">{request.did}</span></div>
+        <div>Holder wallet: {request.holder_wallet_address}</div>
+        <div>Agent ID: {request.agent_id || "n/a"}</div>
+        <div>Scopes: {Array.isArray(request.scopes) ? request.scopes.join(", ") : "n/a"}</div>
+        <div>Purpose: {request.purpose}</div>
+        <Button
+          type="button"
+          onClick={() => handleApproveProofQueueRequest(request)}
+          disabled={busyAction !== "" || !connectedApi}
+          className="bg-amber-700 hover:bg-amber-600 text-white"
+        >
+          {busyAction === `approve-proof:${request.id}` ? "Signing..." : "Approve Proof Request"}
+        </Button>
+        <Button
+          type="button"
+          onClick={() => handleRejectProofQueueRequest(request)}
+          disabled={busyAction !== ""}
+          className="bg-red-700 hover:bg-red-600 text-white"
+        >
+          {busyAction === `reject-proof:${request.id}` ? "Rejecting..." : "Reject Proof Request"}
+        </Button>
+      </div>
+    ),
+  }));
+  const proofHistoryItems: ExpandableListItem[] = proofHistory.map((request) => ({
+    id: request.id,
+    summary: (
+      <div className="space-y-1">
+        <div className="font-mono break-all">{request.id}</div>
+        <div className="flex items-center gap-2">
+          {proofStatusChip(request)}
+          <span className="text-zinc-500">{request.agent_id || "n/a"}</span>
+        </div>
+      </div>
+    ),
+    details: (
+      <div className="space-y-2">
+        <div>DID: <span className="font-mono break-all">{request.did}</span></div>
+        <div>Holder wallet: {request.holder_wallet_address}</div>
+        <div>Agent ID: {request.agent_id || "n/a"}</div>
+        <div>Scopes: {Array.isArray(request.scopes) ? request.scopes.join(", ") : "n/a"}</div>
+        <div>Updated: {new Date(request.updated_at).toLocaleString()}</div>
+        {["proof_ready", "submitted", "verified"].includes(request.request_status) && (
+          <div className="flex flex-wrap gap-2 pt-1">
+            <Button
+              type="button"
+              onClick={() => handleViewProofPackage(request)}
+              disabled={busyAction !== ""}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white"
+            >
+              {busyAction === `proof-package:${request.id}` ? "Loading..." : "View Verification Package"}
+            </Button>
+            <Button
+              type="button"
+              onClick={() => handleCopyProofPackage(request)}
+              disabled={busyAction !== ""}
+              className="bg-blue-600 hover:bg-blue-500 text-white"
+            >
+              {busyAction === `copy-proof-package:${request.id}` ? "Copying..." : "Copy Verification Package"}
+            </Button>
+            <Button
+              type="button"
+              onClick={() => handleRegenerateProofPackage(request)}
+              disabled={busyAction !== ""}
+              className="bg-zinc-800 hover:bg-zinc-700 text-white"
+            >
+              {busyAction === `regenerate-proof-package:${request.id}` ? "Regenerating..." : "Regenerate Proof"}
+            </Button>
+          </div>
+        )}
+        {!request.proof_submission && ["proof_ready", "submitted", "verified"].includes(request.request_status) && (
+          <div className="text-zinc-500">
+            No persisted verification package is stored for this proof yet. Use <span className="text-white">Regenerate Proof</span> to create and save one.
+          </div>
+        )}
+        {proofPackages[request.id] && (
+          <textarea
+            readOnly
+            value={JSON.stringify(proofPackages[request.id], null, 2)}
+            rows={14}
+            spellCheck={false}
+            className="w-full rounded-md border border-zinc-800 bg-black px-3 py-2 font-mono text-xs text-zinc-100 outline-none"
+          />
+        )}
+        {request.error_message && (
+          <div><span className="text-zinc-500">Reason:</span> {request.error_message}</div>
+        )}
+      </div>
+    ),
+  }));
+  const adminDidQueueItems: ExpandableListItem[] = adminQueue.map((request) => ({
+    id: request.id,
+    summary: (
+      <div className="space-y-1">
+        <div className="font-mono break-all">{request.id}</div>
+        <div className="text-zinc-500">
+          {requestAgentName(request) || "Unnamed DID"} · {request.request_status}
+        </div>
+      </div>
+    ),
+    details: (
+      <div className="space-y-2">
+        <div>Subject wallet: {request.subject_wallet_address}</div>
+        <div>Agent ID: {request.agent_id || "n/a"}</div>
+        <div>Requested DID: {request.requested_did}</div>
+        <div>Agent Name: {requestAgentName(request) || "n/a"}</div>
+        <div>Org disclosure: {request.organization_disclosure}</div>
+        <Button
+          type="button"
+          onClick={() => handleIssueRequest(request)}
+          disabled={busyAction !== "" || !contractAddress.trim()}
+          className="bg-purple-700 hover:bg-purple-600 text-white"
+        >
+          {busyAction === `issue:${request.id}` ? "Issuing..." : "Issue On-Chain as Admin"}
+        </Button>
+      </div>
+    ),
+  }));
+  const adminProofItems: ExpandableListItem[] = proofRequests.map((request) => ({
+    id: request.id,
+    summary: (
+      <div className="space-y-1">
+        <div className="font-mono break-all">{request.id}</div>
+        <div className="flex items-center gap-2">
+          {proofStatusChip(request)}
+          <span className="text-zinc-500">{request.agent_id || "n/a"}</span>
+        </div>
+      </div>
+    ),
+    details: (
+      <div className="space-y-2">
+        <div>DID: <span className="font-mono break-all">{request.did}</span></div>
+        <div>Holder wallet: {request.holder_wallet_address}</div>
+        <div>Agent ID: {request.agent_id || "n/a"}</div>
+        <div>Scopes: {Array.isArray(request.scopes) ? request.scopes.join(", ") : "n/a"}</div>
+        {["proof_ready", "submitted", "verified"].includes(request.request_status) && (
+          <div className="flex flex-wrap gap-2 pt-1">
+            <Button
+              type="button"
+              onClick={() => handleViewProofPackage(request)}
+              disabled={busyAction !== ""}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white"
+            >
+              {busyAction === `proof-package:${request.id}` ? "Loading..." : "View Verification Package"}
+            </Button>
+            <Button
+              type="button"
+              onClick={() => handleCopyProofPackage(request)}
+              disabled={busyAction !== ""}
+              className="bg-blue-600 hover:bg-blue-500 text-white"
+            >
+              {busyAction === `copy-proof-package:${request.id}` ? "Copying..." : "Copy Verification Package"}
+            </Button>
+            <Button
+              type="button"
+              onClick={() => handleRegenerateProofPackage(request)}
+              disabled={busyAction !== ""}
+              className="bg-zinc-800 hover:bg-zinc-700 text-white"
+            >
+              {busyAction === `regenerate-proof-package:${request.id}` ? "Regenerating..." : "Regenerate Proof"}
+            </Button>
+          </div>
+        )}
+        {!request.proof_submission && ["proof_ready", "submitted", "verified"].includes(request.request_status) && (
+          <div className="text-zinc-500">
+            No persisted verification package is stored for this proof yet. Use <span className="text-white">Regenerate Proof</span> to create and save one.
+          </div>
+        )}
+        {proofPackages[request.id] && (
+          <textarea
+            readOnly
+            value={JSON.stringify(proofPackages[request.id], null, 2)}
+            rows={14}
+            spellCheck={false}
+            className="w-full rounded-md border border-zinc-800 bg-black px-3 py-2 font-mono text-xs text-zinc-100 outline-none"
+          />
+        )}
+        <Button
+          type="button"
+          onClick={() => handleDeleteProofQueueRequest(request)}
+          disabled={busyAction !== ""}
+          className="bg-red-700 hover:bg-red-600 text-white"
+        >
+          {busyAction === `delete-proof:${request.id}` ? "Deleting..." : "Delete Proof Request"}
+        </Button>
+      </div>
+    ),
+  }));
   const issuedRequests = requests.filter(
     (request) => request.request_status === "issued",
   );
@@ -389,6 +873,133 @@ export function WorkflowPanel({
     (a, b) =>
       new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
   );
+  const requestHistoryItems: ExpandableListItem[] = recentRequests.map((request) => ({
+    id: request.id,
+    summary: (
+      <div className="space-y-1">
+        <div className="font-mono break-all">{request.id}</div>
+        <div className="text-zinc-500">
+          {requestAgentName(request) || "Unnamed agent"} · {request.request_status}
+        </div>
+      </div>
+    ),
+    details: (
+      <div className="space-y-1">
+        <div><span className="text-zinc-500">Status:</span> {request.request_status}</div>
+        <div><span className="text-zinc-500">Agent Name:</span> {requestAgentName(request) || "n/a"}</div>
+        <div><span className="text-zinc-500">Agent ID:</span> {request.agent_id || "n/a"}</div>
+        <div><span className="text-zinc-500">Wallet:</span> {request.subject_wallet_address}</div>
+        <div><span className="text-zinc-500">Requested DID:</span> {request.requested_did || "pending derivation"}</div>
+        <div><span className="text-zinc-500">Updated:</span> {new Date(request.updated_at).toLocaleString()}</div>
+      </div>
+    ),
+  }));
+  const userSubscriptionItems: ExpandableListItem[] = (customerContext?.subscriptions || []).map((subscription) => ({
+    id: subscription.id,
+    summary: (
+      <div className="space-y-1">
+        <div>{subscription.plan_code} · {subscription.status}</div>
+        <div className="text-zinc-500">
+          quota {subscription.did_quota_total} · remaining {Math.max(0, Number(subscription.did_quota_total || 0) - registeredAgentCount)}
+        </div>
+      </div>
+    ),
+    details: (
+      <div className="space-y-1">
+        <div><span className="text-zinc-500">Plan:</span> {subscription.plan_code}</div>
+        <div><span className="text-zinc-500">Status:</span> {subscription.status}</div>
+        <div><span className="text-zinc-500">Assigned quota:</span> {subscription.did_quota_total}</div>
+        <div><span className="text-zinc-500">Displayed remaining quota:</span> {Math.max(0, Number(subscription.did_quota_total || 0) - registeredAgentCount)}</div>
+        <div><span className="text-zinc-500">Started:</span> {new Date(subscription.starts_at).toLocaleString()}</div>
+        {subscription.ends_at && (
+          <div><span className="text-zinc-500">Ends:</span> {new Date(subscription.ends_at).toLocaleString()}</div>
+        )}
+      </div>
+    ),
+  }));
+  const adminSubscriptionItems: ExpandableListItem[] = (adminCustomerContext?.subscriptions || []).map((subscription) => ({
+    id: subscription.id,
+    summary: (
+      <div className="space-y-1">
+        <div>{subscription.plan_code} · {subscription.status}</div>
+        <div className="text-zinc-500">
+          quota {subscription.did_quota_total} · remaining {Math.max(0, Number(subscription.did_quota_total || 0) - registeredAgentCount)}
+        </div>
+      </div>
+    ),
+    details: (
+      <div className="space-y-1">
+        <div><span className="text-zinc-500">Plan:</span> {subscription.plan_code}</div>
+        <div><span className="text-zinc-500">Status:</span> {subscription.status}</div>
+        <div><span className="text-zinc-500">Assigned quota:</span> {subscription.did_quota_total}</div>
+        <div><span className="text-zinc-500">Displayed remaining quota:</span> {Math.max(0, Number(subscription.did_quota_total || 0) - registeredAgentCount)}</div>
+        <div><span className="text-zinc-500">Started:</span> {new Date(subscription.starts_at).toLocaleString()}</div>
+        {subscription.ends_at && (
+          <div><span className="text-zinc-500">Ends:</span> {new Date(subscription.ends_at).toLocaleString()}</div>
+        )}
+      </div>
+    ),
+  }));
+  const mcpKeyItems: ExpandableListItem[] = (customerContext?.mcpKeys || []).map((key) => ({
+    id: key.id,
+    summary: (
+      <div className="space-y-1">
+        <div>{key.label} · {key.status}</div>
+        <div className="text-zinc-500 font-mono break-all">{key.key_id}</div>
+      </div>
+    ),
+    details: (
+      <div className="space-y-3">
+        <div className="space-y-1">
+          <div><span className="text-zinc-500">Label:</span> {key.label}</div>
+          <div><span className="text-zinc-500">Key ID:</span> <span className="font-mono break-all">{key.key_id}</span></div>
+          <div><span className="text-zinc-500">Status:</span> {key.status}</div>
+          <div><span className="text-zinc-500">Scopes:</span> {Array.isArray(key.scopes) ? key.scopes.join(", ") : "n/a"}</div>
+          <div><span className="text-zinc-500">Created:</span> {new Date(key.created_at).toLocaleString()}</div>
+          {key.last_used_at && (
+            <div><span className="text-zinc-500">Last used:</span> {new Date(key.last_used_at).toLocaleString()}</div>
+          )}
+        </div>
+        <div className="space-y-2">
+          <div className="text-zinc-500">Edit scopes</div>
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+            {MCP_SCOPE_OPTIONS.map((scope) => {
+              const checked = (scopeDrafts[key.id] || []).includes(scope);
+              return (
+                <label
+                  key={scope}
+                  className="flex items-center gap-2 rounded border border-zinc-800 px-2 py-1.5"
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(e) => toggleScopeDraft(key.id, scope, e.target.checked)}
+                  />
+                  <span className="font-mono text-[11px]">{scope}</span>
+                </label>
+              );
+            })}
+          </div>
+          <Button
+            type="button"
+            onClick={() => handleSaveMcpScopes(key.id)}
+            disabled={busyAction !== "" || (scopeDrafts[key.id] || []).length === 0}
+            className="bg-emerald-600 hover:bg-emerald-500 text-white"
+          >
+            {busyAction === `save-scopes:${key.id}` ? "Saving..." : "Save Scopes"}
+          </Button>
+        </div>
+        <Button
+          type="button"
+          onClick={() => handleRevokeMcpKey(key.id)}
+          disabled={busyAction !== "" || key.status !== "active"}
+          className="bg-red-700 hover:bg-red-600 text-white"
+        >
+          {busyAction === `revoke-mcp:${key.id}` ? "Revoking..." : "Revoke MCP Key"}
+        </Button>
+      </div>
+    ),
+  }));
   const visibleSections = useMemo<DashboardSection[]>(
     () =>
       mode === "admin"
@@ -454,6 +1065,88 @@ export function WorkflowPanel({
       >
         {label}
       </button>
+    );
+  }
+
+  function isExpanded(group: string, itemId: string): boolean {
+    return Boolean(expandedGroups[group]?.[itemId]);
+  }
+
+  function toggleExpanded(group: string, itemId: string) {
+    setExpandedGroups((current) => ({
+      ...current,
+      [group]: {
+        ...(current[group] || {}),
+        [itemId]: !current[group]?.[itemId],
+      },
+    }));
+  }
+
+  function setAllExpanded(group: string, items: ExpandableListItem[], expanded: boolean) {
+    setExpandedGroups((current) => ({
+      ...current,
+      [group]: Object.fromEntries(items.map((item) => [item.id, expanded])),
+    }));
+  }
+
+  function renderExpandableList(
+    group: string,
+    items: ExpandableListItem[],
+    emptyMessage: string,
+  ) {
+    if (items.length === 0) {
+      return <p className="text-xs text-zinc-500">{emptyMessage}</p>;
+    }
+    return (
+      <div className="space-y-3">
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setAllExpanded(group, items, true)}
+            className="rounded-md bg-zinc-950 px-3 py-2 text-xs font-medium text-zinc-300 transition hover:bg-zinc-800"
+          >
+            Expand all
+          </button>
+          <button
+            type="button"
+            onClick={() => setAllExpanded(group, items, false)}
+            className="rounded-md bg-zinc-950 px-3 py-2 text-xs font-medium text-zinc-300 transition hover:bg-zinc-800"
+          >
+            Collapse all
+          </button>
+        </div>
+        {items.map((item) => {
+          const expanded = isExpanded(group, item.id);
+          return (
+            <div key={item.id} className="rounded-md border border-zinc-800 bg-zinc-950 text-xs text-zinc-300">
+              <button
+                type="button"
+                onClick={() => toggleExpanded(group, item.id)}
+                className="flex w-full items-start justify-between gap-3 px-3 py-3 text-left transition hover:bg-zinc-900"
+              >
+                <div className="min-w-0 flex-1">{item.summary}</div>
+                <span className="shrink-0 text-zinc-500">{expanded ? "˄" : "˅"}</span>
+              </button>
+              {expanded && <div className="border-t border-zinc-800 px-3 py-3">{item.details}</div>}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  function proofStatusChip(request: ProofRequestRow) {
+    const approved = ["proof_ready", "submitted", "verified"].includes(request.request_status);
+    const rejected = ["human_rejected", "rejected"].includes(request.request_status);
+    const className = approved
+      ? "bg-emerald-600 text-white"
+      : rejected
+        ? "bg-red-700 text-white"
+        : "bg-zinc-950 text-zinc-300";
+    return (
+      <span className={`inline-flex rounded-md px-2.5 py-1 text-[11px] font-medium ${className}`}>
+        {request.request_status}
+      </span>
     );
   }
 
@@ -551,6 +1244,18 @@ export function WorkflowPanel({
                   <div className="text-white text-lg">{pendingHumanQueue.length}</div>
                 </div>
                 <div className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-zinc-300">
+                  <div className="text-zinc-500">Pending Proof Approval</div>
+                  <div className="text-white text-lg">{pendingHumanProofQueue.length}</div>
+                </div>
+                <div className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-zinc-300">
+                  <div className="text-zinc-500">Approved Proofs</div>
+                  <div className="text-white text-lg">{approvedProofRequests.length}</div>
+                </div>
+                <div className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-zinc-300">
+                  <div className="text-zinc-500">Rejected Proofs</div>
+                  <div className="text-white text-lg">{rejectedProofRequests.length}</div>
+                </div>
+                <div className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-zinc-300">
                   <div className="text-zinc-500">Issued Requests</div>
                   <div className="text-white text-lg">{issuedRequests.length}</div>
                 </div>
@@ -565,22 +1270,7 @@ export function WorkflowPanel({
                     No DID requests stored for this customer account yet.
                   </p>
                 ) : (
-                  <div className="space-y-3">
-                    {recentRequests.map((request) => (
-                      <div
-                        key={request.id}
-                        className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-300 space-y-1"
-                      >
-                        <div className="font-mono break-all">{request.id}</div>
-                        <div><span className="text-zinc-500">Status:</span> {request.request_status}</div>
-                        <div><span className="text-zinc-500">Agent Name:</span> {requestAgentName(request) || "n/a"}</div>
-                        <div><span className="text-zinc-500">Agent ID:</span> {request.agent_id || "n/a"}</div>
-                        <div><span className="text-zinc-500">Wallet:</span> {request.subject_wallet_address}</div>
-                        <div><span className="text-zinc-500">Requested DID:</span> {request.requested_did || "pending derivation"}</div>
-                        <div><span className="text-zinc-500">Updated:</span> {new Date(request.updated_at).toLocaleString()}</div>
-                      </div>
-                    ))}
-                  </div>
+                  renderExpandableList("request-history", requestHistoryItems, "")
                 )}
               </div>
             )}
@@ -600,23 +1290,7 @@ export function WorkflowPanel({
                     No subscriptions assigned yet. An admin must grant DID quota before an MCP key can create DID requests.
                   </p>
                 ) : (
-                  <div className="space-y-3">
-                    {customerContext.subscriptions.map((subscription) => (
-                      <div
-                        key={subscription.id}
-                        className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-300 space-y-1"
-                      >
-                        <div><span className="text-zinc-500">Plan:</span> {subscription.plan_code}</div>
-                        <div><span className="text-zinc-500">Status:</span> {subscription.status}</div>
-                        <div><span className="text-zinc-500">Assigned quota:</span> {subscription.did_quota_total}</div>
-                        <div><span className="text-zinc-500">Displayed remaining quota:</span> {Math.max(0, Number(subscription.did_quota_total || 0) - registeredAgentCount)}</div>
-                        <div><span className="text-zinc-500">Started:</span> {new Date(subscription.starts_at).toLocaleString()}</div>
-                        {subscription.ends_at && (
-                          <div><span className="text-zinc-500">Ends:</span> {new Date(subscription.ends_at).toLocaleString()}</div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
+                  renderExpandableList("user-subscriptions", userSubscriptionItems, "")
                 )}
               </>
             )}
@@ -699,21 +1373,7 @@ export function WorkflowPanel({
                       {adminCustomerContext.subscriptions.length === 0 ? (
                         <p className="text-xs text-zinc-500">No subscriptions assigned yet.</p>
                       ) : (
-                        adminCustomerContext.subscriptions.map((subscription) => (
-                          <div
-                            key={subscription.id}
-                            className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-300 space-y-1"
-                          >
-                            <div><span className="text-zinc-500">Plan:</span> {subscription.plan_code}</div>
-                            <div><span className="text-zinc-500">Status:</span> {subscription.status}</div>
-                            <div><span className="text-zinc-500">Assigned quota:</span> {subscription.did_quota_total}</div>
-                            <div><span className="text-zinc-500">Displayed remaining quota:</span> {Math.max(0, Number(subscription.did_quota_total || 0) - registeredAgentCount)}</div>
-                            <div><span className="text-zinc-500">Started:</span> {new Date(subscription.starts_at).toLocaleString()}</div>
-                            {subscription.ends_at && (
-                              <div><span className="text-zinc-500">Ends:</span> {new Date(subscription.ends_at).toLocaleString()}</div>
-                            )}
-                          </div>
-                        ))
+                        renderExpandableList("admin-subscriptions", adminSubscriptionItems, "")
                       )}
                     </div>
                   </>
@@ -763,62 +1423,7 @@ export function WorkflowPanel({
                   {customerContext.mcpKeys.length === 0 ? (
                     <p className="text-xs text-zinc-500">No MCP keys created yet.</p>
                   ) : (
-                    customerContext.mcpKeys.map((key) => (
-                      <div
-                        key={key.id}
-                        className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-300 space-y-1"
-                      >
-                        <div><span className="text-zinc-500">Label:</span> {key.label}</div>
-                        <div><span className="text-zinc-500">Key ID:</span> <span className="font-mono break-all">{key.key_id}</span></div>
-                        <div><span className="text-zinc-500">Status:</span> {key.status}</div>
-                        <div><span className="text-zinc-500">Scopes:</span> {Array.isArray(key.scopes) ? key.scopes.join(", ") : "n/a"}</div>
-                        <div><span className="text-zinc-500">Created:</span> {new Date(key.created_at).toLocaleString()}</div>
-                        <div className="space-y-2 pt-2">
-                          <div className="text-zinc-500">Edit scopes</div>
-                          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                            {MCP_SCOPE_OPTIONS.map((scope) => {
-                              const checked = (scopeDrafts[key.id] || []).includes(scope);
-                              return (
-                                <label
-                                  key={scope}
-                                  className="flex items-center gap-2 rounded border border-zinc-800 px-2 py-1.5"
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    onChange={(e) =>
-                                      toggleScopeDraft(key.id, scope, e.target.checked)
-                                    }
-                                  />
-                                  <span className="font-mono text-[11px]">{scope}</span>
-                                </label>
-                              );
-                            })}
-                          </div>
-                          <Button
-                            type="button"
-                            onClick={() => handleSaveMcpScopes(key.id)}
-                            disabled={busyAction !== "" || (scopeDrafts[key.id] || []).length === 0}
-                            className="bg-emerald-600 hover:bg-emerald-500 text-white"
-                          >
-                            {busyAction === `save-scopes:${key.id}` ? "Saving..." : "Save Scopes"}
-                          </Button>
-                        </div>
-                        {key.last_used_at && (
-                          <div><span className="text-zinc-500">Last used:</span> {new Date(key.last_used_at).toLocaleString()}</div>
-                        )}
-                        <div className="pt-2">
-                          <Button
-                            type="button"
-                            onClick={() => handleRevokeMcpKey(key.id)}
-                            disabled={busyAction !== "" || key.status !== "active"}
-                            className="bg-red-700 hover:bg-red-600 text-white"
-                          >
-                            {busyAction === `revoke-mcp:${key.id}` ? "Revoking..." : "Revoke MCP Key"}
-                          </Button>
-                        </div>
-                      </div>
-                    ))
+                    renderExpandableList("mcp-keys", mcpKeyItems, "")
                   )}
                 </div>
               </div>
@@ -828,27 +1433,54 @@ export function WorkflowPanel({
 
         {section === "human" && (
           <div className="space-y-3">
-            <h3 className="text-sm font-semibold text-white">Human Approval Queue</h3>
-            {pendingHumanQueue.length === 0 ? (
-              <p className="text-xs text-zinc-500">No requests pending human approval.</p>
-            ) : (
-              pendingHumanQueue.map((request) => (
-                <div key={request.id} className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-300 space-y-2">
-                  <div className="font-mono break-all">{request.id}</div>
-                  <div>Subject wallet: {request.subject_wallet_address}</div>
-                  <div>Agent ID: {request.agent_id || "n/a"}</div>
-                  <div>Status: {request.request_status}</div>
-                  <div>Agent Name: {requestAgentName(request) || "n/a"}</div>
-                  <Button
-                    type="button"
-                    onClick={() => handleApproveRequest(request)}
-                    disabled={busyAction !== ""}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white"
-                  >
-                    {busyAction === `approve:${request.id}` ? "Approving..." : "Approve as Human"}
-                  </Button>
-                </div>
-              ))
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setHumanProofView("pending")}
+                className={`rounded-md px-3 py-2 text-xs font-medium transition ${
+                  humanProofView === "pending"
+                    ? "bg-emerald-600 text-white"
+                    : "bg-zinc-950 text-zinc-300 hover:bg-zinc-800"
+                }`}
+              >
+                Pending
+              </button>
+              <button
+                type="button"
+                onClick={() => setHumanProofView("history")}
+                className={`rounded-md px-3 py-2 text-xs font-medium transition ${
+                  humanProofView === "history"
+                    ? "bg-emerald-600 text-white"
+                    : "bg-zinc-950 text-zinc-300 hover:bg-zinc-800"
+                }`}
+              >
+                History
+              </button>
+            </div>
+
+            {humanProofView === "pending" && (
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-white">Human Approval Queue</h3>
+                {pendingHumanQueue.length === 0 && pendingHumanProofQueue.length === 0 ? (
+                  <p className="text-xs text-zinc-500">No requests pending human approval.</p>
+                ) : (
+                  <>
+                    {renderExpandableList("pending-did-approvals", pendingDidApprovalItems, "")}
+                    {renderExpandableList("pending-proof-approvals", pendingProofApprovalItems, "")}
+                  </>
+                )}
+              </div>
+            )}
+
+            {humanProofView === "history" && (
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-white">Proof History</h3>
+                {proofHistory.length === 0 ? (
+                  <p className="text-xs text-zinc-500">No approved or rejected proof requests yet.</p>
+                ) : (
+                  renderExpandableList("proof-history", proofHistoryItems, "")
+                )}
+              </div>
             )}
           </div>
         )}
@@ -856,28 +1488,30 @@ export function WorkflowPanel({
         {section === "admin" && (
           <div className="space-y-3">
             <h3 className="text-sm font-semibold text-white">Admin Review Queue</h3>
+            <div className="grid grid-cols-1 gap-3 text-xs md:grid-cols-2">
+              <div className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-zinc-300">
+                <div className="text-zinc-500">Approved Proofs</div>
+                <div className="text-white text-lg">{approvedProofRequests.length}</div>
+              </div>
+              <div className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-zinc-300">
+                <div className="text-zinc-500">Rejected Proofs</div>
+                <div className="text-white text-lg">{rejectedProofRequests.length}</div>
+              </div>
+            </div>
             {adminQueue.length === 0 ? (
               <p className="text-xs text-zinc-500">No requests pending admin review.</p>
             ) : (
-              adminQueue.map((request) => (
-                <div key={request.id} className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-300 space-y-2">
-                  <div className="font-mono break-all">{request.id}</div>
-                  <div>Subject wallet: {request.subject_wallet_address}</div>
-                  <div>Agent ID: {request.agent_id || "n/a"}</div>
-                  <div>Requested DID: {request.requested_did}</div>
-                  <div>Agent Name: {requestAgentName(request) || "n/a"}</div>
-                  <div>Org disclosure: {request.organization_disclosure}</div>
-                  <Button
-                    type="button"
-                    onClick={() => handleIssueRequest(request)}
-                    disabled={busyAction !== "" || !contractAddress.trim()}
-                    className="bg-purple-700 hover:bg-purple-600 text-white"
-                  >
-                    {busyAction === `issue:${request.id}` ? "Issuing..." : "Issue On-Chain as Admin"}
-                  </Button>
-                </div>
-              ))
+              renderExpandableList("admin-did-queue", adminDidQueueItems, "")
             )}
+
+            <div className="pt-3 space-y-3">
+              <h3 className="text-sm font-semibold text-white">Proof Requests</h3>
+              {proofRequests.length === 0 ? (
+                <p className="text-xs text-zinc-500">No proof requests stored for this customer.</p>
+              ) : (
+                renderExpandableList("admin-proof-requests", adminProofItems, "")
+              )}
+            </div>
           </div>
         )}
 

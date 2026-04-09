@@ -66,6 +66,41 @@ export interface DidRequestRow {
   updated_at: string;
 }
 
+export interface ProofRequestRow {
+  id: string;
+  customer_id: string;
+  mcp_key_id?: string | null;
+  did_record_id: string;
+  did: string;
+  contract_address: string;
+  network_id: string;
+  agent_id?: string | null;
+  requester_wallet_address: string;
+  holder_wallet_address: string;
+  request_status:
+    | "pending_human_approval"
+    | "human_approved"
+    | "human_rejected"
+    | "proof_ready"
+    | "submitted"
+    | "verified"
+    | "rejected";
+  scopes: string[];
+  verifier?: string | null;
+  purpose: string;
+  challenge: string;
+  proof_material: MidnightProofMaterial;
+  approval_payload: string;
+  holder_signature?: Record<string, unknown> | null;
+  proof_submission?: Record<string, unknown> | null;
+  verification_result?: Record<string, unknown> | null;
+  human_approved_at?: string | null;
+  human_approved_by_wallet?: string | null;
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface BootstrapResponse {
   customer: Customer;
   subscription: Subscription;
@@ -94,6 +129,104 @@ export interface CredentialBundle {
     type: string[];
     holder: string;
     verifiableCredential: string[];
+  };
+}
+
+export interface MidnightProofStatement {
+  scope: string;
+  credentialType: string;
+  claimKeys: string[];
+  commitment: string;
+}
+
+export interface MidnightNativeOwnershipMaterial {
+  scheme: "midnight-native-ownership-v1";
+  keyLocation: "prove_ownership";
+  contractAddress: string;
+  holderWalletAddress: string;
+  agentKeyHex: string;
+  walletHashHex: string;
+  contractHashHex: string;
+  didHashHex: string;
+  challengeHashHex: string;
+  bundleCommitment: string;
+  holderBindingCommitment: string;
+}
+
+export interface MidnightProofMaterial {
+  did: string;
+  holder: string;
+  network: "midnight";
+  proofType: "midnight-credential-commitment";
+  challenge: string;
+  verifier?: string;
+  purpose: string;
+  disclosedScopes: string[];
+  credentialCount: number;
+  credentialCommitments: MidnightProofStatement[];
+  bundleCommitment: string;
+  holderBindingCommitment: string;
+  nativeOwnership?: MidnightNativeOwnershipMaterial;
+  verificationHints: {
+    statusCheck: "resolve-did-and-check-active";
+    issuerCheck: "verify-vc-jwt-signatures";
+    holderBinding: "holder-binding-midnight-proof-required";
+  };
+}
+
+export interface MidnightProofRequest {
+  requestId: string;
+  createdAt: string;
+  expiresAt: string;
+  proofRequestType: "midnight-holder-proof-request";
+  material: MidnightProofMaterial;
+  instructions: string[];
+}
+
+export interface MidnightProofSubmission {
+  did: string;
+  challenge: string;
+  bundleCommitment: string;
+  holderBindingCommitment: string;
+  proof: {
+    format: string;
+    proofValue: string;
+    scheme?: string;
+    publicInputsHash?: string;
+    publicInputs?: Record<string, unknown>;
+    proverUrl?: string;
+    generatedBy?: string;
+    generatedAt?: string;
+  };
+}
+
+export interface MidnightProofVerificationPackage {
+  proofRequest: MidnightProofRequest;
+  submission: MidnightProofSubmission;
+}
+
+export interface MidnightProofVerificationResult {
+  valid: boolean;
+  status:
+    | "boundary_verified_only"
+    | "native_proof_verified"
+    | "native_proof_unverified"
+    | "preview_envelope_verified"
+    | "invalid_submission"
+    | "did_not_active";
+  did: string;
+  didActive: boolean;
+  issuerCredentialsVerified: boolean;
+  requestIntegrityVerified: boolean;
+  cryptographicProofVerified: boolean;
+  proofEnvelopeVerified?: boolean;
+  submissionMatchesRequest?: boolean;
+  warnings: string[];
+  verificationMaterial?: {
+    expectedBundleCommitment: string;
+    expectedHolderBindingCommitment: string;
+    verifiedScopes: string[];
+    credentialCount: number;
   };
 }
 

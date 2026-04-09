@@ -177,6 +177,49 @@ create index if not exists idx_verifiable_credentials_did_record_id on verifiabl
 create index if not exists idx_verifiable_credentials_subject_did on verifiable_credentials(subject_did);
 create index if not exists idx_verifiable_credentials_type on verifiable_credentials(credential_type);
 
+create table if not exists proof_requests (
+  id uuid primary key default gen_random_uuid(),
+  customer_id uuid not null references customers(id) on delete cascade,
+  mcp_key_id uuid references mcp_keys(id) on delete set null,
+  did_record_id uuid not null references did_records(id) on delete cascade,
+  did text not null,
+  contract_address text not null,
+  network_id text not null,
+  agent_id text,
+  requester_wallet_address text not null,
+  holder_wallet_address text not null,
+  request_status text not null default 'pending_human_approval'
+    check (
+      request_status in (
+        'pending_human_approval',
+        'human_approved',
+        'human_rejected',
+        'proof_ready',
+        'submitted',
+        'verified',
+        'rejected'
+      )
+    ),
+  scopes jsonb not null default '[]'::jsonb,
+  verifier text,
+  purpose text not null default 'selective-disclosure',
+  challenge text not null,
+  proof_material jsonb not null default '{}'::jsonb,
+  approval_payload text not null,
+  holder_signature jsonb,
+  proof_submission jsonb,
+  verification_result jsonb,
+  human_approved_at timestamptz,
+  human_approved_by_wallet text,
+  error_message text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_proof_requests_customer_id on proof_requests(customer_id);
+create index if not exists idx_proof_requests_did on proof_requests(did);
+create index if not exists idx_proof_requests_status on proof_requests(request_status);
+
 create table if not exists audit_events (
   id uuid primary key default gen_random_uuid(),
   actor_type text not null,

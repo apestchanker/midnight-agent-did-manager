@@ -13,7 +13,13 @@ import { OwnerVaultPanel } from "./components/OwnerVaultPanel";
 import { WorkflowPanel } from "./components/WorkflowPanel";
 import { VcPanel } from "./components/VcPanel";
 import type { DidRecord, DeployResult, RegistryAccess, RegistrySummary } from "./types/did";
-import type { DidRequestRow, LogEntry, RegistryDidRow } from "./types/service";
+import type {
+  DidRequestRow,
+  LogEntry,
+  MidnightProofVerificationPackage,
+  MidnightProofVerificationResult,
+  RegistryDidRow,
+} from "./types/service";
 import { APP_VERSION } from "./lib/version";
 import {
   DidRegistryAPI,
@@ -35,6 +41,7 @@ import {
   listDidRequests,
   listRegistryDids,
   saveAdminRegistryDeployment,
+  verifyMidnightProofRequest,
 } from "./utils/serviceApi";
 
 const SECTION_IDS = {
@@ -108,8 +115,10 @@ export default function App() {
   });
   const {
     status,
+    api,
     address,
     providers,
+    proofService,
     error: walletError,
     connect,
     availableWallets,
@@ -155,6 +164,15 @@ export default function App() {
   );
   const [registryDids, setRegistryDids] = useState<RegistryDidRow[]>([]);
   const [registryApi, setRegistryApi] = useState<DidRegistryAPI | null>(null);
+  const [registryProofPackageJson, setRegistryProofPackageJson] = useState("");
+  const [registryProofVerification, setRegistryProofVerification] =
+    useState<MidnightProofVerificationResult | null>(null);
+  const [registryProofMessage, setRegistryProofMessage] = useState("");
+  const [registryProofBusy, setRegistryProofBusy] = useState(false);
+  const [registryProofReceipt, setRegistryProofReceipt] = useState<{
+    hash: string;
+    verifiedAt: string;
+  } | null>(null);
   const [customerQuotaTotal, setCustomerQuotaTotal] = useState(0);
   const [backendLogs, setBackendLogs] = useState<LogEntry[]>([]);
   const [mcpLogs, setMcpLogs] = useState<LogEntry[]>([]);
@@ -760,6 +778,54 @@ export default function App() {
     return refreshAgentRecord(payload.agentId, payload.subjectWalletAddress);
   }
 
+  async function handleVerifyRegistryProof() {
+    setRegistryProofBusy(true);
+    setRegistryProofMessage("");
+    setRegistryProofVerification(null);
+    setRegistryProofReceipt(null);
+    try {
+      const parsed = JSON.parse(
+        registryProofPackageJson,
+      ) as MidnightProofVerificationPackage;
+      const proofRequest = parsed.proofRequest;
+      const submission = parsed.submission;
+      const result = await verifyMidnightProofRequest({
+        proofRequest,
+        submission,
+      });
+      const verifiedAt = new Date().toISOString();
+      const receiptPayload = JSON.stringify({
+        proofRequest,
+        submission,
+        result,
+        verifiedAt,
+      });
+      const digest = await crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode(receiptPayload),
+      );
+      const receiptHash = Array.from(new Uint8Array(digest))
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join("");
+      setRegistryProofVerification(result);
+      setRegistryProofReceipt({
+        hash: receiptHash,
+        verifiedAt,
+      });
+      setRegistryProofMessage(
+        result.valid
+          ? `Proof verification succeeded with status ${result.status}.`
+          : `Proof verification failed with status ${result.status}.`,
+      );
+    } catch (error) {
+      setRegistryProofMessage(
+        error instanceof Error ? error.message : "Proof verification failed",
+      );
+    } finally {
+      setRegistryProofBusy(false);
+    }
+  }
+
   useEffect(() => {
     if (!registryApi) {
       setRegistrySummary(null);
@@ -824,12 +890,28 @@ export default function App() {
       setAdminRequests([]);
       return;
     }
-    refreshRequestCollections()
-      .catch((error) => {
+
+    let cancelled = false;
+    const loadRequests = async () => {
+      try {
+        await refreshRequestCollections();
+      } catch (error) {
+        if (cancelled) return;
         console.error("[App] Failed to load customer data:", error);
         setCustomerRequests([]);
         setAdminRequests([]);
-      });
+      }
+    };
+
+    void loadRequests();
+    const timer = window.setInterval(() => {
+      void loadRequests();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [refreshRequestCollections, walletAddress]);
 
   useEffect(() => {
@@ -1452,6 +1534,7 @@ export default function App() {
               onSelectWallet={setSelectedWalletName}
               storageMode={storageMode}
               onSelectStorageMode={setStorageMode}
+              proofService={proofService}
             />
           </section>
         )}
@@ -1669,6 +1752,106 @@ export default function App() {
                           </div>
                         </div>
                         <DidDisplay record={didRecord} />
+                        <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4 text-sm text-zinc-300 space-y-4">
+                          <div>
+                            <h3 className="text-base font-semibold text-white">Verify Proof</h3>
+                            <p className="text-sm text-zinc-500">
+                              Paste the single Proof Verification Package JSON emitted by the wallet approval flow. It can carry either the local preview proof envelope for testing or a later native Midnight proof.
+                            </p>
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="registryProofPackageJson" className="text-zinc-300">
+                              Proof Verification Package JSON
+                            </Label>
+                            <textarea
+                              id="registryProofPackageJson"
+                              value={registryProofPackageJson}
+                              onChange={(e) => setRegistryProofPackageJson(e.target.value)}
+                              className="min-h-[24rem] w-full rounded-md border border-zinc-800 bg-zinc-950 p-3 font-mono text-xs text-white"
+                              placeholder='{"proofRequest":{"requestId":"...","proofRequestType":"midnight-holder-proof-request","material":{...}},"submission":{"did":"...","challenge":"...","bundleCommitment":"...","holderBindingCommitment":"...","proof":{"format":"midnight-zk-proof","proofValue":"..."}}}'
+                            />
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <Button
+                              type="button"
+                              onClick={handleVerifyRegistryProof}
+                              disabled={registryProofBusy}
+                              className="bg-emerald-600 hover:bg-emerald-500 text-white"
+                            >
+                              {registryProofBusy ? "Verifying..." : "Verify Proof"}
+                            </Button>
+                            {registryProofMessage && (
+                              <div className="text-xs text-zinc-300">{registryProofMessage}</div>
+                            )}
+                          </div>
+                          {registryProofVerification && (
+                            <div className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-300 space-y-1">
+                              {(() => {
+                                const isNativeProof =
+                                  registryProofVerification.status === "native_proof_verified" ||
+                                  registryProofVerification.status === "native_proof_unverified";
+                                return (
+                                  <>
+                              <div className="flex items-center gap-2">
+                                <span className="text-zinc-500">Valid:</span>
+                                <span className={registryProofVerification.valid ? "text-emerald-300" : "text-red-300"}>
+                                  {String(registryProofVerification.valid)}
+                                </span>
+                              </div>
+                              <div><span className="text-zinc-500">Status:</span> {registryProofVerification.status}</div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-zinc-500">DID Active:</span>
+                                <span className={registryProofVerification.didActive ? "text-emerald-300" : "text-red-300"}>
+                                  {String(registryProofVerification.didActive)}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-zinc-500">Issuer Credentials Verified:</span>
+                                <span className={registryProofVerification.issuerCredentialsVerified ? "text-emerald-300" : "text-red-300"}>
+                                  {String(registryProofVerification.issuerCredentialsVerified)}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-zinc-500">Request Integrity Verified:</span>
+                                <span className={registryProofVerification.requestIntegrityVerified ? "text-emerald-300" : "text-red-300"}>
+                                  {String(registryProofVerification.requestIntegrityVerified)}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-zinc-500">Proof Envelope Verified:</span>
+                                {isNativeProof ? (
+                                  <span className="text-zinc-400">n/a</span>
+                                ) : (
+                                  <span className={(registryProofVerification.proofEnvelopeVerified ?? false) ? "text-emerald-300" : "text-red-300"}>
+                                    {String(registryProofVerification.proofEnvelopeVerified ?? false)}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-zinc-500">Cryptographic Proof Verified:</span>
+                                <span className={registryProofVerification.cryptographicProofVerified ? "text-emerald-300" : "text-red-300"}>
+                                  {String(registryProofVerification.cryptographicProofVerified)}
+                                </span>
+                              </div>
+                                  </>
+                                );
+                              })()}
+                              {registryProofReceipt && (
+                                <div className="pt-2 space-y-1">
+                                  <div className="text-zinc-500">Verification Receipt</div>
+                                  <div><span className="text-zinc-500">Hash:</span> <span className="font-mono break-all">{registryProofReceipt.hash}</span></div>
+                                  <div><span className="text-zinc-500">Timestamp:</span> {new Date(registryProofReceipt.verifiedAt).toLocaleString()}</div>
+                                </div>
+                              )}
+                              {registryProofVerification.warnings.length > 0 && (
+                                <div className="pt-2">
+                                  <div className="text-zinc-500">Warnings:</div>
+                                  <pre className="whitespace-pre-wrap break-words">{registryProofVerification.warnings.join("\n")}</pre>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     ) : (
                       <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-6 text-sm text-zinc-400">
@@ -1791,7 +1974,12 @@ export default function App() {
                     Select an existing agent from the sidebar to inspect credentials and VC disclosure for that DID.
                   </div>
                 ) : (
-                  <VcPanel record={didRecord} />
+                  <VcPanel
+                    record={didRecord}
+                    connectedApi={providers?.connectedAPI ?? api}
+                    walletAddress={walletAddress}
+                    providers={providers}
+                  />
                 )}
               </section>
             )}
@@ -1821,6 +2009,7 @@ export default function App() {
                 </div>
                 <WorkflowPanel
                   providers={providers}
+                  connectedApi={providers?.connectedAPI ?? api}
                   walletAddress={walletAddress}
                   contractAddress={contractAddress}
                   mode={viewMode}

@@ -34,10 +34,26 @@ import {
 import {
   getCredentialBundle,
   getIssuerDescriptor,
+  getMidnightProofMaterial,
   listCredentialsForDid,
+  rotateCredentialsForDid,
   verifyCredentialJwt,
   verifyPresentation,
 } from "./vc-service.js";
+import {
+  createMidnightProofRequest,
+  verifyMidnightProofSubmission,
+} from "./midnight-proof-service.js";
+import {
+  approveProofRequestByHuman,
+  createProofRequestForAgent,
+  createProofRequestForWallet,
+  deleteProofRequest,
+  getProofRequestById,
+  listProofRequests,
+  rejectProofRequestByHuman,
+  submitProofForRequest,
+} from "./proof-request-service.js";
 import {
   parseRequestPath,
   readJson,
@@ -208,8 +224,27 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && url.pathname === "/api/agent/proof-requests") {
+      const body = await readJson(req);
+      const mcpKey = req.headers["x-mcp-key"] || body.mcpKey;
+      sendJson(
+        res,
+        201,
+        await createProofRequestForAgent({
+          ...body,
+          mcpKey,
+        }),
+      );
+      return;
+    }
+
     if (req.method === "POST" && url.pathname === "/api/wallet/did-requests") {
       sendJson(res, 201, await createWalletDidRequest(await readJson(req)));
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/wallet/proof-requests") {
+      sendJson(res, 201, await createProofRequestForWallet(await readJson(req)));
       return;
     }
 
@@ -231,6 +266,18 @@ const server = createServer(async (req, res) => {
         res,
         200,
         await listDidRequests({
+          customerId: url.searchParams.get("customerId") || undefined,
+          status: url.searchParams.get("status") || undefined,
+        }),
+      );
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/proof-requests") {
+      sendJson(
+        res,
+        200,
+        await listProofRequests({
           customerId: url.searchParams.get("customerId") || undefined,
           status: url.searchParams.get("status") || undefined,
         }),
@@ -290,6 +337,16 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && parts[0] === "api" && parts[1] === "proof-requests" && parts[2]) {
+      const proofRequest = await getProofRequestById(parts[2]);
+      if (!proofRequest) {
+        sendText(res, 404, "Proof request not found");
+        return;
+      }
+      sendJson(res, 200, proofRequest);
+      return;
+    }
+
     if (req.method === "POST" && parts[0] === "api" && parts[1] === "human" && parts[2] === "did-requests" && parts[4] === "approve") {
       const body = await readJson(req);
       sendJson(
@@ -320,6 +377,34 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && parts[0] === "api" && parts[1] === "human" && parts[2] === "proof-requests" && parts[4] === "approve") {
+      const body = await readJson(req);
+      sendJson(
+        res,
+        200,
+        await approveProofRequestByHuman({
+          proofRequestId: parts[3],
+          humanWalletAddress: body.humanWalletAddress,
+          holderSignature: body.holderSignature,
+        }),
+      );
+      return;
+    }
+
+    if (req.method === "POST" && parts[0] === "api" && parts[1] === "human" && parts[2] === "proof-requests" && parts[4] === "reject") {
+      const body = await readJson(req);
+      sendJson(
+        res,
+        200,
+        await rejectProofRequestByHuman({
+          proofRequestId: parts[3],
+          humanWalletAddress: body.humanWalletAddress,
+          reason: body.reason,
+        }),
+      );
+      return;
+    }
+
     if (req.method === "POST" && parts[0] === "api" && parts[1] === "admin" && parts[2] === "did-requests" && parts[4] === "issue") {
       const body = await readJson(req);
       sendJson(
@@ -337,6 +422,19 @@ const server = createServer(async (req, res) => {
           didCommitment: body.didCommitment,
           documentCommitment: body.documentCommitment,
           proofCommitment: body.proofCommitment,
+        }),
+      );
+      return;
+    }
+
+    if (req.method === "DELETE" && parts[0] === "api" && parts[1] === "admin" && parts[2] === "proof-requests" && parts[3]) {
+      const body = await readJson(req).catch(() => ({}));
+      sendJson(
+        res,
+        200,
+        await deleteProofRequest({
+          proofRequestId: parts[3],
+          adminWalletAddress: body.adminWalletAddress,
         }),
       );
       return;
@@ -407,6 +505,76 @@ const server = createServer(async (req, res) => {
         await getCredentialBundle({
           did: body.did,
           scopes: body.scopes,
+        }),
+      );
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/vcs/rotate") {
+      const body = await readJson(req);
+      sendJson(
+        res,
+        200,
+        await rotateCredentialsForDid({
+          did: body.did,
+        }),
+      );
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/vcs/midnight-proof") {
+      const body = await readJson(req);
+      sendJson(
+        res,
+        200,
+        await getMidnightProofMaterial({
+          did: body.did,
+          scopes: body.scopes,
+          challenge: body.challenge,
+          verifier: body.verifier,
+          purpose: body.purpose,
+        }),
+      );
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/vps/midnight/request") {
+      const body = await readJson(req);
+      sendJson(
+        res,
+        200,
+        await createMidnightProofRequest({
+          did: body.did,
+          scopes: body.scopes,
+          challenge: body.challenge,
+          verifier: body.verifier,
+          purpose: body.purpose,
+        }),
+      );
+      return;
+    }
+
+    if (req.method === "POST" && parts[0] === "api" && parts[1] === "proof-requests" && parts[3] === "submit") {
+      const body = await readJson(req);
+      sendJson(
+        res,
+        200,
+        await submitProofForRequest({
+          proofRequestId: parts[2],
+          submission: body.submission,
+        }),
+      );
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/vps/midnight/verify") {
+      const body = await readJson(req);
+      sendJson(
+        res,
+        200,
+        await verifyMidnightProofSubmission({
+          proofRequest: body.proofRequest,
+          submission: body.submission,
         }),
       );
       return;

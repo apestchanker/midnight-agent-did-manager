@@ -3,6 +3,7 @@ import { SignJWT } from "jose";
 import { describe, expect, it } from "vitest";
 import { getIssuerKeys } from "../server/issuer-keys.js";
 import {
+  createMidnightProofMaterialFromRows,
   getIssuerDescriptor,
   verifyCredentialJwt,
   verifyPresentation,
@@ -96,5 +97,49 @@ describe("vc-service", () => {
         },
       }),
     ).rejects.toThrow("Credential subject does not match presentation holder.");
+  });
+
+  it("builds deterministic Midnight proof material from credential rows", async () => {
+    const did = "did:midnight:preprod:contract123:agentkey123";
+    const proofMaterial = await createMidnightProofMaterialFromRows({
+      did,
+      scopes: ["ownership", "name"],
+      challenge: "challenge-123",
+      verifier: "https://verifier.example",
+      purpose: "selective-disclosure",
+      credentialRows: [
+        {
+          credential_type: "AgentDidOwnershipCredential",
+          disclosure_scope: "ownership",
+          issuer_id: "https://agent-registry.local/issuers/default",
+          subject_did: did,
+          claims: {
+            walletAddress: "mn_addr_preprod1abc",
+            agentKey: "agentkey123",
+            contractAddress: "contract123",
+          },
+          status: "active",
+        },
+        {
+          credential_type: "AgentProfileNameCredential",
+          disclosure_scope: "name",
+          issuer_id: "https://agent-registry.local/issuers/default",
+          subject_did: did,
+          claims: {
+            name: "Agent Smith",
+          },
+          status: "active",
+        },
+      ],
+    });
+
+    expect(proofMaterial.proofType).toBe("midnight-credential-commitment");
+    expect(proofMaterial.challenge).toBe("challenge-123");
+    expect(proofMaterial.disclosedScopes).toEqual(["ownership", "name"]);
+    expect(proofMaterial.credentialCount).toBe(2);
+    expect(proofMaterial.bundleCommitment).toHaveLength(64);
+    expect(proofMaterial.holderBindingCommitment).toHaveLength(64);
+    expect(proofMaterial.credentialCommitments[0].claimKeys).toContain("walletAddress");
+    expect(proofMaterial.nativeOwnership?.scheme).toBe("midnight-native-ownership-v1");
   });
 });

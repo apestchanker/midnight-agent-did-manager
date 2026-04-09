@@ -1,0 +1,77 @@
+pragma language_version >= 0.20;
+
+import CompactStandardLibrary;
+
+// Native ownership proof artifact for holder-side VC disclosure.
+// This artifact is intentionally separate from the DID registry contract.
+
+export ledger proof_domain: Bytes<32>;
+
+circuit ownershipCommitment(
+  wallet_hash: Bytes<32>,
+  agent_key: Bytes<32>,
+  contract_hash: Bytes<32>,
+  did_hash: Bytes<32>
+): Bytes<32> {
+  return persistentHash<Vector<5, Bytes<32>>>(
+    [
+      pad(32, "midnight:ownership:v1"),
+      wallet_hash,
+      agent_key,
+      contract_hash,
+      did_hash
+    ]
+  );
+}
+
+circuit holderBindingCommitment(
+  did_hash: Bytes<32>,
+  challenge_hash: Bytes<32>,
+  bundle_commitment: Bytes<32>
+): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>(
+    [
+      pad(32, "midnight:holder-binding:v1"),
+      did_hash,
+      challenge_hash,
+      bundle_commitment
+    ]
+  );
+}
+
+constructor() {
+  proof_domain = pad(32, "midnight:ownership:v1");
+}
+
+export circuit prove_ownership(
+  wallet_hash: Bytes<32>,
+  agent_key: Bytes<32>,
+  contract_hash: Bytes<32>,
+  did_hash_public: Bytes<32>,
+  challenge_hash_public: Bytes<32>,
+  bundle_commitment_public: Bytes<32>,
+  holder_binding_commitment_public: Bytes<32>
+): [] {
+  assert(proof_domain == pad(32, "midnight:ownership:v1"), "Invalid proof domain");
+
+  const did_hash = disclose(did_hash_public);
+  const challenge_hash = disclose(challenge_hash_public);
+  const bundle_commitment = disclose(bundle_commitment_public);
+  const holder_binding_commitment = disclose(holder_binding_commitment_public);
+
+  const computed_ownership = ownershipCommitment(
+    wallet_hash,
+    agent_key,
+    contract_hash,
+    did_hash
+  );
+
+  const computed_binding = holderBindingCommitment(
+    did_hash,
+    challenge_hash,
+    computed_ownership
+  );
+
+  assert(computed_ownership == bundle_commitment, "Ownership commitment mismatch");
+  assert(computed_binding == holder_binding_commitment, "Holder binding mismatch");
+}

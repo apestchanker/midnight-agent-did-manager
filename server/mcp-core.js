@@ -125,6 +125,66 @@ function buildToolDefinitions(auth) {
       },
     },
     {
+      name: "proof_request_create",
+      title: "Create Proof Request",
+      description:
+        "Create a wallet-holder proof request for an issued DID owned by the authenticated customer.",
+      requiredScope: "did.credentials",
+      inputSchema: {
+        type: "object",
+        properties: {
+          did: { type: "string" },
+          requesterWalletAddress: { type: "string" },
+          scopes: {
+            type: "array",
+            items: { type: "string" },
+          },
+          verifier: { type: "string" },
+          purpose: { type: "string" },
+        },
+        required: ["did", "requesterWalletAddress"],
+        additionalProperties: false,
+      },
+      annotations: {
+        readOnlyHint: false,
+      },
+    },
+    {
+      name: "proof_request_list",
+      title: "List Proof Requests",
+      description:
+        "List proof requests belonging to the authenticated customer, optionally filtered by status.",
+      requiredScope: "did.credentials",
+      inputSchema: {
+        type: "object",
+        properties: {
+          status: { type: "string" },
+        },
+        additionalProperties: false,
+      },
+      annotations: {
+        readOnlyHint: true,
+      },
+    },
+    {
+      name: "proof_request_get",
+      title: "Get Proof Request",
+      description:
+        "Get a single proof request by ID, restricted to the authenticated customer.",
+      requiredScope: "did.credentials",
+      inputSchema: {
+        type: "object",
+        properties: {
+          proofRequestId: { type: "string" },
+        },
+        required: ["proofRequestId"],
+        additionalProperties: false,
+      },
+      annotations: {
+        readOnlyHint: true,
+      },
+    },
+    {
       name: "did_resolve",
       title: "Resolve DID",
       description: "Resolve a DID into its DID document and registry metadata.",
@@ -196,6 +256,75 @@ function buildToolDefinitions(auth) {
       },
     },
     {
+      name: "credential_midnight_proof_get",
+      title: "Get Midnight Proof Material",
+      description:
+        "Build the commitment package and holder-binding challenge material for a holder-generated Midnight proof.",
+      requiredScope: "did.credentials",
+      inputSchema: {
+        type: "object",
+        properties: {
+          did: { type: "string" },
+          scopes: {
+            type: "array",
+            items: { type: "string" },
+          },
+          challenge: { type: "string" },
+          verifier: { type: "string" },
+          purpose: { type: "string" },
+        },
+        required: ["did"],
+        additionalProperties: false,
+      },
+      annotations: {
+        readOnlyHint: true,
+      },
+    },
+    {
+      name: "credential_midnight_proof_request_create",
+      title: "Create Midnight Proof Request",
+      description:
+        "Create a proof-request object that the holder can use to generate a Midnight selective-disclosure proof locally.",
+      requiredScope: "did.credentials",
+      inputSchema: {
+        type: "object",
+        properties: {
+          did: { type: "string" },
+          scopes: {
+            type: "array",
+            items: { type: "string" },
+          },
+          challenge: { type: "string" },
+          verifier: { type: "string" },
+          purpose: { type: "string" },
+        },
+        required: ["did"],
+        additionalProperties: false,
+      },
+      annotations: {
+        readOnlyHint: true,
+      },
+    },
+    {
+      name: "credential_midnight_proof_verify",
+      title: "Verify Midnight Proof Submission",
+      description:
+        "Verify a submitted Midnight proof envelope against the proof request boundary, DID active status, and issuer credential signatures.",
+      requiredScope: "did.credentials",
+      inputSchema: {
+        type: "object",
+        properties: {
+          proofRequest: { type: "object" },
+          submission: { type: "object" },
+        },
+        required: ["proofRequest", "submission"],
+        additionalProperties: false,
+      },
+      annotations: {
+        readOnlyHint: false,
+      },
+    },
+    {
       name: "credential_list",
       title: "List Credentials",
       description: "List verifiable credentials recorded for an issued DID.",
@@ -210,6 +339,24 @@ function buildToolDefinitions(auth) {
       },
       annotations: {
         readOnlyHint: true,
+      },
+    },
+    {
+      name: "credential_rotate",
+      title: "Rotate JWT Credentials",
+      description:
+        "Revoke the currently active JWT verifiable credentials for a DID and reissue fresh JWT credentials from the current DID record.",
+      requiredScope: "did.credentials",
+      inputSchema: {
+        type: "object",
+        properties: {
+          did: { type: "string" },
+        },
+        required: ["did"],
+        additionalProperties: false,
+      },
+      annotations: {
+        readOnlyHint: false,
       },
     },
   ].filter((tool) => auth == null || hasScope(tool.requiredScope));
@@ -245,6 +392,12 @@ function buildResourceDefinitions(auth) {
       uri: "didmn://guide/workflows",
       name: "Workflows",
       description: "Common agent workflows for DID request and DID lookup.",
+      mimeType: "application/json",
+    },
+    {
+      uri: "didmn://guide/midnight-proofs",
+      name: "Midnight Proofs",
+      description: "How this server prepares holder-side Midnight proof inputs.",
       mimeType: "application/json",
     },
   ];
@@ -375,6 +528,9 @@ function getPublicGuideResource(uri, auth) {
         "Use did_request_create to submit a DID request",
         "Use did_request_list or did_request_get to track approval status",
         "Use did_resolve and did_validate after issuance",
+        "Use proof_request_create to ask the DID holder for a wallet-approved proof request",
+        "Use credential_midnight_proof_get when you need holder-side Midnight proof inputs for selective disclosure",
+        "Use credential_midnight_proof_request_create and credential_midnight_proof_verify for the full proof-request / proof-submission loop",
       ],
     };
   }
@@ -474,13 +630,45 @@ function getPublicGuideResource(uri, auth) {
       ],
       credentialWorkflow: [
         "Only available if the MCP key includes did.credentials.",
+        "Call proof_request_create to send a proof request into the human holder approval queue.",
+        "Poll proof_request_get or proof_request_list until the proof request reaches proof_ready.",
         "Call credential_list to inspect issued credentials for a DID.",
+        "Call credential_rotate to revoke and reissue fresh JWT credentials for a DID when offline-verifiable JWTs need to be refreshed.",
         "Call credential_bundle_get to request a scoped presentation bundle.",
+        "Call credential_midnight_proof_get to receive commitment-based inputs for holder-generated Midnight proving.",
+        "Call credential_midnight_proof_request_create to package those inputs as a proof request object.",
+        "Submit the holder-generated proof envelope to credential_midnight_proof_verify.",
       ],
       prerequisites: [
         "The MCP key must be active and unexpired.",
         "The authenticated customer must have an active subscription with remaining DID quota.",
         "If no active subscription exists, did_request_create will fail with a quota/subscription error until a human or admin grants quota.",
+      ],
+    };
+  }
+
+  if (uri === "didmn://guide/midnight-proofs") {
+    return {
+      currentState:
+        "The server currently issues issuer-signed JWT credentials and can assemble W3C-shaped presentations from selected credentials.",
+      productionDirection:
+        "For stronger Midnight usage, the holder should generate the final selective-disclosure proof locally against commitment material rather than rely on the server to assemble the final proof.",
+      proofMaterialTool: "credential_midnight_proof_get",
+      proofMaterialFields: [
+        "challenge",
+        "bundleCommitment",
+        "holderBindingCommitment",
+        "credentialCommitments",
+      ],
+      requestFlow: [
+        "Use credential_midnight_proof_request_create to obtain a proof request object.",
+        "Generate the actual holder proof locally in the wallet or local proof server.",
+        "Use credential_midnight_proof_verify to validate the proof submission boundary and DID/credential prerequisites.",
+      ],
+      recommendedVerification: [
+        "Resolve the DID and confirm it is active on Midnight.",
+        "Verify issuer signatures on the underlying VC JWTs.",
+        "Verify the holder-generated Midnight proof against the returned commitments and challenge.",
       ],
     };
   }
@@ -724,6 +912,7 @@ export function createMcpServer(deps) {
                 `5. Use did_request_get or did_request_list to follow the request until issued.\n` +
                 `6. If did_request_create fails due to quota, the authenticated customer needs an active subscription with remaining DID quota.\n` +
                 `7. After issuance, use did_resolve and did_validate.\n` +
+                `8. If your key includes did.credentials, read didmn://guide/midnight-proofs and call credential_midnight_proof_get for holder-side Midnight proof inputs.\n` +
                 `${agentWalletAddress}`,
             },
           },
@@ -746,6 +935,7 @@ export function createMcpServer(deps) {
                 `The server will generate the unique agentId automatically if you do not supply one.\n` +
                 `Read didmn://guide/request-payload for the exact payload shape and example.\n` +
                 `Then call did_request_create. Poll did_request_get or did_request_list for approval and issuance progress.\n` +
+                `After issuance, use credential_midnight_proof_get if you need commitment-based inputs for holder-side Midnight selective disclosure.\n` +
                 `If the request is rejected because quota is missing, a human/admin must assign an active subscription with remaining DID quota to the customer associated with the MCP key.`,
             },
           },
@@ -793,6 +983,36 @@ export function createMcpServer(deps) {
       return textResult(`Fetched DID request ${request.id}.`, request);
     }
 
+    if (name === "proof_request_create") {
+      const proofRequest = await deps.createProofRequestForAgent({
+        ...args,
+        mcpKey: authInfo.key,
+      });
+      return textResult(
+        `Created proof request ${proofRequest.id} with status ${proofRequest.request_status}.`,
+        proofRequest,
+      );
+    }
+
+    if (name === "proof_request_list") {
+      const proofRequests = await deps.listProofRequests({
+        customerId: auth.customer_id,
+        status: args?.status,
+      });
+      return textResult(
+        `Found ${proofRequests.length} proof request(s) for the authenticated customer.`,
+        { proofRequests },
+      );
+    }
+
+    if (name === "proof_request_get") {
+      const proofRequest = await deps.getProofRequestById(args?.proofRequestId);
+      if (!proofRequest || proofRequest.customer_id !== auth.customer_id) {
+        throw createJsonRpcError(-32004, "Proof request not found");
+      }
+      return textResult(`Fetched proof request ${proofRequest.id}.`, proofRequest);
+    }
+
     if (name === "did_resolve") {
       const resolved = await deps.resolveDid(args?.did);
       if (!resolved) {
@@ -824,12 +1044,52 @@ export function createMcpServer(deps) {
       return textResult(`Built credential bundle for ${args.did}.`, bundle);
     }
 
+    if (name === "credential_midnight_proof_get") {
+      const proofMaterial = await deps.getMidnightProofMaterial({
+        did: args?.did,
+        scopes: args?.scopes,
+        challenge: args?.challenge,
+        verifier: args?.verifier,
+        purpose: args?.purpose,
+      });
+      return textResult(`Built Midnight proof material for ${args.did}.`, proofMaterial);
+    }
+
+    if (name === "credential_midnight_proof_request_create") {
+      const proofRequest = await deps.createMidnightProofRequest({
+        did: args?.did,
+        scopes: args?.scopes,
+        challenge: args?.challenge,
+        verifier: args?.verifier,
+        purpose: args?.purpose,
+      });
+      return textResult(`Created Midnight proof request for ${args.did}.`, proofRequest);
+    }
+
+    if (name === "credential_midnight_proof_verify") {
+      const verification = await deps.verifyMidnightProofSubmission({
+        proofRequest: args?.proofRequest,
+        submission: args?.submission,
+      });
+      return textResult(
+        `Verified Midnight proof submission for ${verification.did} with status ${verification.status}.`,
+        verification,
+      );
+    }
+
     if (name === "credential_list") {
       const credentials = await deps.listCredentialsForDid(args?.did);
       return textResult(
         `Found ${credentials.length} credential(s) for ${args.did}.`,
         { credentials },
       );
+    }
+
+    if (name === "credential_rotate") {
+      const rotated = await deps.rotateCredentialsForDid({
+        did: args?.did,
+      });
+      return textResult(`Rotated JWT credentials for ${args.did}.`, rotated);
     }
 
     throw createJsonRpcError(-32601, `Unknown tool: ${name}`);

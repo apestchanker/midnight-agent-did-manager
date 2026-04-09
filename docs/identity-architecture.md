@@ -31,7 +31,8 @@ The MCP/API service handles:
 - human approval workflow
 - admin issuance workflow
 - DID resolution and validation convenience endpoints
-- future VC issuance and partial disclosure
+- VC issuance and current partial disclosure bundles
+- commitment package generation for future holder-side Midnight proofs
 
 ### Roles
 
@@ -61,6 +62,13 @@ Use VCs and Verifiable Presentations for:
 - proof of DID ownership
 - proof of issuer approval
 - role or entitlement proofs
+
+The current repo issues JWT VCs, but the Midnight-centered target is:
+
+- derive commitment packages from disclosed credentials
+- bind the proof request to a verifier challenge and the holder DID
+- generate the final selective-disclosure proof in the holder wallet or local proof server
+- verify DID status on Midnight plus issuer signatures and the holder proof
 
 ## Data Handling
 

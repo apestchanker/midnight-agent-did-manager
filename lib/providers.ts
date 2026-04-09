@@ -1,4 +1,5 @@
-import { Transaction } from "@midnight-ntwrk/ledger-v8";
+import { Transaction, type ProvingProvider } from "@midnight-ntwrk/ledger-v8";
+import { httpClientProvingProvider } from "@midnight-ntwrk/midnight-js-http-client-proof-provider";
 import { indexerPublicDataProvider } from "@midnight-ntwrk/midnight-js-indexer-public-data-provider";
 import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 import {
@@ -24,6 +25,10 @@ import { createPatchedSdkPrivateStateProvider } from "./patched-private-state-pr
 const MANAGED_CONTRACT_PATH =
   (import.meta.env.VITE_MANAGED_CONTRACT_PATH || "").trim() ||
   "/contracts/managed/did-registry";
+const NATIVE_OWNERSHIP_MANAGED_CONTRACT_PATH =
+  (import.meta.env.VITE_NATIVE_OWNERSHIP_MANAGED_CONTRACT_PATH || "").trim() ||
+  "/contracts/managed/native-ownership-proof";
+const CONFIGURED_PROVER_SERVER_URL = (import.meta.env.VITE_PROVER_SERVER_URI || "").trim();
 
 const PRIVATE_STATE_PASSWORD_ENV = (import.meta.env.VITE_PRIVATE_STATE_PASSWORD || "").trim();
 const APP_LOCAL_STORAGE_PREFIX = "didmn:private-state:app-local:v1";
@@ -191,20 +196,31 @@ function getTemporaryPrivateStatePassword(accountId: string): string {
 
 export interface AppProviders extends MidnightProviders<string> {
   connectedAPI: ConnectedAPI;
+  circuitProvingProvider: ProvingProvider;
   networkId: string;
   indexerUrl: string;
   indexerWsUrl: string;
   nodeUrl: string;
   proverServerUrl?: string;
+  configuredProverServerUrl?: string;
+  proofProviderSource: "configured_env" | "wallet";
+  proofWarningRequired: boolean;
   shieldedAddress: string;
   unshieldedAddress: string;
   zkArtifactsBaseUrl: string;
+}
+
+interface ProofProviderStatus {
+  source: "configured_env" | "wallet";
+  proverServerUrl?: string;
+  warningRequired: boolean;
 }
 
 interface BuildProvidersOptions {
   reconnect?: () => Promise<ConnectedAPI>;
   onReconnect?: (api: ConnectedAPI) => void;
   storageMode?: StorageMode;
+  onProofProviderStatusChange?: (status: ProofProviderStatus) => void;
 }
 
 async function ensureWalletSession(api: ConnectedAPI): Promise<void> {
@@ -223,12 +239,22 @@ function isWalletDisconnectedError(error: unknown): boolean {
   );
 }
 
-function getManagedContractUrl(): string {
+function getManagedContractUrl(path: string): string {
   if (typeof window === "undefined") {
-    return MANAGED_CONTRACT_PATH;
+    return path;
   }
 
-  return new URL(MANAGED_CONTRACT_PATH, window.location.origin).toString();
+  return new URL(path, window.location.origin).toString();
+}
+
+function isLocalProverServerUrl(url?: string): boolean {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
+  } catch {
+    return false;
+  }
 }
 
 function normalizeCircuitId(circuitId: string): string {
@@ -294,6 +320,32 @@ class NormalizedFetchZkConfigProvider extends ZKConfigProvider<string> {
   }
 }
 
+class CompositeFetchZkConfigProvider extends ZKConfigProvider<string> {
+  constructor(private readonly providers: Array<{ match: (circuitId: string) => boolean; provider: NormalizedFetchZkConfigProvider }>) {
+    super();
+  }
+
+  private getProvider(circuitId: string): NormalizedFetchZkConfigProvider {
+    const match = this.providers.find((entry) => entry.match(circuitId));
+    if (!match) {
+      throw new Error(`No ZK artifact provider registered for ${circuitId}`);
+    }
+    return match.provider;
+  }
+
+  async getZKIR(circuitId: string) {
+    return this.getProvider(circuitId).getZKIR(circuitId);
+  }
+
+  async getProverKey(circuitId: string) {
+    return this.getProvider(circuitId).getProverKey(circuitId);
+  }
+
+  async getVerifierKey(circuitId: string) {
+    return this.getProvider(circuitId).getVerifierKey(circuitId);
+  }
+}
+
 export async function buildProviders(
   api: ConnectedAPI,
   options: BuildProvidersOptions = {},
@@ -304,9 +356,21 @@ export async function buildProviders(
   const unshielded = await api.getUnshieldedAddress();
 
   const accountId = `${config.networkId}:${unshielded.unshieldedAddress}`;
-  const managedContractUrl = getManagedContractUrl();
+  const managedContractUrl = getManagedContractUrl(MANAGED_CONTRACT_PATH);
+  const nativeOwnershipManagedContractUrl = getManagedContractUrl(
+    NATIVE_OWNERSHIP_MANAGED_CONTRACT_PATH,
+  );
 
-  const zkConfigProvider = new NormalizedFetchZkConfigProvider(managedContractUrl);
+  const zkConfigProvider = new CompositeFetchZkConfigProvider([
+    {
+      match: (circuitId) => normalizeCircuitId(circuitId) === "prove_ownership",
+      provider: new NormalizedFetchZkConfigProvider(nativeOwnershipManagedContractUrl),
+    },
+    {
+      match: () => true,
+      provider: new NormalizedFetchZkConfigProvider(managedContractUrl),
+    },
+  ]);
 
   const keyMaterialProvider: KeyMaterialProvider = {
     getZKIR: async (circuitId) => zkConfigProvider.getZKIR(circuitId),
@@ -350,14 +414,49 @@ export async function buildProviders(
         );
     },
   }) as ConnectedAPI;
+  let appProviders: AppProviders | null = null;
+
+  const emitProofProviderStatus = (source: "configured_env" | "wallet", proverServerUrl?: string) => {
+    if (appProviders) {
+      appProviders.proofProviderSource = source;
+      appProviders.proverServerUrl =
+        source === "wallet" ? proverServerUrl : config.proverServerUri;
+      appProviders.proofWarningRequired =
+        source === "wallet" && !isLocalProverServerUrl(proverServerUrl);
+    }
+    options.onProofProviderStatusChange?.({
+      source,
+      proverServerUrl,
+      warningRequired: source === "wallet" && !isLocalProverServerUrl(proverServerUrl),
+    });
+  };
+
+  const walletProvingProviderFactory = async () =>
+    currentApi.getProvingProvider(keyMaterialProvider);
+  const configuredProofProvider = CONFIGURED_PROVER_SERVER_URL
+    ? httpClientProvingProvider(CONFIGURED_PROVER_SERVER_URL, zkConfigProvider)
+    : null;
+
+  emitProofProviderStatus(
+    configuredProofProvider ? "configured_env" : "wallet",
+    configuredProofProvider ? CONFIGURED_PROVER_SERVER_URL : config.proverServerUri,
+  );
 
   const provingProvider = {
     check: async (
       serializedPreimage: Uint8Array,
       keyLocation: string,
     ): Promise<(bigint | undefined)[]> => {
-      return withWalletRetry(async (connectedApi) => {
-        const freshProvider = await connectedApi.getProvingProvider(keyMaterialProvider);
+      if (configuredProofProvider) {
+        try {
+          return await configuredProofProvider.check(serializedPreimage, keyLocation);
+        } catch (error) {
+          console.warn("[providers] configured proof server check failed, falling back to wallet prover", error);
+        }
+      }
+      emitProofProviderStatus("wallet", config.proverServerUri);
+      return withWalletRetry(async () => {
+        const freshProvider = await walletProvingProviderFactory();
         return freshProvider.check(serializedPreimage, keyLocation);
       });
     },
@@ -366,8 +465,20 @@ export async function buildProviders(
       keyLocation: string,
       overwriteBindingInput?: bigint,
     ): Promise<Uint8Array> => {
-      return withWalletRetry(async (connectedApi) => {
-        const freshProvider = await connectedApi.getProvingProvider(keyMaterialProvider);
+      if (configuredProofProvider) {
+        try {
+          return await configuredProofProvider.prove(
+            serializedPreimage,
+            keyLocation,
+            overwriteBindingInput,
+          );
+        } catch (error) {
+          console.warn("[providers] configured proof server prove failed, falling back to wallet prover", error);
+        }
+      }
+      emitProofProviderStatus("wallet", config.proverServerUri);
+      return withWalletRetry(async () => {
+        const freshProvider = await walletProvingProviderFactory();
         return freshProvider.prove(
           serializedPreimage,
           keyLocation,
@@ -416,7 +527,7 @@ export async function buildProviders(
         })
       : createAppLocalPrivateStateProvider(accountId);
 
-  return {
+  appProviders = {
     privateStateProvider,
     publicDataProvider: indexerPublicDataProvider(
       config.indexerUri,
@@ -425,6 +536,7 @@ export async function buildProviders(
     ),
     zkConfigProvider,
     proofProvider: createProofProvider(provingProvider as never),
+    circuitProvingProvider: provingProvider as ProvingProvider,
     walletProvider,
     midnightProvider,
     connectedAPI: connectedApiProxy,
@@ -433,8 +545,15 @@ export async function buildProviders(
     indexerWsUrl: config.indexerWsUri,
     nodeUrl: config.substrateNodeUri,
     proverServerUrl: config.proverServerUri,
+    configuredProverServerUrl: CONFIGURED_PROVER_SERVER_URL || undefined,
+    proofProviderSource: (configuredProofProvider ? "configured_env" : "wallet") as
+      | "configured_env"
+      | "wallet",
+    proofWarningRequired:
+      !configuredProofProvider && !isLocalProverServerUrl(config.proverServerUri),
     shieldedAddress: shielded.shieldedAddress,
     unshieldedAddress: unshielded.unshieldedAddress,
     zkArtifactsBaseUrl: managedContractUrl,
   };
+  return appProviders;
 }

@@ -23,10 +23,10 @@ type WalletOption = {
   apiVersion: string;
 };
 
-type PendingRemoteProverApproval = {
-  api: ConnectedAPI;
-  config: Awaited<ReturnType<ConnectedAPI["getConfiguration"]>>;
-  walletName: string;
+type ProofServiceState = {
+  source: "configured_env" | "wallet";
+  proverServerUrl?: string;
+  warningRequired: boolean;
 };
 
 function toWalletOption(wallet: InitialAPI): WalletOption {
@@ -34,16 +34,6 @@ function toWalletOption(wallet: InitialAPI): WalletOption {
     name: wallet.name,
     apiVersion: wallet.apiVersion,
   };
-}
-
-function isLocalProverServerUrl(url?: string): boolean {
-  if (!url) return false;
-  try {
-    const parsed = new URL(url);
-    return parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
-  } catch {
-    return false;
-  }
 }
 
 export function useWallet(storageMode: StorageMode = "app_local") {
@@ -56,9 +46,7 @@ export function useWallet(storageMode: StorageMode = "app_local") {
   const [availableWallets, setAvailableWallets] = useState<WalletOption[]>([]);
   const [selectedWalletName, setSelectedWalletName] = useState("1AM");
   const [connectedWalletName, setConnectedWalletName] = useState("");
-  const [pendingRemoteProverApproval, setPendingRemoteProverApproval] =
-    useState<PendingRemoteProverApproval | null>(null);
-
+  const [proofService, setProofService] = useState<ProofServiceState | null>(null);
   const persistSelectedWallet = useCallback(
     (walletName: string) => {
       if (typeof window === "undefined") return;
@@ -128,12 +116,12 @@ export function useWallet(storageMode: StorageMode = "app_local") {
         setApi(reconnectedApi);
       },
       storageMode,
+      onProofProviderStatusChange: setProofService,
     });
     setApi(connectedApi);
     setProviders(provs);
     setAddress(provs.unshieldedAddress);
     setConnectedWalletName(walletName);
-    setPendingRemoteProverApproval(null);
     setStatus("connected");
     persistSelectedWallet(walletName);
   };
@@ -164,21 +152,11 @@ export function useWallet(storageMode: StorageMode = "app_local") {
   const connect = async () => {
     setStatus("connecting");
     setError("");
-    setPendingRemoteProverApproval(null);
     try {
       const {
         api: connectedApi,
-        config,
         walletName,
       } = await connectWallet(selectedWalletName);
-
-      if (!isLocalProverServerUrl(config.proverServerUri)) {
-        setPendingRemoteProverApproval({
-          api: connectedApi,
-          config,
-          walletName,
-        });
-      }
 
       await finalizeConnection(connectedApi, walletName);
     } catch (e) {
@@ -201,16 +179,13 @@ export function useWallet(storageMode: StorageMode = "app_local") {
   };
 
   const declineRemoteProver = () => {
-    if (!pendingRemoteProverApproval) return;
     setApi(null);
     setProviders(null);
     setAddress("");
     setConnectedWalletName("");
-    setPendingRemoteProverApproval(null);
+    setProofService(null);
     clearPersistedSelection();
-    setError(
-      `Connection cancelled. ${pendingRemoteProverApproval.config.proverServerUri} is a remote proving service.`,
-    );
+    setError("Connection cancelled.");
     setStatus("disconnected");
   };
 
@@ -218,6 +193,7 @@ export function useWallet(storageMode: StorageMode = "app_local") {
     status,
     api,
     providers,
+    proofService,
     address,
     error,
     connect,
@@ -225,7 +201,6 @@ export function useWallet(storageMode: StorageMode = "app_local") {
     selectedWalletName,
     setSelectedWalletName,
     connectedWalletName,
-    pendingRemoteProverApproval,
     approveRemoteProver,
     declineRemoteProver,
   };
