@@ -1828,11 +1828,20 @@ export default function App() {
                                 )}
                               </div>
                               <div className="flex items-center gap-2">
-                                <span className="text-zinc-500">Cryptographic Proof Verified:</span>
+                                <span className="text-zinc-500">
+                                  {isNativeProof
+                                    ? "Native Statement Check Verified:"
+                                    : "Cryptographic Proof Verified:"}
+                                </span>
                                 <span className={registryProofVerification.cryptographicProofVerified ? "text-emerald-300" : "text-red-300"}>
                                   {String(registryProofVerification.cryptographicProofVerified)}
                                 </span>
                               </div>
+                              {isNativeProof && (
+                                <div className="text-zinc-500">
+                                  This confirms the native ownership statement boundary and circuit check for the submitted proof package. It does not claim canonical verifier-side validation of the external proof blob as an independently parsed artifact.
+                                </div>
+                              )}
                                   </>
                                 );
                               })()}

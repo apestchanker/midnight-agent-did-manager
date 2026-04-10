@@ -362,12 +362,38 @@ The repository also includes a separate Compact proof artifact for native owners
 
 This artifact is intended to support native Midnight proving over ownership disclosure statements, separate from the DID registry state-transition contract.
 
+In the current repository state, the native ownership path is live for:
+
+- holder-side native ownership proof generation
+- persisted proof submission packages
+- verifier-side DID status checks
+- issuer JWT verification
+- statement-boundary reconstruction
+- reconstructed public-input matching
+- circuit check through the configured proof server
+
+It does not yet claim canonical standalone verification of an externally supplied `proofValue` blob independent of that boundary reconstruction path.
+
 ### Proof Mode Comparison
 
 | Mode | Status Example | What It Proves | Limitation |
 | --- | --- | --- | --- |
 | `preview` | `preview_envelope_verified` | Request integrity, holder approval integrity, issuer JWT integrity, proof package consistency | Not a final native Midnight ZK proof |
-| `native` | target: native cryptographic verification success | Real Midnight proof over the native ownership circuit inputs | Requires native prove + native verify path to succeed end to end |
+| `native` | `native_proof_verified` | Native ownership statement boundary verified, public inputs reconstructed and matched, DID/issuer checks passed, native circuit check path succeeded | Does not yet claim canonical verifier-side validation of an arbitrary external proof blob as a standalone artifact |
+
+### Current Native Verification Semantics
+
+When `native_proof_verified` is returned, the repository has verified that:
+
+1. the DID is active
+2. the issuer-signed ownership credential is valid
+3. the proof request and submission match the expected native ownership statement
+4. the reconstructed native public inputs match the submitted package
+5. the configured proof-server check path succeeds for that circuit boundary
+
+This is a real cryptographic and circuit-bound validation of the statement.
+
+It is stronger than preview-envelope validation, but it is still narrower than a future canonical external-proof-blob verifier.
 
 ### Intended Native Target
 
@@ -375,9 +401,9 @@ The long-term target is:
 
 1. holder wallet or trusted local proof server generates a real Midnight proof
 2. the proof is submitted as part of the verification package
-3. the verifier checks that proof cryptographically
+3. the verifier checks that exact external proof artifact cryptographically through a canonical standalone proof verifier
 
-When that path is fully active, proof verification should report cryptographic proof success instead of preview-only validation.
+When that path is fully active, native verification will be able to claim both statement/circuit correctness and canonical external proof-blob validation.
 
 ## MCP and API Relationship
 
@@ -402,7 +428,7 @@ This repository currently provides:
 - issuer-signed JWT VCs
 - proof-request workflows
 - preview verification packages
-- partial native Midnight proof plumbing
+- a working native ownership proof path with statement-boundary and circuit-check validation
 
 It does not yet represent a hardened production identity system.
 
@@ -411,6 +437,7 @@ Production deployments should additionally define:
 - hardened key custody
 - holder-side trusted proving strategy
 - native proof verification policy
+- canonical external proof-artifact verification policy
 - secure secret management
 - operational audit and retention controls
 

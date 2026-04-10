@@ -315,7 +315,7 @@ describe("midnight-proof-service", () => {
           issuer: "issuer-1",
         })),
         isNativeOwnershipVerificationAvailable: vi.fn(() => true),
-        proveNativeOwnership: vi.fn(async () => new Uint8Array([0x01, 0x02])),
+        checkNativeOwnership: vi.fn(async () => [1n, 2n]),
       },
     );
 

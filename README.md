@@ -27,6 +27,7 @@ The project supports:
 - user, admin, and public registry views in the UI
 - W3C-aligned DID resolution and JWT Verifiable Credentials
 - commitment-based Midnight proof material for holder-side selective disclosure
+- native Midnight ownership proof generation through the wallet or configured proof server
 
 ## Research Status and Disclaimer
 
@@ -95,9 +96,21 @@ Agent DID request and issued DID view:
 
 ![Agent DID screen](./docs/images/agent-did-screen.png)
 
-Verifiable Credentials and disclosure bundle view:
+Registry proof verification view:
 
-![Verifiable Credentials screen](./docs/images/credentials-screen.png)
+![Registry proof screen](./docs/images/registry-proof-screen.png)
+
+Human approvals and proof history view:
+
+![Approvals screen](./docs/images/approvals-screen.png)
+
+Admin live backend and MCP logs view:
+
+![Admin logs screen](./docs/images/admin-logs-screen.png)
+
+Admin proof review and verification package management view:
+
+![Admin review screen](./docs/images/admin-review-screen.png)
 
 ## Further Reading
 
@@ -165,6 +178,12 @@ That material is the intended proving boundary for a production Midnight holder-
 - holder generates the selective-disclosure proof locally in the wallet or local proof server
 - verifier checks DID status on Midnight plus issuer signatures and the holder proof
 - the registry service orchestrates the flow but is not the final proving authority
+
+Current native-proof note:
+
+- the app can now generate a native Midnight ownership proof package
+- the registry verifier currently validates the native statement boundary, reconstructed public inputs, issuer credentials, DID status, and circuit check path
+- it does not yet claim canonical verifier-side validation of an arbitrary external `proofValue` blob as a standalone parsed artifact
 
 ## Patched SDK Tarball
 

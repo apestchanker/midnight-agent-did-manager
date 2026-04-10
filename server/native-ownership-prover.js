@@ -92,3 +92,31 @@ export async function proveNativeOwnership(
     ? lastError
     : new Error("Native proof verification failed.");
 }
+
+export async function checkNativeOwnership(
+  serializedPreimage,
+  keyLocation,
+  options = {},
+) {
+  const candidateUrls = [
+    PROVER_SERVER_URL,
+    options.fallbackProverUrl || "",
+  ].filter(Boolean);
+
+  if (candidateUrls.length === 0) {
+    throw new Error("Native proof verification is not configured on the server.");
+  }
+
+  let lastError;
+  for (const url of candidateUrls) {
+    try {
+      const provingProvider = await getProvingProvider(url);
+      return await provingProvider.check(serializedPreimage, keyLocation);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Native proof verification failed.");
+}

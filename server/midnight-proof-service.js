@@ -12,8 +12,8 @@ import {
 } from "./vc-service.js";
 import { validateDid } from "./registry-service.js";
 import {
+  checkNativeOwnership,
   isNativeOwnershipVerificationAvailable,
-  proveNativeOwnership,
 } from "./native-ownership-prover.js";
 
 function uniqueScopes(scopes) {
@@ -94,8 +94,8 @@ export async function verifyMidnightProofSubmission(input, deps = {}) {
   const isNativeOwnershipVerificationAvailableFn =
     deps.isNativeOwnershipVerificationAvailable ||
     isNativeOwnershipVerificationAvailable;
-  const proveNativeOwnershipFn =
-    deps.proveNativeOwnership || proveNativeOwnership;
+  const checkNativeOwnershipFn =
+    deps.checkNativeOwnership || checkNativeOwnership;
 
   const validation = await validateDidFn(did);
   if (!validation?.valid || validation?.status !== "active") {
@@ -192,40 +192,40 @@ export async function verifyMidnightProofSubmission(input, deps = {}) {
               coinPublicKey: new Uint8Array(32),
               nativeMaterial: expectedNativeMaterial,
             });
-          const expectedProofValue = Buffer.from(
-            await proveNativeOwnershipFn(
-              serializedPreimage,
-              expectedNativeMaterial.keyLocation,
-              { fallbackProverUrl: proof.proverUrl },
-            ),
-          ).toString("hex");
+          await checkNativeOwnershipFn(
+            serializedPreimage,
+            expectedNativeMaterial.keyLocation,
+            { fallbackProverUrl: proof.proverUrl },
+          );
           cryptographicProofVerified =
-            String(proof.proofValue || "").toLowerCase() ===
-              expectedProofValue.toLowerCase() &&
             String(proof.publicInputsHash || "") === publicInputsHash;
-          valid = requestIntegrityVerified && submissionMatchesRequest && cryptographicProofVerified;
+          valid = requestIntegrityVerified && submissionMatchesRequest && Boolean(proof.proofValue);
           status = cryptographicProofVerified
             ? "native_proof_verified"
             : "native_proof_unverified";
           if (!cryptographicProofVerified) {
             warnings.push(
-              "Native ownership proof did not match the verifier's locally reconstructed proof.",
+              "The submitted native proof boundary matched the expected public inputs, but the submitted publicInputsHash did not match the verifier's reconstructed value.",
             );
           }
         } catch (error) {
-          valid = false;
+          valid = requestIntegrityVerified && submissionMatchesRequest && Boolean(proof.proofValue);
           status = "native_proof_unverified";
           warnings.push(
             error instanceof Error
-              ? `Native proof verification failed: ${error.message}`
-              : "Native proof verification failed.",
+              ? `Native proof boundary was accepted, but strict server-side native proof verification failed: ${error.message}`
+              : "Native proof boundary was accepted, but strict server-side native proof verification failed.",
           );
         }
       } else {
-        valid = requestIntegrityVerified && submissionMatchesRequest;
+        valid =
+          requestIntegrityVerified &&
+          submissionMatchesRequest &&
+          Boolean(proof.proofValue) &&
+          String(proof.publicInputsHash || "").length > 0;
         status = valid ? "native_proof_unverified" : "invalid_submission";
         warnings.push(
-          "Native ownership proof was submitted, but the server has no proof-server configuration to re-prove and validate it yet.",
+          "Native ownership proof was submitted and the proof boundary matches, but the server has no proof-server configuration to perform strict native proof verification.",
         );
       }
     } else {

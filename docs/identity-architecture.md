@@ -70,6 +70,12 @@ The current repo issues JWT VCs, but the Midnight-centered target is:
 - generate the final selective-disclosure proof in the holder wallet or local proof server
 - verify DID status on Midnight plus issuer signatures and the holder proof
 
+Current implementation note:
+
+- the repository now supports a live native ownership proof path
+- verifier-side validation currently confirms the ownership statement boundary, reconstructed public inputs, and proof-server circuit check
+- it does not yet claim canonical standalone verification of an arbitrary external proof blob independent of that boundary path
+
 ## Data Handling
 
 ### On-chain

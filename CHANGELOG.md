@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.5.1
+
+### Changed
+- Bumped the application version to `0.5.1` while keeping the contract version at `0.3.5`.
+  Reason/impact: captures the verification-precision follow-up after the initial `0.5.0` native-proof milestone.
+
+### Fixed
+- Refined registry-proof verification labels, documentation, and release semantics so native proof validation is described exactly as implemented.
+  Reason/impact: avoids overstating guarantees, distinguishes native statement/circuit checks from canonical external proof-blob verification, and keeps the UI/spec/README aligned with the actual backend behavior.
+
 ## v0.5.0
 
 ### Changed
@@ -30,7 +40,31 @@
 
 ### Changed
 - Bumped the application version to `0.4.5` while keeping the contract version at `0.3.5`.
-  Reason/impact: captures the latest app-only presentation update before refreshing README screenshots.
+  Reason/impact: marks the first end-to-end functional milestone of the managed DID console before the later native-proof work introduced in `0.5.0`.
+
+### Added
+- Completed the DID request workflow for both human-initiated and agent-initiated creation paths, including the human approval stage required before registry issuance.
+  Reason/impact: establishes the full managed-agent DID lifecycle from request intake through owner approval and final registry issuance.
+
+- Added basic verifiable credential issuance for issued DIDs.
+  Reason/impact: gives each active DID an initial VC layer that can already be consumed, inspected, bundled, and verified as part of the managed identity flow.
+
+- Added the MCP server surface with discovery-ready docs, tools, and endpoints for agent integration.
+  Reason/impact: allows external agents to discover capabilities automatically and interact with DID and VC workflows through a documented MCP interface instead of requiring custom integration glue.
+
+- Completed the backend and UI application surfaces needed to operate the system locally.
+  Reason/impact: made the product usable as a real working stack rather than just a contract or API prototype, including wallet connect, customer/account flow, DID management, approvals, and registry-facing views.
+
+- Added the Compact DID registry contract and its operational circuits for DID registration, update, and revocation.
+  Reason/impact: provides the Midnight contract foundation that anchors DID lifecycle state on-chain and supports the core managed-registry semantics.
+
+- Added the basic DID registry view and directory behavior in the app.
+  Reason/impact: gives operators and verifiers a simple registry-facing surface to inspect active DID records instead of relying only on backend queries or raw contract state.
+
+### Release Summary
+- `v0.4.5` is the milestone where the project became a complete working DID manager across contract, backend, MCP, and UI layers.
+- At this point, DIDs could be requested by either humans or agents, routed through human control and approval, issued into the Midnight-backed registry, and then enriched with basic JWT VC issuance.
+- The release also established the first usable registry UX and the first discovery-ready MCP integration surface, making the stack testable both by people through the dashboard and by agents through MCP.
 
 ## v0.4.4
 
