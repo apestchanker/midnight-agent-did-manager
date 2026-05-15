@@ -7,8 +7,18 @@ import { getVersionConfig } from "./scripts/version-config";
 
 const { appVersion, contractVersion } = getVersionConfig();
 
+const stripGeneratedSourcemaps = {
+  name: "strip-generated-sourcemaps",
+  enforce: "pre" as const,
+  transform(code: string, id: string) {
+    if (id.includes("/src/generated/")) {
+      return { code: code.replace(/\/\/# sourceMappingURL=\S+/g, ""), map: null };
+    }
+  },
+};
+
 export default defineConfig({
-  plugins: [react(), wasm(), nodePolyfills({ include: ["crypto", "buffer", "stream", "util"] })],
+  plugins: [stripGeneratedSourcemaps, react(), wasm(), nodePolyfills({ include: ["crypto", "buffer", "stream", "util"] })],
   define: {
     __APP_VERSION__: JSON.stringify(appVersion),
     __CONTRACT_VERSION__: JSON.stringify(contractVersion),
@@ -33,8 +43,6 @@ export default defineConfig({
       "/api": "http://localhost:8787",
       "/health": "http://localhost:8787",
     },
-    sourcemapIgnoreList: (sourcePath) =>
-      sourcePath.includes("/src/generated/") || sourcePath.includes("node_modules"),
   },
   build: {
     outDir: "dist",
