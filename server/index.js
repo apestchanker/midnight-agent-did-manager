@@ -32,7 +32,6 @@ import {
   validateDid,
 } from "./registry-service.js";
 import {
-  assembleSignedPresentation,
   assembleUnifiedVP,
   getCredentialBundle,
   getIssuerDescriptor,
@@ -40,7 +39,6 @@ import {
   listCredentialsForDid,
   rotateCredentialsForDid,
   verifyCredentialJwt,
-  verifyPresentation,
 } from "./vc-service.js";
 import {
   createMidnightProofRequest,

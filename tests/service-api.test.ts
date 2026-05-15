@@ -144,10 +144,10 @@ describe("serviceApi Task 6", () => {
     });
   });
 
-  describe("verifyMidnightProofRequest deprecation", () => {
-    it("verifyMidnightProofRequest is still exported (deprecated, not deleted)", async () => {
+  describe("verifyMidnightProofRequest removal", () => {
+    it("verifyMidnightProofRequest is removed from serviceApi", async () => {
       const serviceApi = await import("../src/utils/serviceApi.js");
-      expect(typeof (serviceApi as Record<string, unknown>).verifyMidnightProofRequest).toBe("function");
+      expect((serviceApi as Record<string, unknown>).verifyMidnightProofRequest).toBeUndefined();
     });
   });
 });

@@ -633,26 +633,6 @@ export function createMidnightProofRequest(payload: {
   });
 }
 
-/**
- * @deprecated Use verifyUnifiedVPRequest(vp) instead. This function targets the legacy
- * internal route /api/vps/midnight/verify which is no longer the primary verification
- * endpoint. Removal is a follow-up chore after all callers are migrated.
- */
-export function verifyMidnightProofRequest(payload: {
-  proofRequest: MidnightProofRequest;
-  submission: MidnightProofSubmission;
-  /** Coin public key from the holder's wallet (Bech32m or hex). Sent as top-level field for server-side ZK verification. */
-  coinPublicKey?: string;
-}): Promise<MidnightProofVerificationResult> {
-  return requestJson("/api/vps/midnight/verify", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-}
-
 export function verifyCredential(payload: {
   jwt: string;
 }) {
@@ -665,25 +645,3 @@ export function verifyCredential(payload: {
   });
 }
 
-export function verifyPresentation(payload: {
-  presentation: {
-    "@context": string[];
-    type: string[];
-    holder: string;
-    verifiableCredential: string[];
-  };
-}): Promise<{
-  valid: boolean;
-  holder: string;
-  credentialCount: number;
-  verifiedCredentials: unknown[];
-  warning?: string;
-}> {
-  return requestJson("/api/vps/verify", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-}

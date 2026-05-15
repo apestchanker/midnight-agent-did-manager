@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import wasm from "vite-plugin-wasm";
 import { nodePolyfills } from "vite-plugin-node-polyfills";
 import { fileURLToPath, URL } from "node:url";
+import { readFileSync } from "node:fs";
 import { getVersionConfig } from "./scripts/version-config";
 
 const { appVersion, contractVersion } = getVersionConfig();
@@ -10,9 +11,12 @@ const { appVersion, contractVersion } = getVersionConfig();
 const stripGeneratedSourcemaps = {
   name: "strip-generated-sourcemaps",
   enforce: "pre" as const,
-  transform(code: string, id: string) {
-    if (id.includes("/src/generated/")) {
-      return { code: code.replace(/\/\/# sourceMappingURL=\S+/g, ""), map: null };
+  load(id: string) {
+    if (id.includes("/src/generated/") && (id.endsWith(".js") || id.endsWith(".mjs"))) {
+      try {
+        const code = readFileSync(id, "utf-8");
+        return { code: code.replace(/\/\/# sourceMappingURL=\S+/g, ""), map: null };
+      } catch { return null; }
     }
   },
 };
