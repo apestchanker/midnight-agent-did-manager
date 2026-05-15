@@ -505,29 +505,19 @@ const server = createServer(async (req, res) => {
         scopes: body.scopes,
       });
 
-      if (body.proofRequestId) {
-        const proofMaterial = await getMidnightProofMaterial({
+      if (body.holderSignatureEnvelope) {
+        const { presentation } = await assembleSignedPresentation({
           did: body.did,
           scopes: body.scopes,
           challenge: body.challenge,
           verifier: body.verifier,
           purpose: body.purpose,
+          bundleCommitment: body.bundleCommitment,
+          holderBindingCommitment: body.holderBindingCommitment,
+          holderSignatureEnvelope: body.holderSignatureEnvelope,
         });
-
-        if (proofMaterial.holderSignatureEnvelope) {
-          const { presentation } = await assembleSignedPresentation({
-            did: body.did,
-            scopes: body.scopes,
-            challenge: proofMaterial.challenge,
-            verifier: proofMaterial.verifier,
-            purpose: proofMaterial.purpose,
-            bundleCommitment: proofMaterial.bundleCommitment,
-            holderBindingCommitment: proofMaterial.holderBindingCommitment,
-            holderSignatureEnvelope: proofMaterial.holderSignatureEnvelope,
-          });
-          sendJson(res, 200, { ...bundle, presentation });
-          return;
-        }
+        sendJson(res, 200, { ...bundle, presentation });
+        return;
       }
 
       sendJson(res, 200, bundle);
@@ -600,40 +590,7 @@ const server = createServer(async (req, res) => {
         proofRequest: body.proofRequest,
         submission,
       });
-
-      // Branch A: fully verified — cryptographic proof confirmed
-      if (verification.valid === true && verification.cryptographicProofVerified === true) {
-        sendJson(res, 200, {
-          ok: true,
-          valid: true,
-          cryptographicProofVerified: true,
-          status: "verified",
-          verifiedAt: new Date().toISOString(),
-          method: "native_ownership",
-        });
-        return;
-      }
-
-      // Branch B: degraded — valid structure but proof server unavailable
-      if (verification.valid === true && verification.cryptographicProofVerified === false) {
-        sendJson(res, 503, {
-          ok: true,
-          valid: false,
-          cryptographicProofVerified: false,
-          status: "submitted",
-          failure_layer: "zk_blob",
-          message: "Proof server unavailable — degraded mode",
-        });
-        return;
-      }
-
-      // Branch C: rejected — validation failure
-      sendJson(res, 400, {
-        ok: false,
-        valid: false,
-        failure_layer: verification.failure_layer || null,
-        message: verification.message || "Proof verification failed.",
-      });
+      sendJson(res, 200, verification);
       return;
     }
 

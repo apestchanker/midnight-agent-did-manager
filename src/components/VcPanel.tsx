@@ -15,6 +15,7 @@ import {
   approveProofRequest,
   createCredentialBundle,
   createMidnightProofMaterial,
+  createSignedCredentialBundle,
   createWalletProofRequest,
   listCredentialsByDid,
   rejectProofRequest,
@@ -30,6 +31,7 @@ import {
   createPreviewProofVerificationPackage,
   createProofVerificationPackage,
 } from "../lib/proof-request";
+import { canonicalize } from "../../lib/canonical-json.js";
 import { createNativeOwnershipProofPackage } from "../lib/native-ownership-proof";
 import { createLocalPreviewProofSubmission } from "../../lib/midnight-proof-envelope.js";
 
@@ -158,6 +160,54 @@ export function VcPanel({
       setMessage(`Bundle created with ${nextBundle.verifiableCredentials.length} VC(s).`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Failed to build VC bundle");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleBuildSignedPresentation() {
+    if (!record?.did || !connectedApi) return;
+    setLoading(true);
+    setMessage("");
+    try {
+      const material = await createMidnightProofMaterial({
+        did: record.did,
+        scopes: selectedScopes,
+        purpose: "selective-disclosure",
+      });
+
+      const payloadToSign = canonicalize({
+        holder: record.did,
+        challenge: material.challenge ?? null,
+        verifier: material.verifier ?? null,
+        purpose: material.purpose ?? null,
+        bundleCommitment: material.bundleCommitment ?? null,
+        holderBindingCommitment: material.holderBindingCommitment ?? null,
+      });
+
+      const holderSignatureEnvelope = await signProofApprovalPayload(connectedApi, payloadToSign);
+
+      const signedBundle = await createSignedCredentialBundle({
+        did: record.did,
+        scopes: selectedScopes,
+        challenge: material.challenge,
+        verifier: material.verifier,
+        purpose: material.purpose,
+        bundleCommitment: material.bundleCommitment,
+        holderBindingCommitment: material.holderBindingCommitment,
+        holderSignatureEnvelope,
+      });
+
+      setBundle(signedBundle);
+      setProofMaterial(material);
+      setVerificationResult("");
+      setMessage(
+        `Signed Verifiable Presentation assembled with ${signedBundle.verifiableCredentials.length} VC(s) and holder proof.`,
+      );
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "Failed to build signed presentation",
+      );
     } finally {
       setLoading(false);
     }
@@ -387,6 +437,14 @@ export function VcPanel({
                 className="bg-emerald-600 hover:bg-emerald-500 text-white"
               >
                 {loading ? "Building..." : "Build Disclosure Bundle"}
+              </Button>
+              <Button
+                type="button"
+                onClick={handleBuildSignedPresentation}
+                disabled={loading || !connectedApi || !walletAddress}
+                className="bg-teal-700 hover:bg-teal-600 text-white"
+              >
+                {loading ? "Signing..." : "Build Signed Presentation"}
               </Button>
               <Button
                 type="button"

@@ -2,32 +2,12 @@ import { TextEncoder } from "util";
 import { addressFromKey, verifySignature } from "@midnight-ntwrk/ledger-v8";
 import { MidnightBech32m, UnshieldedAddress } from "@midnight-ntwrk/wallet-sdk-address-format";
 import { query, withTransaction } from "./db.js";
-import { normalizeWallet, uniqueScopes } from "./utils.js";
+import { normalizeWallet, normalizeWalletSignatureHex, uniqueScopes } from "./utils.js";
 import { authenticateMcpKey, getCustomerByWallet } from "./registry-service.js";
 import {
   createMidnightProofRequest,
   verifyMidnightProofSubmission,
 } from "./midnight-proof-service.js";
-
-function decodeHexToUtf8(value) {
-  try {
-    return Buffer.from(value, "hex").toString("utf8");
-  } catch {
-    return value;
-  }
-}
-
-function normalizeWalletSignatureHex(value, minimumHexLength = 64) {
-  const raw = String(value || "").trim();
-  if (!/^[0-9a-f]+$/i.test(raw) || raw.length % 2 !== 0) {
-    return raw;
-  }
-  const decoded = decodeHexToUtf8(raw).trim();
-  if (/^[0-9a-f]+$/i.test(decoded) && decoded.length >= minimumHexLength) {
-    return decoded;
-  }
-  return raw;
-}
 
 function encodeDerivedWalletAddress(rawAddressHex, networkId) {
   try {

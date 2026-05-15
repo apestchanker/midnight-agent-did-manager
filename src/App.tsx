@@ -1856,7 +1856,7 @@ export default function App() {
                                   <div><span className="text-zinc-500">Timestamp:</span> {new Date(registryProofReceipt.verifiedAt).toLocaleString()}</div>
                                 </div>
                               )}
-                              {registryProofVerification.warnings.length > 0 && (
+                              {(registryProofVerification.warnings?.length ?? 0) > 0 && (
                                 <div className="pt-2">
                                   <div className="text-zinc-500">Warnings:</div>
                                   <pre className="whitespace-pre-wrap break-words">{registryProofVerification.warnings.join("\n")}</pre>
