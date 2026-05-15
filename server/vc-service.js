@@ -6,6 +6,7 @@ import { canonicalize, sortObject } from "../lib/canonical-json.js";
 import { buildNativeOwnershipMaterial } from "../lib/native-ownership-proof.js";
 import { query, withTransaction } from "./db.js";
 import { getIssuerKeys } from "./issuer-keys.js";
+import { normalizeWalletSignatureHex } from "./utils.js";
 
 function vcEnvelope(input) {
   return {
@@ -420,12 +421,15 @@ export async function verifyPresentation(input, deps = {}) {
     holderBindingCommitment: proof.holderBindingCommitment ?? null,
   });
 
+  const normalizedVerifyingKey = normalizeWalletSignatureHex(String(proof.verifyingKey || ""));
+  const normalizedSignature = normalizeWalletSignatureHex(String(proof.signature || ""), 2);
+
   let signatureValid = false;
   try {
     signatureValid = verifySignatureFn(
-      proof.verifyingKey,
+      normalizedVerifyingKey,
       new TextEncoder().encode(canonicalPayload),
-      proof.signature,
+      normalizedSignature,
     );
   } catch {
     signatureValid = false;
@@ -478,11 +482,11 @@ export async function assembleSignedPresentation(input) {
     .update(
       canonicalize({
         holder,
-        challenge: input.challenge,
-        verifier: input.verifier,
-        purpose: input.purpose,
-        bundleCommitment: input.bundleCommitment,
-        holderBindingCommitment: input.holderBindingCommitment,
+        challenge: input.challenge ?? null,
+        verifier: input.verifier ?? null,
+        purpose: input.purpose ?? null,
+        bundleCommitment: input.bundleCommitment ?? null,
+        holderBindingCommitment: input.holderBindingCommitment ?? null,
       }),
     )
     .digest("hex");

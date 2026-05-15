@@ -129,6 +129,7 @@ export interface CredentialBundle {
     type: string[];
     holder: string;
     verifiableCredential: string[];
+    proof?: Record<string, unknown>;
   };
 }
 

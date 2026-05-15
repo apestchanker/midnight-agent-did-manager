@@ -15,6 +15,7 @@ import type {
   Subscription,
   VerifiableCredentialRow,
 } from "../types/service";
+import type { Signature } from "@midnight-ntwrk/dapp-connector-api";
 import type { DeployResult } from "../types/did";
 
 const API_BASE =
@@ -545,6 +546,25 @@ export function listRegistryDids(contractAddress: string): Promise<RegistryDidRo
 export function createCredentialBundle(payload: {
   did: string;
   scopes: string[];
+}): Promise<CredentialBundle> {
+  return requestJson("/api/vcs/bundle", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function createSignedCredentialBundle(payload: {
+  did: string;
+  scopes: string[];
+  challenge: string;
+  verifier?: string;
+  purpose: string;
+  bundleCommitment: string;
+  holderBindingCommitment: string;
+  holderSignatureEnvelope: Signature;
 }): Promise<CredentialBundle> {
   return requestJson("/api/vcs/bundle", {
     method: "POST",
