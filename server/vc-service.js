@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "crypto";
 import { TextEncoder } from "util";
 import { jwtVerify, SignJWT } from "jose";
 import { verifySignature } from "@midnight-ntwrk/ledger-v8";
-import { canonicalize } from "../lib/canonical-json.js";
+import { canonicalize, sortObject } from "../lib/canonical-json.js";
 import { buildNativeOwnershipMaterial } from "../lib/native-ownership-proof.js";
 import { query, withTransaction } from "./db.js";
 import { getIssuerKeys } from "./issuer-keys.js";
@@ -244,21 +244,6 @@ export async function getCredentialBundle(input) {
   };
 }
 
-function sortKeys(value) {
-  if (Array.isArray(value)) {
-    return value.map(sortKeys);
-  }
-  if (value && typeof value === "object") {
-    return Object.keys(value)
-      .sort()
-      .reduce((acc, key) => {
-        acc[key] = sortKeys(value[key]);
-        return acc;
-      }, {});
-  }
-  return value;
-}
-
 function sha256Hex(value) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -274,7 +259,7 @@ function buildCredentialCommitment(row) {
     row?.claims && typeof row.claims === "object" && !Array.isArray(row.claims)
       ? row.claims
       : {};
-  const normalizedClaims = sortKeys(claimObject);
+  const normalizedClaims = sortObject(claimObject);
   const commitmentPayload = JSON.stringify({
     subjectDid: row.subject_did,
     issuerId: row.issuer_id,

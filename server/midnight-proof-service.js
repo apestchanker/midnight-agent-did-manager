@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { Proof, parseCheckResult } from "@midnight-ntwrk/ledger-v8";
+import { canonicalize } from "../lib/canonical-json.js";
 import { verifyLocalPreviewProofSubmission } from "../lib/midnight-proof-envelope.js";
 import {
   buildNativeOwnershipMaterial,
@@ -17,6 +18,7 @@ import {
   checkNativeOwnership,
   isNativeOwnershipVerificationAvailable,
 } from "./native-ownership-prover.js";
+import { uniqueScopes } from "./utils.js";
 
 /**
  * Convert a hex string to a Uint8Array.
@@ -40,12 +42,6 @@ export function buildVerificationError({ layer, message, details = {} }) {
   return { valid: false, failure_layer: layer, message, details };
 }
 
-function uniqueScopes(scopes) {
-  return Array.isArray(scopes)
-    ? [...new Set(scopes.map((scope) => String(scope).trim()).filter(Boolean))]
-    : [];
-}
-
 function requireObject(value, label) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} is required.`);
@@ -53,20 +49,6 @@ function requireObject(value, label) {
   return value;
 }
 
-function canonicalize(value) {
-  if (Array.isArray(value)) {
-    return value.map(canonicalize);
-  }
-  if (value && typeof value === "object") {
-    return Object.keys(value)
-      .sort()
-      .reduce((acc, key) => {
-        acc[key] = canonicalize(value[key]);
-        return acc;
-      }, {});
-  }
-  return value;
-}
 
 export async function createMidnightProofRequest(input, deps = {}) {
   if (!input?.did) {
@@ -158,8 +140,8 @@ export async function verifyMidnightProofSubmission(input, deps = {}) {
   let requestIntegrityVerified =
     material.bundleCommitment === expectedMaterial.bundleCommitment &&
     material.holderBindingCommitment === expectedMaterial.holderBindingCommitment &&
-    JSON.stringify(canonicalize(material.credentialCommitments)) ===
-      JSON.stringify(canonicalize(expectedMaterial.credentialCommitments));
+    canonicalize(material.credentialCommitments) ===
+      canonicalize(expectedMaterial.credentialCommitments);
 
   let submissionMatchesRequest =
     submission.did === did &&
@@ -196,8 +178,8 @@ export async function verifyMidnightProofSubmission(input, deps = {}) {
     requestIntegrityVerified = Boolean(
       expectedNativeMaterial &&
         declaredNativeMaterial &&
-        JSON.stringify(canonicalize(declaredNativeMaterial)) ===
-          JSON.stringify(canonicalize(expectedNativeMaterial)),
+        canonicalize(declaredNativeMaterial) ===
+          canonicalize(expectedNativeMaterial),
     );
     submissionMatchesRequest =
       submission.did === did &&

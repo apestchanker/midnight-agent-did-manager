@@ -2,18 +2,12 @@ import { TextEncoder } from "util";
 import { addressFromKey, verifySignature } from "@midnight-ntwrk/ledger-v8";
 import { MidnightBech32m, UnshieldedAddress } from "@midnight-ntwrk/wallet-sdk-address-format";
 import { query, withTransaction } from "./db.js";
-import { normalizeWallet } from "./utils.js";
+import { normalizeWallet, uniqueScopes } from "./utils.js";
 import { authenticateMcpKey, getCustomerByWallet } from "./registry-service.js";
 import {
   createMidnightProofRequest,
   verifyMidnightProofSubmission,
 } from "./midnight-proof-service.js";
-
-function uniqueScopes(scopes) {
-  return Array.isArray(scopes)
-    ? [...new Set(scopes.map((scope) => String(scope).trim()).filter(Boolean))]
-    : [];
-}
 
 function decodeHexToUtf8(value) {
   try {
@@ -538,7 +532,7 @@ export async function submitProofForRequest(input) {
         requestId: current.id,
         proofRequestType: "midnight-holder-proof-request",
         createdAt: current.created_at,
-        expiresAt: current.updated_at,
+        expiresAt: current.created_at,
         material: current.proof_material,
       },
       submission: input.submission,
