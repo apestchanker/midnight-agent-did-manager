@@ -220,6 +220,11 @@ create index if not exists idx_proof_requests_customer_id on proof_requests(cust
 create index if not exists idx_proof_requests_did on proof_requests(did);
 create index if not exists idx_proof_requests_status on proof_requests(request_status);
 
+-- Migration: add verification audit columns (idempotent — safe to run multiple times)
+-- New audit event type: proof_request_verified (inserted into audit_events when a proof is fully verified)
+alter table proof_requests add column if not exists verified_at timestamptz null;
+alter table proof_requests add column if not exists verification_failure_layer text null;
+
 create table if not exists audit_events (
   id uuid primary key default gen_random_uuid(),
   actor_type text not null,

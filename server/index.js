@@ -32,6 +32,7 @@ import {
   validateDid,
 } from "./registry-service.js";
 import {
+  assembleSignedPresentation,
   getCredentialBundle,
   getIssuerDescriptor,
   getMidnightProofMaterial,
@@ -499,14 +500,37 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/vcs/bundle") {
       const body = await readJson(req);
-      sendJson(
-        res,
-        200,
-        await getCredentialBundle({
+      const bundle = await getCredentialBundle({
+        did: body.did,
+        scopes: body.scopes,
+      });
+
+      if (body.proofRequestId) {
+        const proofMaterial = await getMidnightProofMaterial({
           did: body.did,
           scopes: body.scopes,
-        }),
-      );
+          challenge: body.challenge,
+          verifier: body.verifier,
+          purpose: body.purpose,
+        });
+
+        if (proofMaterial.holderSignatureEnvelope) {
+          const { presentation } = await assembleSignedPresentation({
+            did: body.did,
+            scopes: body.scopes,
+            challenge: proofMaterial.challenge,
+            verifier: proofMaterial.verifier,
+            purpose: proofMaterial.purpose,
+            bundleCommitment: proofMaterial.bundleCommitment,
+            holderBindingCommitment: proofMaterial.holderBindingCommitment,
+            holderSignatureEnvelope: proofMaterial.holderSignatureEnvelope,
+          });
+          sendJson(res, 200, { ...bundle, presentation });
+          return;
+        }
+      }
+
+      sendJson(res, 200, bundle);
       return;
     }
 
@@ -569,14 +593,47 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/vps/midnight/verify") {
       const body = await readJson(req);
-      sendJson(
-        res,
-        200,
-        await verifyMidnightProofSubmission({
-          proofRequest: body.proofRequest,
-          submission: body.submission,
-        }),
-      );
+      const submission = body.submission
+        ? { ...body.submission, coinPublicKey: body.coinPublicKey ?? body.submission.coinPublicKey }
+        : body.submission;
+      const verification = await verifyMidnightProofSubmission({
+        proofRequest: body.proofRequest,
+        submission,
+      });
+
+      // Branch A: fully verified — cryptographic proof confirmed
+      if (verification.valid === true && verification.cryptographicProofVerified === true) {
+        sendJson(res, 200, {
+          ok: true,
+          valid: true,
+          cryptographicProofVerified: true,
+          status: "verified",
+          verifiedAt: new Date().toISOString(),
+          method: "native_ownership",
+        });
+        return;
+      }
+
+      // Branch B: degraded — valid structure but proof server unavailable
+      if (verification.valid === true && verification.cryptographicProofVerified === false) {
+        sendJson(res, 503, {
+          ok: true,
+          valid: false,
+          cryptographicProofVerified: false,
+          status: "submitted",
+          failure_layer: "zk_blob",
+          message: "Proof server unavailable — degraded mode",
+        });
+        return;
+      }
+
+      // Branch C: rejected — validation failure
+      sendJson(res, 400, {
+        ok: false,
+        valid: false,
+        failure_layer: verification.failure_layer || null,
+        message: verification.message || "Proof verification failed.",
+      });
       return;
     }
 
@@ -588,7 +645,20 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/vps/verify") {
       const body = await readJson(req);
-      sendJson(res, 200, await verifyPresentation(body));
+      const result = await verifyPresentation(body);
+      if (!result.valid) {
+        const layer = result.failure_layer;
+        const statusCode =
+          layer === "structural" || layer === "holder_signature" ? 400 : 422;
+        sendJson(res, statusCode, {
+          ok: false,
+          valid: false,
+          failure_layer: result.failure_layer,
+          message: result.message,
+        });
+        return;
+      }
+      sendJson(res, 200, result);
       return;
     }
 

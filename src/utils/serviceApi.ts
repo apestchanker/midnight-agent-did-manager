@@ -606,6 +606,8 @@ export function createMidnightProofRequest(payload: {
 export function verifyMidnightProofRequest(payload: {
   proofRequest: MidnightProofRequest;
   submission: MidnightProofSubmission;
+  /** Coin public key from the holder's wallet (Bech32m or hex). Sent as top-level field for server-side ZK verification. */
+  coinPublicKey?: string;
 }): Promise<MidnightProofVerificationResult> {
   return requestJson("/api/vps/midnight/verify", {
     method: "POST",

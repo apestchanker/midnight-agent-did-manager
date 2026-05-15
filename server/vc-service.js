@@ -1,5 +1,8 @@
 import { createHash, randomUUID } from "crypto";
+import { TextEncoder } from "util";
 import { jwtVerify, SignJWT } from "jose";
+import { verifySignature } from "@midnight-ntwrk/ledger-v8";
+import { canonicalize } from "../lib/canonical-json.js";
 import { buildNativeOwnershipMaterial } from "../lib/native-ownership-proof.js";
 import { query, withTransaction } from "./db.js";
 import { getIssuerKeys } from "./issuer-keys.js";
@@ -241,15 +244,15 @@ export async function getCredentialBundle(input) {
   };
 }
 
-function canonicalize(value) {
+function sortKeys(value) {
   if (Array.isArray(value)) {
-    return value.map(canonicalize);
+    return value.map(sortKeys);
   }
   if (value && typeof value === "object") {
     return Object.keys(value)
       .sort()
       .reduce((acc, key) => {
-        acc[key] = canonicalize(value[key]);
+        acc[key] = sortKeys(value[key]);
         return acc;
       }, {});
   }
@@ -271,7 +274,7 @@ function buildCredentialCommitment(row) {
     row?.claims && typeof row.claims === "object" && !Array.isArray(row.claims)
       ? row.claims
       : {};
-  const normalizedClaims = canonicalize(claimObject);
+  const normalizedClaims = sortKeys(claimObject);
   const commitmentPayload = JSON.stringify({
     subjectDid: row.subject_did,
     issuerId: row.issuer_id,
@@ -378,20 +381,79 @@ export async function verifyCredentialJwt(jwt) {
   };
 }
 
-export async function verifyPresentation(input) {
+export async function verifyPresentation(input, deps = {}) {
+  const verifySignatureFn = deps.verifySignature || verifySignature;
   const presentation = input?.presentation;
   if (!presentation || typeof presentation !== "object") {
     throw new Error("Presentation payload is required.");
   }
 
   const holder = String(presentation.holder || "");
-  const credentials = Array.isArray(presentation.verifiableCredential)
-    ? presentation.verifiableCredential
-    : [];
-
   if (!holder) {
     throw new Error("Presentation holder is required.");
   }
+
+  // Step 1: Check that proof is present → failure_layer: structural
+  const proof = presentation.proof;
+  if (!proof || typeof proof !== "object") {
+    return { valid: false, failure_layer: "structural", message: "Presentation proof is missing." };
+  }
+
+  // Step 2: Check proof.type === 'MidnightWalletSignature2024' → failure_layer: structural
+  if (proof.type !== "MidnightWalletSignature2024") {
+    return { valid: false, failure_layer: "structural", message: `Unsupported proof type: ${proof.type}` };
+  }
+
+  // Step 3: Reconstruct payload from proof fields, compute payloadDigest, compare to proof.payloadDigest
+  // → failure_layer: holder_signature
+  const expectedPayloadDigest = createHash("sha256")
+    .update(
+      canonicalize({
+        holder,
+        challenge: proof.challenge ?? null,
+        verifier: proof.verifier ?? null,
+        purpose: proof.purpose ?? null,
+        bundleCommitment: proof.bundleCommitment ?? null,
+        holderBindingCommitment: proof.holderBindingCommitment ?? null,
+      }),
+    )
+    .digest("hex");
+
+  if (proof.payloadDigest !== expectedPayloadDigest) {
+    return { valid: false, failure_layer: "holder_signature", message: "Payload digest mismatch." };
+  }
+
+  // Step 4: Call verifySignature() from @midnight-ntwrk/ledger-v8
+  // The wallet signed the canonical JSON of the payload (same data used to compute payloadDigest).
+  // → failure_layer: holder_signature
+  const canonicalPayload = canonicalize({
+    holder,
+    challenge: proof.challenge ?? null,
+    verifier: proof.verifier ?? null,
+    purpose: proof.purpose ?? null,
+    bundleCommitment: proof.bundleCommitment ?? null,
+    holderBindingCommitment: proof.holderBindingCommitment ?? null,
+  });
+
+  let signatureValid = false;
+  try {
+    signatureValid = verifySignatureFn(
+      proof.verifyingKey,
+      new TextEncoder().encode(canonicalPayload),
+      proof.signature,
+    );
+  } catch {
+    signatureValid = false;
+  }
+
+  if (!signatureValid) {
+    return { valid: false, failure_layer: "holder_signature", message: "Holder signature verification failed." };
+  }
+
+  // All holderProof checks passed — now verify embedded VC JWTs
+  const credentials = Array.isArray(presentation.verifiableCredential)
+    ? presentation.verifiableCredential
+    : [];
 
   const verifiedCredentials = [];
   for (const jwt of credentials) {
@@ -404,12 +466,67 @@ export async function verifyPresentation(input) {
 
   return {
     valid: true,
+    holderProofVerified: true,
     holder,
     credentialCount: verifiedCredentials.length,
     verifiedCredentials,
-    warning:
-      "Presentation structure is W3C-aligned, but holder-bound proof is not implemented yet. Verification currently relies on the embedded VC signatures and holder/subject matching.",
   };
+}
+
+export async function assembleSignedPresentation(input) {
+  console.log("[vc-service] assembleSignedPresentation called", {
+    did: input.did,
+    scopes: input.scopes,
+    challenge: input.challenge,
+    verifier: input.verifier,
+    purpose: input.purpose,
+  });
+
+  const { verifiableCredentials } = await getCredentialBundle({
+    did: input.did,
+    scopes: input.scopes,
+  });
+
+  const holder = input.did;
+
+  const payloadDigest = createHash("sha256")
+    .update(
+      canonicalize({
+        holder,
+        challenge: input.challenge,
+        verifier: input.verifier,
+        purpose: input.purpose,
+        bundleCommitment: input.bundleCommitment,
+        holderBindingCommitment: input.holderBindingCommitment,
+      }),
+    )
+    .digest("hex");
+
+  const holderProof = {
+    type: "MidnightWalletSignature2024",
+    created: new Date().toISOString(),
+    verificationMethod: `midnight:wallet:${holder}`,
+    proofPurpose: "authentication",
+    verifyingKey: input.holderSignatureEnvelope.verifyingKey,
+    signature: input.holderSignatureEnvelope.signature,
+    payloadDigest,
+    // Payload fields stored in proof to enable offline verification
+    challenge: input.challenge,
+    verifier: input.verifier,
+    purpose: input.purpose,
+    bundleCommitment: input.bundleCommitment,
+    holderBindingCommitment: input.holderBindingCommitment,
+  };
+
+  const presentation = {
+    "@context": ["https://www.w3.org/ns/credentials/v2"],
+    type: ["VerifiablePresentation"],
+    holder,
+    verifiableCredential: verifiableCredentials,
+    proof: holderProof,
+  };
+
+  return { presentation };
 }
 
 export async function getIssuerDescriptor() {

@@ -489,7 +489,7 @@ export async function buildProviders(
   };
 
   const walletProvider: WalletProvider = {
-    getCoinPublicKey: () => shielded.shieldedCoinPublicKey as never,
+    getCoinPublicKey: () => shielded.shieldedCoinPublicKey,
     getEncryptionPublicKey: () =>
       shielded.shieldedEncryptionPublicKey as never,
     async balanceTx(tx) {

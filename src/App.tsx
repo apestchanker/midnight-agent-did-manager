@@ -789,9 +789,13 @@ export default function App() {
       ) as MidnightProofVerificationPackage;
       const proofRequest = parsed.proofRequest;
       const submission = parsed.submission;
+      const coinPublicKey: string | undefined = providers
+        ? providers.walletProvider.getCoinPublicKey()
+        : undefined;
       const result = await verifyMidnightProofRequest({
         proofRequest,
         submission,
+        coinPublicKey,
       });
       const verifiedAt = new Date().toISOString();
       const receiptPayload = JSON.stringify({

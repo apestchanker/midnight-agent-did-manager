@@ -188,6 +188,8 @@ export interface MidnightProofSubmission {
   challenge: string;
   bundleCommitment: string;
   holderBindingCommitment: string;
+  /** Coin public key from the holder's wallet (Bech32m or hex). Required for midnight-zk-proof format. */
+  coinPublicKey?: string;
   proof: {
     format: string;
     proofValue: string;

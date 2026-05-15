@@ -37,6 +37,7 @@ export async function createNativeOwnershipProofPackage(
       challenge: row.challenge,
       bundleCommitment: nativeMaterial.bundleCommitment,
       holderBindingCommitment: nativeMaterial.holderBindingCommitment,
+      coinPublicKey,
       proof: {
         format: "midnight-zk-proof",
         scheme: nativeMaterial.scheme,

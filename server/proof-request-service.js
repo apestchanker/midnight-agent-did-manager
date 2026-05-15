@@ -544,25 +544,117 @@ export async function submitProofForRequest(input) {
       submission: input.submission,
     });
 
-    const nextStatus = verification.valid ? "submitted" : "rejected";
+    // Branch A: fully verified — cryptographic proof confirmed
+    if (verification.valid === true && verification.cryptographicProofVerified === true) {
+      console.log("[proof-request] submitProofForRequest: branch A — fully verified", {
+        proofRequestId: input.proofRequestId,
+        did: current.did,
+        cryptographicProofVerified: true,
+      });
+
+      const updated = await client.query(
+        `update proof_requests
+         set request_status = 'verified',
+             verified_at = now(),
+             verification_failure_layer = null,
+             proof_submission = $2::jsonb,
+             verification_result = $3::jsonb,
+             error_message = null,
+             updated_at = now()
+         where id = $1
+         returning *`,
+        [
+          input.proofRequestId,
+          JSON.stringify(input.submission),
+          JSON.stringify(verification),
+        ],
+      );
+
+      await audit(client, {
+        actorType: "system",
+        actorRef: "system",
+        eventType: "proof_request_verified",
+        entityType: "proof_request",
+        entityId: input.proofRequestId,
+        eventData: {
+          did: current.did,
+          verifiedAt: updated.rows[0].verified_at,
+        },
+      });
+
+      return {
+        success: true,
+        status: "verified",
+        verifiedAt: updated.rows[0].verified_at,
+        proofRequest: updated.rows[0],
+        verification,
+      };
+    }
+
+    // Branch B: valid structure but cryptographic proof not confirmed (degraded mode)
+    if (verification.valid === true && verification.cryptographicProofVerified === false) {
+      console.log("[proof-request] submitProofForRequest: branch B — degraded (valid but cryptographic proof unconfirmed)", {
+        proofRequestId: input.proofRequestId,
+        did: current.did,
+        cryptographicProofVerified: false,
+      });
+
+      const updated = await client.query(
+        `update proof_requests
+         set request_status = 'submitted',
+             proof_submission = $2::jsonb,
+             verification_result = $3::jsonb,
+             updated_at = now()
+         where id = $1
+         returning *`,
+        [
+          input.proofRequestId,
+          JSON.stringify(input.submission),
+          JSON.stringify(verification),
+        ],
+      );
+
+      return {
+        success: true,
+        status: "submitted",
+        degraded: true,
+        proofRequest: updated.rows[0],
+        verification,
+      };
+    }
+
+    // Branch C: verification failed — reject the proof request
+    console.log("[proof-request] submitProofForRequest: branch C — rejected", {
+      proofRequestId: input.proofRequestId,
+      did: current.did,
+      failure_layer: verification.failure_layer,
+      message: verification.message,
+    });
+
     const updated = await client.query(
       `update proof_requests
-       set request_status = $2,
-           proof_submission = $3::jsonb,
-           verification_result = $4::jsonb,
-           error_message = $5,
+       set request_status = 'rejected',
+           error_message = $2,
+           verification_failure_layer = $3,
+           proof_submission = $4::jsonb,
+           verification_result = $5::jsonb,
            updated_at = now()
        where id = $1
        returning *`,
       [
         input.proofRequestId,
-        nextStatus,
+        verification.message || verification.status || "Proof verification failed.",
+        verification.failure_layer || null,
         JSON.stringify(input.submission),
         JSON.stringify(verification),
-        verification.valid ? null : verification.status,
       ],
     );
+
     return {
+      success: false,
+      status: "rejected",
+      failure_layer: verification.failure_layer || null,
+      message: verification.message || verification.status || "Proof verification failed.",
       proofRequest: updated.rows[0],
       verification,
     };
