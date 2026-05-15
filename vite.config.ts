@@ -48,5 +48,18 @@ export default defineConfig({
     outDir: "dist",
     sourcemap: false,
     target: "esnext",
+    chunkSizeWarningLimit: 1800,
+    rollupOptions: {
+      onwarn(warning, defaultHandler) {
+        // Midnight SDK imports fs/path/vm for Node-only code paths that never run in browser
+        if (warning.message.includes("has been externalized for browser compatibility")) return;
+        defaultHandler(warning);
+      },
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules/@midnight-ntwrk")) return "midnight-sdk";
+        },
+      },
+    },
   },
 });
