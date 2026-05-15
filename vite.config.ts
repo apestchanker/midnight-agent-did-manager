@@ -33,6 +33,8 @@ export default defineConfig({
       "/api": "http://localhost:8787",
       "/health": "http://localhost:8787",
     },
+    sourcemapIgnoreList: (sourcePath) =>
+      sourcePath.includes("/src/generated/") || sourcePath.includes("node_modules"),
   },
   build: {
     outDir: "dist",
