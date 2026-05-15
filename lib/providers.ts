@@ -18,9 +18,9 @@ import type {
   KeyMaterialProvider,
 } from "@midnight-ntwrk/dapp-connector-api";
 import type { ContractAddress, SigningKey } from "@midnight-ntwrk/compact-runtime";
+import { levelPrivateStateProvider } from "@midnight-ntwrk/midnight-js-level-private-state-provider";
 import { requestWalletPermissionsIfSupported } from "./wallet-permissions";
 import { fromHex, toHex } from "./wallet-bridge";
-import { createPatchedSdkPrivateStateProvider } from "./patched-private-state-provider";
 
 const MANAGED_CONTRACT_PATH =
   (import.meta.env.VITE_MANAGED_CONTRACT_PATH || "").trim() ||
@@ -33,7 +33,7 @@ const CONFIGURED_PROVER_SERVER_URL = (import.meta.env.VITE_PROVER_SERVER_URI || 
 const PRIVATE_STATE_PASSWORD_ENV = (import.meta.env.VITE_PRIVATE_STATE_PASSWORD || "").trim();
 const APP_LOCAL_STORAGE_PREFIX = "didmn:private-state:app-local:v1";
 
-export type StorageMode = "app_local" | "patched_sdk";
+export type StorageMode = "app_local" | "sdk_level";
 
 interface AppLocalSerializedBytes {
   __type: "Uint8Array";
@@ -519,8 +519,8 @@ export async function buildProviders(
 
   const storageMode = options.storageMode || "app_local";
   const privateStateProvider =
-    storageMode === "patched_sdk"
-      ? createPatchedSdkPrivateStateProvider({
+    storageMode === "sdk_level"
+      ? levelPrivateStateProvider({
           accountId,
           privateStoragePasswordProvider: () =>
             getTemporaryPrivateStatePassword(accountId),

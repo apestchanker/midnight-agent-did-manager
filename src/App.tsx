@@ -111,7 +111,7 @@ export default function App() {
   const [storageMode, setStorageMode] = useState<StorageMode>(() => {
     if (typeof window === "undefined") return "app_local";
     const saved = window.localStorage.getItem(STORAGE_MODE_KEY);
-    return saved === "patched_sdk" ? "patched_sdk" : "app_local";
+    return saved === "sdk_level" ? "sdk_level" : "app_local";
   });
   const {
     status,
