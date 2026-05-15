@@ -13,6 +13,7 @@ import type {
   ProofRequestRow,
   RegistryDidRow,
   Subscription,
+  UnifiedVerifiablePresentation,
   VerifiableCredentialRow,
 } from "../types/service";
 import type { DeployResult } from "../types/did";
@@ -555,6 +556,35 @@ export function createCredentialBundle(payload: {
   });
 }
 
+export function assembleVP(payload: {
+  did: string;
+  scopes: string[];
+  challenge: string;
+  verifier?: string;
+  purpose: string;
+  submission: MidnightProofSubmission;
+}): Promise<UnifiedVerifiablePresentation> {
+  return requestJson("/api/vps/assemble", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function verifyUnifiedVPRequest(
+  vp: UnifiedVerifiablePresentation,
+): Promise<MidnightProofVerificationResult> {
+  return requestJson("/api/vps/verify", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(vp),
+  });
+}
+
 export function rotateCredentialsByDid(payload: {
   did: string;
 }): Promise<{
@@ -603,21 +633,6 @@ export function createMidnightProofRequest(payload: {
   });
 }
 
-export function verifyMidnightProofRequest(payload: {
-  proofRequest: MidnightProofRequest;
-  submission: MidnightProofSubmission;
-  /** Coin public key from the holder's wallet (Bech32m or hex). Sent as top-level field for server-side ZK verification. */
-  coinPublicKey?: string;
-}): Promise<MidnightProofVerificationResult> {
-  return requestJson("/api/vps/midnight/verify", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-}
-
 export function verifyCredential(payload: {
   jwt: string;
 }) {
@@ -630,25 +645,3 @@ export function verifyCredential(payload: {
   });
 }
 
-export function verifyPresentation(payload: {
-  presentation: {
-    "@context": string[];
-    type: string[];
-    holder: string;
-    verifiableCredential: string[];
-  };
-}): Promise<{
-  valid: boolean;
-  holder: string;
-  credentialCount: number;
-  verifiedCredentials: unknown[];
-  warning?: string;
-}> {
-  return requestJson("/api/vps/verify", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-}

@@ -10,6 +10,7 @@ import {
 import {
   createMidnightProofRequest,
   verifyMidnightProofSubmission,
+  verifyUnifiedVP,
 } from "./midnight-proof-service.js";
 import {
   createProofRequestForAgent,
@@ -44,5 +45,6 @@ export function createDidMcpApp() {
     listCredentialsForDid,
     rotateCredentialsForDid,
     verifyMidnightProofSubmission,
+    verifyUnifiedVP,
   });
 }

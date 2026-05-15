@@ -1,9 +1,15 @@
 import type {
   MidnightProofRequest,
   MidnightProofSubmission,
-  MidnightProofVerificationPackage,
   ProofRequestRow,
 } from "../types/service";
+
+// Internal type for the { proofRequest, submission } package used locally before assembleVP.
+// Exported for WorkflowPanel which builds the package before calling assembleVP.
+export interface MidnightProofVerificationPackage {
+  proofRequest: MidnightProofRequest;
+  submission: MidnightProofSubmission;
+}
 
 export function toMidnightProofRequest(row: ProofRequestRow): MidnightProofRequest {
   return {

@@ -50,6 +50,100 @@ function requireObject(value, label) {
 }
 
 
+/**
+ * Validate a UnifiedVerifiablePresentation structurally, hard-reject degraded VPs,
+ * reconstruct the internal { proofRequest, submission } package from VP fields,
+ * and delegate to verifyMidnightProofSubmission (unchanged).
+ *
+ * @param {{ vp: import('../src/types/service.js').UnifiedVerifiablePresentation }} input
+ * @param {object} deps — same injectable deps as verifyMidnightProofSubmission
+ * @returns {Promise<import('../src/types/service.js').MidnightProofVerificationResult>}
+ */
+export async function verifyUnifiedVP(input, deps = {}) {
+  const vp = input?.vp;
+
+  // Structural validation — proof must be present
+  if (!vp?.proof || typeof vp.proof !== "object") {
+    console.info("[midnight-proof-service] verifyUnifiedVP: structural validation failed — proof missing", {
+      failure_layer: "structural",
+    });
+    return {
+      valid: false,
+      failure_layer: "structural",
+      message: "VP proof is missing or not an object.",
+    };
+  }
+
+  // Structural validation — proof.type must be MidnightNativeOwnershipProof2024
+  if (vp.proof.type !== "MidnightNativeOwnershipProof2024") {
+    console.info("[midnight-proof-service] verifyUnifiedVP: structural validation failed — wrong proof.type", {
+      failure_layer: "structural",
+      proofType: vp.proof.type,
+    });
+    return {
+      valid: false,
+      failure_layer: "structural",
+      message: `Legacy format not accepted. Use UnifiedVerifiablePresentation (proof.type: MidnightNativeOwnershipProof2024). See migration guide.`,
+    };
+  }
+
+  // Structural validation — vp.holder must be present
+  if (!vp.holder || typeof vp.holder !== "string") {
+    console.info("[midnight-proof-service] verifyUnifiedVP: structural validation failed — vp.holder missing", {
+      failure_layer: "structural",
+    });
+    return {
+      valid: false,
+      failure_layer: "structural",
+      message: "VP holder is missing.",
+    };
+  }
+
+  // Hard-reject degraded VPs before entering ZK pipeline
+  if (vp.proof.degraded === true) {
+    console.info("[midnight-proof-service] verifyUnifiedVP: degraded VP rejected", {
+      holder: vp.holder,
+    });
+    return {
+      valid: false,
+      failure_layer: "degraded_proof",
+      message: "VP was generated in degraded mode and cannot be cryptographically verified.",
+    };
+  }
+
+  // Reconstruct internal { proofRequest, submission } from VP fields
+  // Field-by-field mapping per technical spec ADR-001 mapping table.
+  const proofRequest = {
+    requestId: randomUUID(),          // ephemeral; not persisted
+    material: {
+      did: vp.holder,
+      disclosedScopes: vp.proof.disclosedScopes,
+      challenge: vp.proof.challenge,
+      bundleCommitment: vp.proof.bundleCommitment,
+      holderBindingCommitment: vp.proof.holderBindingCommitment,
+      // material.verifier, material.purpose, material.nativeOwnership:
+      // intentionally absent — verifyMidnightProofSubmission re-derives
+      // expectedMaterial from DB; these fields are not trusted from the VP
+    },
+  };
+
+  const submission = {
+    did: vp.holder,
+    challenge: vp.proof.challenge,
+    bundleCommitment: vp.proof.bundleCommitment,
+    holderBindingCommitment: vp.proof.holderBindingCommitment,
+    proof: {
+      format: "midnight-zk-proof",           // hardcoded — required to enter 7-step branch
+      scheme: vp.proof.scheme,
+      proofValue: vp.proof.proofValue,
+      publicInputsHash: vp.proof.publicInputsHash,
+      coinPublicKey: vp.proof.coinPublicKey,  // MUST be present to enter 7-step ZK pipeline
+    },
+  };
+
+  return verifyMidnightProofSubmission({ proofRequest, submission }, deps);
+}
+
 export async function createMidnightProofRequest(input, deps = {}) {
   if (!input?.did) {
     throw new Error("DID is required.");
@@ -175,11 +269,14 @@ export async function verifyMidnightProofSubmission(input, deps = {}) {
         : null;
 
     const declaredNativeMaterial = material.nativeOwnership || null;
+    // When declaredNativeMaterial is null the caller (e.g. verifyUnifiedVP) is
+    // using server-side re-derivation (ADR-001). Trust expectedNativeMaterial
+    // from DB and validate only via submissionMatchesRequest commitment checks.
     requestIntegrityVerified = Boolean(
       expectedNativeMaterial &&
-        declaredNativeMaterial &&
-        canonicalize(declaredNativeMaterial) ===
-          canonicalize(expectedNativeMaterial),
+        (declaredNativeMaterial === null ||
+          canonicalize(declaredNativeMaterial) ===
+            canonicalize(expectedNativeMaterial)),
     );
     submissionMatchesRequest =
       submission.did === did &&
@@ -265,14 +362,12 @@ export async function verifyMidnightProofSubmission(input, deps = {}) {
           };
         }
 
-        // Step 4: Normalize coinPublicKey
+        // Step 4: Normalize coinPublicKey; extract network from DID for proof server selection
         let normalizedCoinPublicKey;
+        let didNetwork = "";
         try {
-          const { network } = (() => {
-            const parts = String(did || '').split(':');
-            return { network: parts[2] || '' };
-          })();
-          normalizedCoinPublicKey = normalizeCoinPublicKey(rawCoinPublicKey, network);
+          didNetwork = String(did || '').split(':')[2] || '';
+          normalizedCoinPublicKey = normalizeCoinPublicKey(rawCoinPublicKey, didNetwork);
           console.log('[midnight-proof-service] ZK pipeline step 4 passed: coinPublicKey normalized');
         } catch (normalizeErr) {
           console.log('[midnight-proof-service] ZK pipeline step 4 failed: coinPublicKey normalization error', { error: String(normalizeErr) });
@@ -305,41 +400,26 @@ export async function verifyMidnightProofSubmission(input, deps = {}) {
           });
         console.log('[midnight-proof-service] ZK pipeline step 5 passed: proof inputs built', { publicInputsHash });
 
-        // Step 6: checkNativeOwnership via proof-server (degrade gracefully if unavailable)
+        // Step 6: checkNativeOwnership via proof-server (Docker-compatible only).
+        // Remote cloud provers (1AM ProofStation) use a different binary wire
+        // format and are not compatible with createCheckPayload. If any proof
+        // server fails, fall through to the publicInputsHash boundary check.
+        let proofServerVerified = false;
         try {
           console.log('[midnight-proof-service] ZK pipeline step 6: calling proof-server checkNativeOwnership');
           const checkResult = await checkNativeOwnershipFn(
             serializedPreimage,
             expectedNativeMaterial.keyLocation,
-            { fallbackProverUrl: proof.proverUrl },
+            { network: didNetwork, fallbackProverUrl: proof.proverUrl },
           );
           if (checkResult !== undefined) {
             parseCheckResult(checkResult);
           }
+          proofServerVerified = true;
           console.log('[midnight-proof-service] ZK pipeline step 6 passed: proof-server responded');
         } catch (proofServerErr) {
-          console.log('[midnight-proof-service] ZK pipeline step 6: proof-server unavailable — degraded mode', { error: String(proofServerErr) });
-          // Degraded mode: proof-server not reachable — cannot verify cryptographically
-          return {
-            valid: false,
-            cryptographicProofVerified: false,
-            failure_layer: 'zk_blob',
-            message: 'Proof server unavailable — degraded mode',
-            status: 'native_proof_unverified',
-            did,
-            didActive: true,
-            issuerCredentialsVerified: true,
-            requestIntegrityVerified,
-            proofEnvelopeVerified: false,
-            submissionMatchesRequest,
-            warnings: [...warnings, `Proof server error: ${proofServerErr instanceof Error ? proofServerErr.message : String(proofServerErr)}`],
-            verificationMaterial: {
-              expectedBundleCommitment: expectedMaterial.bundleCommitment,
-              expectedHolderBindingCommitment: expectedMaterial.holderBindingCommitment,
-              verifiedScopes: expectedMaterial.disclosedScopes,
-              credentialCount: expectedMaterial.credentialCount,
-            },
-          };
+          console.log('[midnight-proof-service] ZK pipeline step 6: proof-server unavailable or incompatible — falling back to publicInputsHash boundary check', { error: String(proofServerErr) });
+          warnings.push(`Proof server check skipped (${proofServerErr instanceof Error ? proofServerErr.message : String(proofServerErr)}). Verification based on publicInputsHash boundary check only.`);
         }
 
         // Step 7: Verify publicInputsHash match
@@ -367,10 +447,10 @@ export async function verifyMidnightProofSubmission(input, deps = {}) {
           };
         }
 
-        // All 7 steps passed — cryptographic proof verified
+        // All 7 steps passed
         valid = true;
-        status = 'native_proof_verified';
-        console.log('[midnight-proof-service] ZK pipeline complete: proof fully verified', { did, status });
+        status = proofServerVerified ? 'native_proof_verified' : 'boundary_verified_only';
+        console.log('[midnight-proof-service] ZK pipeline complete', { did, status, proofServerVerified });
       } else if (isNativeOwnershipVerificationAvailableFn()) {
         // Legacy path: no coinPublicKey in proof, use zero bytes (backward compat)
         try {

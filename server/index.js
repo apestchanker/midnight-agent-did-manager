@@ -32,18 +32,18 @@ import {
   validateDid,
 } from "./registry-service.js";
 import {
-  assembleSignedPresentation,
+  assembleUnifiedVP,
   getCredentialBundle,
   getIssuerDescriptor,
   getMidnightProofMaterial,
   listCredentialsForDid,
   rotateCredentialsForDid,
   verifyCredentialJwt,
-  verifyPresentation,
 } from "./vc-service.js";
 import {
   createMidnightProofRequest,
   verifyMidnightProofSubmission,
+  verifyUnifiedVP,
 } from "./midnight-proof-service.js";
 import {
   approveProofRequestByHuman,
@@ -500,36 +500,20 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/vcs/bundle") {
       const body = await readJson(req);
+
+      if (body.holderSignatureEnvelope) {
+        sendJson(res, 400, {
+          ok: false,
+          failure_layer: "structural",
+          message: "holderSignatureEnvelope is no longer supported. Use POST /api/vps/assemble to obtain a UnifiedVerifiablePresentation.",
+        });
+        return;
+      }
+
       const bundle = await getCredentialBundle({
         did: body.did,
         scopes: body.scopes,
       });
-
-      if (body.proofRequestId) {
-        const proofMaterial = await getMidnightProofMaterial({
-          did: body.did,
-          scopes: body.scopes,
-          challenge: body.challenge,
-          verifier: body.verifier,
-          purpose: body.purpose,
-        });
-
-        if (proofMaterial.holderSignatureEnvelope) {
-          const { presentation } = await assembleSignedPresentation({
-            did: body.did,
-            scopes: body.scopes,
-            challenge: proofMaterial.challenge,
-            verifier: proofMaterial.verifier,
-            purpose: proofMaterial.purpose,
-            bundleCommitment: proofMaterial.bundleCommitment,
-            holderBindingCommitment: proofMaterial.holderBindingCommitment,
-            holderSignatureEnvelope: proofMaterial.holderSignatureEnvelope,
-          });
-          sendJson(res, 200, { ...bundle, presentation });
-          return;
-        }
-      }
-
       sendJson(res, 200, bundle);
       return;
     }
@@ -600,40 +584,7 @@ const server = createServer(async (req, res) => {
         proofRequest: body.proofRequest,
         submission,
       });
-
-      // Branch A: fully verified — cryptographic proof confirmed
-      if (verification.valid === true && verification.cryptographicProofVerified === true) {
-        sendJson(res, 200, {
-          ok: true,
-          valid: true,
-          cryptographicProofVerified: true,
-          status: "verified",
-          verifiedAt: new Date().toISOString(),
-          method: "native_ownership",
-        });
-        return;
-      }
-
-      // Branch B: degraded — valid structure but proof server unavailable
-      if (verification.valid === true && verification.cryptographicProofVerified === false) {
-        sendJson(res, 503, {
-          ok: true,
-          valid: false,
-          cryptographicProofVerified: false,
-          status: "submitted",
-          failure_layer: "zk_blob",
-          message: "Proof server unavailable — degraded mode",
-        });
-        return;
-      }
-
-      // Branch C: rejected — validation failure
-      sendJson(res, 400, {
-        ok: false,
-        valid: false,
-        failure_layer: verification.failure_layer || null,
-        message: verification.message || "Proof verification failed.",
-      });
+      sendJson(res, 200, verification);
       return;
     }
 
@@ -643,18 +594,75 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && url.pathname === "/api/vps/assemble") {
+      const body = await readJson(req);
+      const { did, scopes, challenge, verifier, purpose, submission } = body;
+      if (!did || !scopes || !challenge || !purpose || !submission) {
+        sendJson(res, 400, {
+          ok: false,
+          failure_layer: "structural",
+          message: "Missing required fields: did, scopes, challenge, purpose, submission",
+        });
+        return;
+      }
+      const proofRequest = await createMidnightProofRequest({ did, scopes, challenge, verifier, purpose });
+      const verification = await verifyMidnightProofSubmission({ proofRequest, submission });
+      if (!verification.valid) {
+        if (verification.failure_layer === "proof_server_unavailable" || verification.degraded) {
+          const { presentation } = await assembleUnifiedVP({
+            did,
+            scopes,
+            challenge,
+            verifier,
+            purpose,
+            proofValue: submission?.proof?.proofValue ?? "",
+            publicInputsHash: submission?.proof?.publicInputsHash,
+            coinPublicKey: submission?.proof?.coinPublicKey ?? submission?.coinPublicKey ?? "",
+            bundleCommitment: submission?.bundleCommitment ?? "",
+            holderBindingCommitment: submission?.holderBindingCommitment ?? "",
+            disclosedScopes: scopes,
+            degraded: true,
+          });
+          sendJson(res, 200, presentation);
+          return;
+        }
+        sendJson(res, 422, {
+          ok: false,
+          ...verification,
+        });
+        return;
+      }
+      const { presentation } = await assembleUnifiedVP({
+        did,
+        scopes,
+        challenge,
+        verifier,
+        purpose,
+        proofValue: submission?.proof?.proofValue ?? "",
+        publicInputsHash: submission?.proof?.publicInputsHash,
+        coinPublicKey: submission?.proof?.coinPublicKey ?? submission?.coinPublicKey ?? "",
+        bundleCommitment: submission?.bundleCommitment ?? "",
+        holderBindingCommitment: submission?.holderBindingCommitment ?? "",
+        disclosedScopes: scopes,
+      });
+      sendJson(res, 200, presentation);
+      return;
+    }
+
     if (req.method === "POST" && url.pathname === "/api/vps/verify") {
       const body = await readJson(req);
-      const result = await verifyPresentation(body);
+      const result = await verifyUnifiedVP({ vp: body });
       if (!result.valid) {
-        const layer = result.failure_layer;
+        const layer = result.failure_layer || result.status;
         const statusCode =
-          layer === "structural" || layer === "holder_signature" ? 400 : 422;
+          layer === "structural" || layer === "degraded_proof" ? 400 : 422;
         sendJson(res, statusCode, {
           ok: false,
           valid: false,
-          failure_layer: result.failure_layer,
-          message: result.message,
+          failure_layer: result.failure_layer || result.status || "unknown",
+          status: result.status,
+          message: result.message || (result.warnings && result.warnings[0]) || "Verification failed.",
+          warnings: result.warnings?.length ? result.warnings : undefined,
         });
         return;
       }

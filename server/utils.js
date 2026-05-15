@@ -18,6 +18,22 @@ export function normalizeAgentId(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+export function normalizeWalletSignatureHex(value, minimumHexLength = 64) {
+  const raw = String(value || "").trim();
+  if (!/^[0-9a-f]+$/i.test(raw) || raw.length % 2 !== 0) {
+    return raw;
+  }
+  try {
+    const decoded = Buffer.from(raw, "hex").toString("utf8").trim();
+    if (/^[0-9a-f]+$/i.test(decoded) && decoded.length >= minimumHexLength) {
+      return decoded;
+    }
+  } catch {
+    // fall through
+  }
+  return raw;
+}
+
 export function generateAgentId() {
   return `agent-${crypto.randomUUID().toLowerCase()}`;
 }

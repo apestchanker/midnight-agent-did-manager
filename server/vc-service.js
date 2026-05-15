@@ -6,6 +6,7 @@ import { canonicalize, sortObject } from "../lib/canonical-json.js";
 import { buildNativeOwnershipMaterial } from "../lib/native-ownership-proof.js";
 import { query, withTransaction } from "./db.js";
 import { getIssuerKeys } from "./issuer-keys.js";
+import { normalizeWalletSignatureHex } from "./utils.js";
 
 function vcEnvelope(input) {
   return {
@@ -420,12 +421,15 @@ export async function verifyPresentation(input, deps = {}) {
     holderBindingCommitment: proof.holderBindingCommitment ?? null,
   });
 
+  const normalizedVerifyingKey = normalizeWalletSignatureHex(String(proof.verifyingKey || ""));
+  const normalizedSignature = normalizeWalletSignatureHex(String(proof.signature || ""), 2);
+
   let signatureValid = false;
   try {
     signatureValid = verifySignatureFn(
-      proof.verifyingKey,
+      normalizedVerifyingKey,
       new TextEncoder().encode(canonicalPayload),
-      proof.signature,
+      normalizedSignature,
     );
   } catch {
     signatureValid = false;
@@ -478,11 +482,11 @@ export async function assembleSignedPresentation(input) {
     .update(
       canonicalize({
         holder,
-        challenge: input.challenge,
-        verifier: input.verifier,
-        purpose: input.purpose,
-        bundleCommitment: input.bundleCommitment,
-        holderBindingCommitment: input.holderBindingCommitment,
+        challenge: input.challenge ?? null,
+        verifier: input.verifier ?? null,
+        purpose: input.purpose ?? null,
+        bundleCommitment: input.bundleCommitment ?? null,
+        holderBindingCommitment: input.holderBindingCommitment ?? null,
       }),
     )
     .digest("hex");
@@ -509,6 +513,69 @@ export async function assembleSignedPresentation(input) {
     holder,
     verifiableCredential: verifiableCredentials,
     proof: holderProof,
+  };
+
+  return { presentation };
+}
+
+/**
+ * Assemble a UnifiedVerifiablePresentation from completed ZK proof outputs.
+ * Does NOT run the ZK pipeline — packages existing outputs only.
+ *
+ * @param {{
+ *   did: string,
+ *   scopes: string[],
+ *   challenge: string,
+ *   verifier?: string,
+ *   purpose?: string,
+ *   proofValue: string,
+ *   publicInputsHash?: string,
+ *   coinPublicKey: string,
+ *   bundleCommitment: string,
+ *   holderBindingCommitment: string,
+ *   disclosedScopes?: string[],
+ *   degraded?: boolean,
+ * }} input
+ * @returns {Promise<{ presentation: import('../src/types/service.js').UnifiedVerifiablePresentation }>}
+ */
+export async function assembleUnifiedVP(input, deps = {}) {
+  const getCredentialBundleFn = deps.getCredentialBundle || getCredentialBundle;
+
+  const bundle = await getCredentialBundleFn({
+    did: input.did,
+    scopes: input.scopes,
+  });
+
+  const isDegraded = input.degraded === true;
+
+  if (isDegraded) {
+    console.warn("[vc-service] assembleUnifiedVP: assembling degraded VP (proof-server was unavailable)", {
+      did: input.did,
+      reason: "proof-server unavailable",
+    });
+  }
+
+  const proof = {
+    type: "MidnightNativeOwnershipProof2024",
+    created: new Date().toISOString(),
+    verificationMethod: `midnight:wallet:${input.did}`,
+    proofPurpose: "authentication",
+    scheme: "midnight-native-ownership-v1",
+    proofValue: isDegraded ? "" : input.proofValue,
+    coinPublicKey: input.coinPublicKey,
+    challenge: input.challenge,
+    bundleCommitment: input.bundleCommitment,
+    holderBindingCommitment: input.holderBindingCommitment,
+    disclosedScopes: input.disclosedScopes || input.scopes || [],
+    ...(isDegraded ? { degraded: true } : { publicInputsHash: input.publicInputsHash }),
+  };
+
+  const presentation = {
+    "@context": ["https://www.w3.org/ns/credentials/v2"],
+    type: ["VerifiablePresentation"],
+    holder: input.did,
+    verifiableCredential: bundle.verifiableCredentials,
+    proof,
   };
 
   return { presentation };
