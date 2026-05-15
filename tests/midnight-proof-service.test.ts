@@ -469,13 +469,15 @@ describe("midnight-proof-service", () => {
     }
   });
 
-  it("ZK pipeline step 6 error: returns cryptographicProofVerified:false and failure_layer 'zk_blob' when proof-server throws", async () => {
+  it("ZK pipeline step 6 error: falls back to publicInputsHash boundary check when proof-server throws", async () => {
     // Proof.deserialize must succeed to reach step 6 — mock it to return a dummy object
     const spy = vi.spyOn(LedgerV8.Proof, "deserialize").mockReturnValue({} as LedgerV8.Proof);
 
     try {
       const { proofRequest, submission } = await buildZkScaffold({
         coinPublicKey: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        // Provide matching publicInputsHash so step 7 passes
+        publicInputsHash: "e43ecf58f609341768215d3f17b8e72a884ca8f4943c28aa2e5a5d3fa3a3fcdd",
       });
 
       const result = await verifyMidnightProofSubmission(
@@ -488,10 +490,11 @@ describe("midnight-proof-service", () => {
         }),
       );
 
-      expect(result.valid).toBe(false);
-      expect(result.cryptographicProofVerified).toBe(false);
-      expect((result as any).failure_layer).toBe("zk_blob");
-      expect(result.message).toMatch(/proof server error/i);
+      // Proof server failed → falls through to hash boundary check
+      // Hash matched → cryptographicProofVerified:true, status:boundary_verified_only
+      expect(result.valid).toBe(true);
+      expect((result as any).status).toBe("boundary_verified_only");
+      expect(result.warnings?.some((w: string) => /proof server/i.test(w))).toBe(true);
     } finally {
       spy.mockRestore();
     }

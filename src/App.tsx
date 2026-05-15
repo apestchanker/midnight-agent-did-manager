@@ -1788,7 +1788,8 @@ export default function App() {
                               {(() => {
                                 const isNativeProof =
                                   registryProofVerification.status === "native_proof_verified" ||
-                                  registryProofVerification.status === "native_proof_unverified";
+                                  registryProofVerification.status === "native_proof_unverified" ||
+                                  registryProofVerification.status === "boundary_verified_only";
                                 return (
                                   <>
                               <div className="flex items-center gap-2">

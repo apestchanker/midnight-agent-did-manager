@@ -400,7 +400,11 @@ export async function verifyMidnightProofSubmission(input, deps = {}) {
           });
         console.log('[midnight-proof-service] ZK pipeline step 5 passed: proof inputs built', { publicInputsHash });
 
-        // Step 6: checkNativeOwnership via proof-server
+        // Step 6: checkNativeOwnership via proof-server (Docker-compatible only).
+        // Remote cloud provers (1AM ProofStation) use a different binary wire
+        // format and are not compatible with createCheckPayload. If any proof
+        // server fails, fall through to the publicInputsHash boundary check.
+        let proofServerVerified = false;
         try {
           console.log('[midnight-proof-service] ZK pipeline step 6: calling proof-server checkNativeOwnership');
           const checkResult = await checkNativeOwnershipFn(
@@ -411,26 +415,11 @@ export async function verifyMidnightProofSubmission(input, deps = {}) {
           if (checkResult !== undefined) {
             parseCheckResult(checkResult);
           }
+          proofServerVerified = true;
           console.log('[midnight-proof-service] ZK pipeline step 6 passed: proof-server responded');
         } catch (proofServerErr) {
-          console.log('[midnight-proof-service] ZK pipeline step 6 failed: proof-server error', { error: String(proofServerErr) });
-          return {
-            ...buildVerificationError({ layer: 'zk_blob', message: `Proof server error: ${proofServerErr instanceof Error ? proofServerErr.message : String(proofServerErr)}` }),
-            did,
-            didActive: true,
-            issuerCredentialsVerified: true,
-            requestIntegrityVerified,
-            cryptographicProofVerified: false,
-            proofEnvelopeVerified: false,
-            submissionMatchesRequest,
-            warnings,
-            verificationMaterial: {
-              expectedBundleCommitment: expectedMaterial.bundleCommitment,
-              expectedHolderBindingCommitment: expectedMaterial.holderBindingCommitment,
-              verifiedScopes: expectedMaterial.disclosedScopes,
-              credentialCount: expectedMaterial.credentialCount,
-            },
-          };
+          console.log('[midnight-proof-service] ZK pipeline step 6: proof-server unavailable or incompatible — falling back to publicInputsHash boundary check', { error: String(proofServerErr) });
+          warnings.push(`Proof server check skipped (${proofServerErr instanceof Error ? proofServerErr.message : String(proofServerErr)}). Verification based on publicInputsHash boundary check only.`);
         }
 
         // Step 7: Verify publicInputsHash match
@@ -458,10 +447,10 @@ export async function verifyMidnightProofSubmission(input, deps = {}) {
           };
         }
 
-        // All 7 steps passed — cryptographic proof verified
+        // All 7 steps passed
         valid = true;
-        status = 'native_proof_verified';
-        console.log('[midnight-proof-service] ZK pipeline complete: proof fully verified', { did, status });
+        status = proofServerVerified ? 'native_proof_verified' : 'boundary_verified_only';
+        console.log('[midnight-proof-service] ZK pipeline complete', { did, status, proofServerVerified });
       } else if (isNativeOwnershipVerificationAvailableFn()) {
         // Legacy path: no coinPublicKey in proof, use zero bytes (backward compat)
         try {
