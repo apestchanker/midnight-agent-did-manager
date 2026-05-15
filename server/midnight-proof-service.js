@@ -362,14 +362,12 @@ export async function verifyMidnightProofSubmission(input, deps = {}) {
           };
         }
 
-        // Step 4: Normalize coinPublicKey
+        // Step 4: Normalize coinPublicKey; extract network from DID for proof server selection
         let normalizedCoinPublicKey;
+        let didNetwork = "";
         try {
-          const { network } = (() => {
-            const parts = String(did || '').split(':');
-            return { network: parts[2] || '' };
-          })();
-          normalizedCoinPublicKey = normalizeCoinPublicKey(rawCoinPublicKey, network);
+          didNetwork = String(did || '').split(':')[2] || '';
+          normalizedCoinPublicKey = normalizeCoinPublicKey(rawCoinPublicKey, didNetwork);
           console.log('[midnight-proof-service] ZK pipeline step 4 passed: coinPublicKey normalized');
         } catch (normalizeErr) {
           console.log('[midnight-proof-service] ZK pipeline step 4 failed: coinPublicKey normalization error', { error: String(normalizeErr) });
@@ -408,7 +406,7 @@ export async function verifyMidnightProofSubmission(input, deps = {}) {
           const checkResult = await checkNativeOwnershipFn(
             serializedPreimage,
             expectedNativeMaterial.keyLocation,
-            { fallbackProverUrl: proof.proverUrl },
+            { network: didNetwork, fallbackProverUrl: proof.proverUrl },
           );
           if (checkResult !== undefined) {
             parseCheckResult(checkResult);

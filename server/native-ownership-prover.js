@@ -9,10 +9,52 @@ import {
 } from "@midnight-ntwrk/midnight-js-types";
 import { httpClientProvingProvider } from "@midnight-ntwrk/midnight-js-http-client-proof-provider";
 
-const PROVER_SERVER_URL =
+// ---------------------------------------------------------------------------
+// Network-aware proof server URL priority
+//
+// preprod : 1AM cloud → midnight.network backup → (local if set)
+// preview : 1AM cloud → (local if set)
+// mainnet : 1AM cloud → local (Lace does not provide a mainnet proof server)
+// undeployed : local only
+//
+// Override any tier via env vars; set to empty string to skip that tier.
+// ---------------------------------------------------------------------------
+
+const LOCAL_URL = (process.env.PROVER_SERVER_URI_LOCAL || "http://127.0.0.1:6300").trim();
+
+const PROOF_SERVER_URLS_BY_NETWORK = {
+  preprod: [
+    (process.env.PROVER_SERVER_URI_PREPROD  || "https://api-preprod.1am.xyz").trim(),
+    (process.env.PROVER_SERVER_URI_PREPROD_BACKUP || "https://proof-server.preprod.midnight.network").trim(),
+  ].filter(Boolean),
+
+  preview: [
+    (process.env.PROVER_SERVER_URI_PREVIEW  || "https://api-preview.1am.xyz").trim(),
+  ].filter(Boolean),
+
+  mainnet: [
+    (process.env.PROVER_SERVER_URI_MAINNET  || "https://api.1am.xyz").trim(),
+    LOCAL_URL,
+  ].filter(Boolean),
+
+  undeployed: [
+    LOCAL_URL,
+  ].filter(Boolean),
+};
+
+// Legacy single-URL env var — kept for backward compatibility.
+const PROVER_SERVER_URL_LEGACY = (
   process.env.PROVER_SERVER_URI ||
   process.env.VITE_PROVER_SERVER_URI ||
-  "";
+  ""
+).trim();
+
+function getCandidateUrls(network, extraFallback) {
+  const byNetwork = PROOF_SERVER_URLS_BY_NETWORK[network] || [];
+  const legacy = PROVER_SERVER_URL_LEGACY ? [PROVER_SERVER_URL_LEGACY] : [];
+  const extra = extraFallback ? [extraFallback] : [];
+  return [...new Set([...byNetwork, ...legacy, ...extra])].filter(Boolean);
+}
 
 class FileZkConfigProvider extends ZKConfigProvider {
   constructor(baseDir) {
@@ -51,7 +93,10 @@ function getProofArtifactsBaseDir() {
 }
 
 export function isNativeOwnershipVerificationAvailable() {
-  return Boolean(PROVER_SERVER_URL);
+  return (
+    Boolean(PROVER_SERVER_URL_LEGACY) ||
+    Object.values(PROOF_SERVER_URLS_BY_NETWORK).some((urls) => urls.length > 0)
+  );
 }
 
 async function getProvingProvider(url) {
@@ -70,10 +115,7 @@ export async function proveNativeOwnership(
   keyLocation,
   options = {},
 ) {
-  const candidateUrls = [
-    PROVER_SERVER_URL,
-    options.fallbackProverUrl || "",
-  ].filter(Boolean);
+  const candidateUrls = getCandidateUrls(options.network || "", options.fallbackProverUrl);
 
   if (candidateUrls.length === 0) {
     throw new Error("Native proof verification is not configured on the server.");
@@ -98,10 +140,7 @@ export async function checkNativeOwnership(
   keyLocation,
   options = {},
 ) {
-  const candidateUrls = [
-    PROVER_SERVER_URL,
-    options.fallbackProverUrl || "",
-  ].filter(Boolean);
+  const candidateUrls = getCandidateUrls(options.network || "", options.fallbackProverUrl);
 
   if (candidateUrls.length === 0) {
     throw new Error("Native proof verification is not configured on the server.");
@@ -110,9 +149,11 @@ export async function checkNativeOwnership(
   let lastError;
   for (const url of candidateUrls) {
     try {
+      console.log(`[native-ownership-prover] trying proof server: ${url}`);
       const provingProvider = await getProvingProvider(url);
       return await provingProvider.check(serializedPreimage, keyLocation);
     } catch (error) {
+      console.log(`[native-ownership-prover] ${url} failed: ${error instanceof Error ? error.message : String(error)}`);
       lastError = error;
     }
   }
