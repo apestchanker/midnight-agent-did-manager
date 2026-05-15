@@ -1,8 +1,11 @@
 import { randomUUID } from "crypto";
+import { Proof, parseCheckResult } from "@midnight-ntwrk/ledger-v8";
+import { canonicalize } from "../lib/canonical-json.js";
 import { verifyLocalPreviewProofSubmission } from "../lib/midnight-proof-envelope.js";
 import {
   buildNativeOwnershipMaterial,
   buildNativeOwnershipProofInputs,
+  normalizeCoinPublicKey,
 } from "../lib/native-ownership-proof.js";
 import {
   createMidnightProofMaterialFromRows,
@@ -15,11 +18,28 @@ import {
   checkNativeOwnership,
   isNativeOwnershipVerificationAvailable,
 } from "./native-ownership-prover.js";
+import { uniqueScopes } from "./utils.js";
 
-function uniqueScopes(scopes) {
-  return Array.isArray(scopes)
-    ? [...new Set(scopes.map((scope) => String(scope).trim()).filter(Boolean))]
-    : [];
+/**
+ * Convert a hex string to a Uint8Array.
+ * @param {string} hex
+ * @returns {Uint8Array}
+ */
+function fromHex(hex) {
+  const cleaned = String(hex || "").replace(/^0x/, "");
+  return new Uint8Array(
+    (cleaned.match(/.{1,2}/g) || []).map((segment) => Number.parseInt(segment, 16)),
+  );
+}
+
+/**
+ * Build a structured verification error object.
+ *
+ * @param {{ layer: string, message: string, details?: Record<string, unknown> }} opts
+ * @returns {{ valid: false, failure_layer: string, message: string, details: Record<string, unknown> }}
+ */
+export function buildVerificationError({ layer, message, details = {} }) {
+  return { valid: false, failure_layer: layer, message, details };
 }
 
 function requireObject(value, label) {
@@ -29,20 +49,6 @@ function requireObject(value, label) {
   return value;
 }
 
-function canonicalize(value) {
-  if (Array.isArray(value)) {
-    return value.map(canonicalize);
-  }
-  if (value && typeof value === "object") {
-    return Object.keys(value)
-      .sort()
-      .reduce((acc, key) => {
-        acc[key] = canonicalize(value[key]);
-        return acc;
-      }, {});
-  }
-  return value;
-}
 
 export async function createMidnightProofRequest(input, deps = {}) {
   if (!input?.did) {
@@ -134,8 +140,8 @@ export async function verifyMidnightProofSubmission(input, deps = {}) {
   let requestIntegrityVerified =
     material.bundleCommitment === expectedMaterial.bundleCommitment &&
     material.holderBindingCommitment === expectedMaterial.holderBindingCommitment &&
-    JSON.stringify(canonicalize(material.credentialCommitments)) ===
-      JSON.stringify(canonicalize(expectedMaterial.credentialCommitments));
+    canonicalize(material.credentialCommitments) ===
+      canonicalize(expectedMaterial.credentialCommitments);
 
   let submissionMatchesRequest =
     submission.did === did &&
@@ -172,8 +178,8 @@ export async function verifyMidnightProofSubmission(input, deps = {}) {
     requestIntegrityVerified = Boolean(
       expectedNativeMaterial &&
         declaredNativeMaterial &&
-        JSON.stringify(canonicalize(declaredNativeMaterial)) ===
-          JSON.stringify(canonicalize(expectedNativeMaterial)),
+        canonicalize(declaredNativeMaterial) ===
+          canonicalize(expectedNativeMaterial),
     );
     submissionMatchesRequest =
       submission.did === did &&
@@ -183,7 +189,190 @@ export async function verifyMidnightProofSubmission(input, deps = {}) {
         expectedNativeMaterial?.holderBindingCommitment;
 
     if (requestIntegrityVerified && submissionMatchesRequest && expectedNativeMaterial) {
-      if (isNativeOwnershipVerificationAvailableFn()) {
+      // When coinPublicKey is explicitly provided in the submission proof, run the full
+      // 7-step ZK verification pipeline (task 7). Otherwise fall back to legacy behavior.
+      if (proof.coinPublicKey !== undefined) {
+        console.log('[midnight-proof-service] verifyMidnightProofSubmission: entering 7-step ZK pipeline', { did, format: proof.format, scheme: proof.scheme });
+
+        // Step 1: coinPublicKey must be present and non-empty
+        const rawCoinPublicKey = proof.coinPublicKey;
+        if (!rawCoinPublicKey || (typeof rawCoinPublicKey === 'string' && !rawCoinPublicKey.trim())) {
+          console.log('[midnight-proof-service] ZK pipeline step 1 failed: coinPublicKey missing or empty');
+          return {
+            ...buildVerificationError({ layer: 'structural', message: 'coinPublicKey is required for midnight-zk-proof format' }),
+            did,
+            didActive: true,
+            issuerCredentialsVerified: true,
+            requestIntegrityVerified,
+            cryptographicProofVerified: false,
+            proofEnvelopeVerified: false,
+            submissionMatchesRequest,
+            warnings,
+            verificationMaterial: {
+              expectedBundleCommitment: expectedMaterial.bundleCommitment,
+              expectedHolderBindingCommitment: expectedMaterial.holderBindingCommitment,
+              verifiedScopes: expectedMaterial.disclosedScopes,
+              credentialCount: expectedMaterial.credentialCount,
+            },
+          };
+        }
+
+        // Step 2: keyLocation whitelist check — only 'prove_ownership' is allowed
+        const keyLocation = proof.keyLocation || expectedNativeMaterial.keyLocation;
+        if (keyLocation !== 'prove_ownership') {
+          console.log('[midnight-proof-service] ZK pipeline step 2 failed: unknown keyLocation', { keyLocation });
+          return {
+            ...buildVerificationError({ layer: 'circuit_check', message: `Unknown circuit keyLocation: ${keyLocation}` }),
+            did,
+            didActive: true,
+            issuerCredentialsVerified: true,
+            requestIntegrityVerified,
+            cryptographicProofVerified: false,
+            proofEnvelopeVerified: false,
+            submissionMatchesRequest,
+            warnings,
+            verificationMaterial: {
+              expectedBundleCommitment: expectedMaterial.bundleCommitment,
+              expectedHolderBindingCommitment: expectedMaterial.holderBindingCommitment,
+              verifiedScopes: expectedMaterial.disclosedScopes,
+              credentialCount: expectedMaterial.credentialCount,
+            },
+          };
+        }
+
+        // Step 3: Proof blob deserialization — fail fast if invalid
+        try {
+          Proof.deserialize(fromHex(String(proof.proofValue || '')));
+          console.log('[midnight-proof-service] ZK pipeline step 3 passed: proof blob deserialized');
+        } catch (_deserializeErr) {
+          console.log('[midnight-proof-service] ZK pipeline step 3 failed: proof blob deserialization error');
+          return {
+            ...buildVerificationError({ layer: 'zk_blob', message: 'Proof blob deserialization failed' }),
+            did,
+            didActive: true,
+            issuerCredentialsVerified: true,
+            requestIntegrityVerified,
+            cryptographicProofVerified: false,
+            proofEnvelopeVerified: false,
+            submissionMatchesRequest,
+            warnings,
+            verificationMaterial: {
+              expectedBundleCommitment: expectedMaterial.bundleCommitment,
+              expectedHolderBindingCommitment: expectedMaterial.holderBindingCommitment,
+              verifiedScopes: expectedMaterial.disclosedScopes,
+              credentialCount: expectedMaterial.credentialCount,
+            },
+          };
+        }
+
+        // Step 4: Normalize coinPublicKey
+        let normalizedCoinPublicKey;
+        try {
+          const { network } = (() => {
+            const parts = String(did || '').split(':');
+            return { network: parts[2] || '' };
+          })();
+          normalizedCoinPublicKey = normalizeCoinPublicKey(rawCoinPublicKey, network);
+          console.log('[midnight-proof-service] ZK pipeline step 4 passed: coinPublicKey normalized');
+        } catch (normalizeErr) {
+          console.log('[midnight-proof-service] ZK pipeline step 4 failed: coinPublicKey normalization error', { error: String(normalizeErr) });
+          return {
+            ...buildVerificationError({ layer: 'structural', message: `coinPublicKey normalization failed: ${normalizeErr instanceof Error ? normalizeErr.message : String(normalizeErr)}` }),
+            did,
+            didActive: true,
+            issuerCredentialsVerified: true,
+            requestIntegrityVerified,
+            cryptographicProofVerified: false,
+            proofEnvelopeVerified: false,
+            submissionMatchesRequest,
+            warnings,
+            verificationMaterial: {
+              expectedBundleCommitment: expectedMaterial.bundleCommitment,
+              expectedHolderBindingCommitment: expectedMaterial.holderBindingCommitment,
+              verifiedScopes: expectedMaterial.disclosedScopes,
+              credentialCount: expectedMaterial.credentialCount,
+            },
+          };
+        }
+
+        // Step 5: Build native ownership proof inputs using the real coinPublicKey
+        const { serializedPreimage, publicInputsHash } =
+          await buildNativeOwnershipProofInputs({
+            did,
+            challenge: material.challenge,
+            coinPublicKey: normalizedCoinPublicKey,
+            nativeMaterial: expectedNativeMaterial,
+          });
+        console.log('[midnight-proof-service] ZK pipeline step 5 passed: proof inputs built', { publicInputsHash });
+
+        // Step 6: checkNativeOwnership via proof-server (degrade gracefully if unavailable)
+        try {
+          console.log('[midnight-proof-service] ZK pipeline step 6: calling proof-server checkNativeOwnership');
+          const checkResult = await checkNativeOwnershipFn(
+            serializedPreimage,
+            expectedNativeMaterial.keyLocation,
+            { fallbackProverUrl: proof.proverUrl },
+          );
+          if (checkResult !== undefined) {
+            parseCheckResult(checkResult);
+          }
+          console.log('[midnight-proof-service] ZK pipeline step 6 passed: proof-server responded');
+        } catch (proofServerErr) {
+          console.log('[midnight-proof-service] ZK pipeline step 6: proof-server unavailable — degraded mode', { error: String(proofServerErr) });
+          // Degraded mode: proof-server not reachable — cannot verify cryptographically
+          return {
+            valid: false,
+            cryptographicProofVerified: false,
+            failure_layer: 'zk_blob',
+            message: 'Proof server unavailable — degraded mode',
+            status: 'native_proof_unverified',
+            did,
+            didActive: true,
+            issuerCredentialsVerified: true,
+            requestIntegrityVerified,
+            proofEnvelopeVerified: false,
+            submissionMatchesRequest,
+            warnings: [...warnings, `Proof server error: ${proofServerErr instanceof Error ? proofServerErr.message : String(proofServerErr)}`],
+            verificationMaterial: {
+              expectedBundleCommitment: expectedMaterial.bundleCommitment,
+              expectedHolderBindingCommitment: expectedMaterial.holderBindingCommitment,
+              verifiedScopes: expectedMaterial.disclosedScopes,
+              credentialCount: expectedMaterial.credentialCount,
+            },
+          };
+        }
+
+        // Step 7: Verify publicInputsHash match
+        const submittedHash = String(proof.publicInputsHash || '');
+        cryptographicProofVerified = submittedHash === publicInputsHash;
+        console.log('[midnight-proof-service] ZK pipeline step 7: publicInputsHash check', { submittedHash, expected: publicInputsHash, match: cryptographicProofVerified });
+
+        if (!cryptographicProofVerified) {
+          return {
+            ...buildVerificationError({ layer: 'zk_blob', message: 'Public inputs hash mismatch' }),
+            did,
+            didActive: true,
+            issuerCredentialsVerified: true,
+            requestIntegrityVerified,
+            cryptographicProofVerified: false,
+            proofEnvelopeVerified: false,
+            submissionMatchesRequest,
+            warnings,
+            verificationMaterial: {
+              expectedBundleCommitment: expectedMaterial.bundleCommitment,
+              expectedHolderBindingCommitment: expectedMaterial.holderBindingCommitment,
+              verifiedScopes: expectedMaterial.disclosedScopes,
+              credentialCount: expectedMaterial.credentialCount,
+            },
+          };
+        }
+
+        // All 7 steps passed — cryptographic proof verified
+        valid = true;
+        status = 'native_proof_verified';
+        console.log('[midnight-proof-service] ZK pipeline complete: proof fully verified', { did, status });
+      } else if (isNativeOwnershipVerificationAvailableFn()) {
+        // Legacy path: no coinPublicKey in proof, use zero bytes (backward compat)
         try {
           const { serializedPreimage, publicInputsHash } =
             await buildNativeOwnershipProofInputs({

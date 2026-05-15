@@ -17,6 +17,7 @@ data/
 !env.example
 
 # Local-only working files
+sdd/
 local/
 vendor/
 artifacts/sdk-package-src/

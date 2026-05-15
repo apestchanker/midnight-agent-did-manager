@@ -31,7 +31,7 @@ type WalletPanelProps = {
 
 const STORAGE_MODE_LABELS: Record<StorageMode, string> = {
   app_local: "App local vault",
-  patched_sdk: "Patched Midnight SDK",
+  sdk_level: "Midnight SDK (LevelDB)",
 };
 
 export function WalletPanel({
@@ -102,11 +102,11 @@ export function WalletPanel({
               </label>
               <label className="rounded-lg border border-amber-700/50 bg-amber-950/20 p-3">
                 <div className="flex items-center gap-2">
-                  <input type="radio" checked={storageMode === "patched_sdk"} readOnly />
-                  <span className="font-medium text-amber-100">Patched Midnight SDK</span>
+                  <input type="radio" checked={storageMode === "sdk_level"} readOnly />
+                  <span className="font-medium text-amber-100">Midnight SDK (LevelDB)</span>
                 </div>
                 <div className="mt-1 text-amber-100/80">
-                  Experimental. This uses a non-official patched version of the official Midnight SDK private-state provider. A PR has been submitted and is waiting for upstream approval.
+                  Experimental. This uses a official Midnight SDK LevelDB private-state provider (v4.0.4+). Encrypted IndexedDB storage with import/export support.
                 </div>
               </label>
             </div>
@@ -161,14 +161,14 @@ export function WalletPanel({
                 <input
                   type="radio"
                   name="storage-mode"
-                  checked={storageMode === "patched_sdk"}
-                  onChange={() => onSelectStorageMode("patched_sdk")}
+                  checked={storageMode === "sdk_level"}
+                  onChange={() => onSelectStorageMode("sdk_level")}
                   disabled={!canChangeStorageMode}
                 />
                 <div>
-                  <div className="font-medium text-amber-100">Patched Midnight SDK</div>
+                  <div className="font-medium text-amber-100">Midnight SDK (LevelDB)</div>
                   <div className="mt-1 text-xs text-amber-100/80">
-                    Warning: enabling this uses a non-official patched version of the official Midnight SDK private-state provider. The upstream PR has been submitted and is waiting for approval.
+                    Uses the official Midnight SDK LevelDB private-state provider (v4.0.4+). Encrypted IndexedDB storage with import/export support.
                   </div>
                 </div>
               </div>

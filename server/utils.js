@@ -1,5 +1,11 @@
 import crypto from "crypto";
 
+export function uniqueScopes(scopes) {
+  return Array.isArray(scopes)
+    ? [...new Set(scopes.map((scope) => String(scope).trim()).filter(Boolean))]
+    : [];
+}
+
 export function nowIso() {
   return new Date().toISOString();
 }
