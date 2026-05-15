@@ -203,9 +203,28 @@ export interface MidnightProofSubmission {
   };
 }
 
-export interface MidnightProofVerificationPackage {
-  proofRequest: MidnightProofRequest;
-  submission: MidnightProofSubmission;
+export interface MidnightNativeOwnershipProof2024 {
+  type: "MidnightNativeOwnershipProof2024";
+  created: string;                     // ISO-8601 timestamp
+  verificationMethod: string;          // "midnight:wallet:{did}"
+  proofPurpose: "authentication";
+  scheme: "midnight-native-ownership-v1";
+  proofValue: string;                  // hex ZK proof blob; empty string when degraded
+  publicInputsHash?: string;           // ABSENT (not null, not "") when degraded === true
+  coinPublicKey: string;               // Bech32m or hex wallet public key
+  challenge: string;
+  bundleCommitment: string;
+  holderBindingCommitment: string;
+  disclosedScopes: string[];
+  degraded?: true;                     // present and true ONLY when proof-server was unavailable
+}
+
+export interface UnifiedVerifiablePresentation {
+  "@context": ["https://www.w3.org/ns/credentials/v2"];
+  type: ["VerifiablePresentation"];
+  holder: string;                      // DID
+  verifiableCredential: string[];      // VC JWTs
+  proof: MidnightNativeOwnershipProof2024;
 }
 
 export interface MidnightProofVerificationResult {

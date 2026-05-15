@@ -11,9 +11,9 @@ import type {
   CustomerContext,
   DidRequestRow,
   MidnightProofSubmission,
-  MidnightProofVerificationPackage,
   ProofRequestRow,
 } from "../types/service";
+import type { MidnightProofVerificationPackage } from "../lib/proof-request";
 import {
   approveProofRequest,
   approveDidRequest,
@@ -132,15 +132,14 @@ export function WorkflowPanel({
 
   const refreshDashboard = useCallback(async () => {
     if (!walletAddress) return;
-    const [customer, customerRequests, customerProofRequests, pendingAdmin] = await Promise.all([
+    const [customer, pendingAdmin] = await Promise.all([
       getCustomerByWallet(walletAddress),
-      getCustomerByWallet(walletAddress).then((ctx) =>
-        ctx?.customer?.id ? listDidRequests({ customerId: ctx.customer.id }) : [],
-      ),
-      getCustomerByWallet(walletAddress).then((ctx) =>
-        ctx?.customer?.id ? listProofRequests({ customerId: ctx.customer.id }) : [],
-      ),
       listDidRequests({ status: "pending_admin_review" }),
+    ]);
+    const customerId = customer?.customer?.id;
+    const [customerRequests, customerProofRequests] = await Promise.all([
+      customerId ? listDidRequests({ customerId }) : Promise.resolve([]),
+      customerId ? listProofRequests({ customerId }) : Promise.resolve([]),
     ]);
     setCustomerContext(customer);
     setRequests(customerRequests);

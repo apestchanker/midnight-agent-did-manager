@@ -13,9 +13,9 @@ import type {
   ProofRequestRow,
   RegistryDidRow,
   Subscription,
+  UnifiedVerifiablePresentation,
   VerifiableCredentialRow,
 } from "../types/service";
-import type { Signature } from "@midnight-ntwrk/dapp-connector-api";
 import type { DeployResult } from "../types/did";
 
 const API_BASE =
@@ -556,22 +556,32 @@ export function createCredentialBundle(payload: {
   });
 }
 
-export function createSignedCredentialBundle(payload: {
+export function assembleVP(payload: {
   did: string;
   scopes: string[];
   challenge: string;
   verifier?: string;
   purpose: string;
-  bundleCommitment: string;
-  holderBindingCommitment: string;
-  holderSignatureEnvelope: Signature;
-}): Promise<CredentialBundle> {
-  return requestJson("/api/vcs/bundle", {
+  submission: MidnightProofSubmission;
+}): Promise<UnifiedVerifiablePresentation> {
+  return requestJson("/api/vps/assemble", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(payload),
+  });
+}
+
+export function verifyUnifiedVPRequest(
+  vp: UnifiedVerifiablePresentation,
+): Promise<MidnightProofVerificationResult> {
+  return requestJson("/api/vps/verify", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(vp),
   });
 }
 
@@ -623,6 +633,11 @@ export function createMidnightProofRequest(payload: {
   });
 }
 
+/**
+ * @deprecated Use verifyUnifiedVPRequest(vp) instead. This function targets the legacy
+ * internal route /api/vps/midnight/verify which is no longer the primary verification
+ * endpoint. Removal is a follow-up chore after all callers are migrated.
+ */
 export function verifyMidnightProofRequest(payload: {
   proofRequest: MidnightProofRequest;
   submission: MidnightProofSubmission;

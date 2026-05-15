@@ -7,21 +7,20 @@ import type { DidRecord } from "../types/did";
 import type {
   CredentialBundle,
   MidnightProofMaterial,
-  MidnightProofVerificationPackage,
   ProofRequestRow,
+  UnifiedVerifiablePresentation,
   VerifiableCredentialRow,
 } from "../types/service";
 import {
   approveProofRequest,
+  assembleVP,
   createCredentialBundle,
   createMidnightProofMaterial,
-  createSignedCredentialBundle,
   createWalletProofRequest,
   listCredentialsByDid,
   rejectProofRequest,
   rotateCredentialsByDid,
   submitProofRequestProof,
-  verifyPresentation,
 } from "../utils/serviceApi";
 import {
   isWalletApprovalRejected,
@@ -29,9 +28,7 @@ import {
 } from "../lib/proof-approval";
 import {
   createPreviewProofVerificationPackage,
-  createProofVerificationPackage,
 } from "../lib/proof-request";
-import { canonicalize } from "../../lib/canonical-json.js";
 import { createNativeOwnershipProofPackage } from "../lib/native-ownership-proof";
 import { createLocalPreviewProofSubmission } from "../../lib/midnight-proof-envelope.js";
 
@@ -52,11 +49,10 @@ export function VcPanel({
   const [bundle, setBundle] = useState<CredentialBundle | null>(null);
   const [proofMaterial, setProofMaterial] = useState<MidnightProofMaterial | null>(null);
   const [directProofRequest, setDirectProofRequest] = useState<ProofRequestRow | null>(null);
-  const [proofVerificationPackage, setProofVerificationPackage] =
-    useState<MidnightProofVerificationPackage | null>(null);
+  const [unifiedVP, setUnifiedVP] = useState<UnifiedVerifiablePresentation | null>(null);
+  const [vpDegraded, setVpDegraded] = useState(false);
   const [proofPackageMode, setProofPackageMode] = useState<"native" | "preview" | null>(null);
   const [proofPackageFallbackReason, setProofPackageFallbackReason] = useState("");
-  const [verificationResult, setVerificationResult] = useState<string>("");
   const [message, setMessage] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
   const [selectedScopes, setSelectedScopes] = useState<string[]>(["ownership"]);
@@ -68,7 +64,8 @@ export function VcPanel({
       setBundle(null);
       setProofMaterial(null);
       setDirectProofRequest(null);
-      setProofVerificationPackage(null);
+      setUnifiedVP(null);
+      setVpDegraded(false);
       setProofPackageMode(null);
       setProofPackageFallbackReason("");
       return;
@@ -100,10 +97,6 @@ export function VcPanel({
     }
   }
 
-  function getVerificationPackage(row: ProofRequestRow): MidnightProofVerificationPackage {
-    return createProofVerificationPackage(row);
-  }
-
   async function buildLocalPreviewPackage(row: ProofRequestRow) {
     const basePackage = createPreviewProofVerificationPackage(row);
     const previewSubmission = await createLocalPreviewProofSubmission({
@@ -117,7 +110,7 @@ export function VcPanel({
   }
 
   async function buildBestProofPackage(row: ProofRequestRow): Promise<{
-    package: MidnightProofVerificationPackage;
+    package: { proofRequest: ReturnType<typeof createPreviewProofVerificationPackage>["proofRequest"]; submission: ReturnType<typeof createPreviewProofVerificationPackage>["submission"] };
     mode: "native" | "preview";
     fallbackReason?: string;
   }> {
@@ -156,58 +149,9 @@ export function VcPanel({
       });
       setBundle(nextBundle);
       setProofMaterial(null);
-      setVerificationResult("");
       setMessage(`Bundle created with ${nextBundle.verifiableCredentials.length} VC(s).`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Failed to build VC bundle");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleBuildSignedPresentation() {
-    if (!record?.did || !connectedApi) return;
-    setLoading(true);
-    setMessage("");
-    try {
-      const material = await createMidnightProofMaterial({
-        did: record.did,
-        scopes: selectedScopes,
-        purpose: "selective-disclosure",
-      });
-
-      const payloadToSign = canonicalize({
-        holder: record.did,
-        challenge: material.challenge ?? null,
-        verifier: material.verifier ?? null,
-        purpose: material.purpose ?? null,
-        bundleCommitment: material.bundleCommitment ?? null,
-        holderBindingCommitment: material.holderBindingCommitment ?? null,
-      });
-
-      const holderSignatureEnvelope = await signProofApprovalPayload(connectedApi, payloadToSign);
-
-      const signedBundle = await createSignedCredentialBundle({
-        did: record.did,
-        scopes: selectedScopes,
-        challenge: material.challenge,
-        verifier: material.verifier,
-        purpose: material.purpose,
-        bundleCommitment: material.bundleCommitment,
-        holderBindingCommitment: material.holderBindingCommitment,
-        holderSignatureEnvelope,
-      });
-
-      setBundle(signedBundle);
-      setProofMaterial(material);
-      setVerificationResult("");
-      setMessage(
-        `Signed Verifiable Presentation assembled with ${signedBundle.verifiableCredentials.length} VC(s) and holder proof.`,
-      );
-    } catch (error) {
-      setMessage(
-        error instanceof Error ? error.message : "Failed to build signed presentation",
-      );
     } finally {
       setLoading(false);
     }
@@ -268,18 +212,32 @@ export function VcPanel({
         generatedPackage.package.submission,
       );
       setDirectProofRequest(submitted.proofRequest);
-      setProofVerificationPackage({
-        proofRequest: generatedPackage.package.proofRequest,
-        submission:
-          submitted.proofRequest.proof_submission as unknown as MidnightProofVerificationPackage["submission"],
-      });
       setProofPackageMode(generatedPackage.mode);
       setProofPackageFallbackReason(generatedPackage.fallbackReason || "");
-      setMessage(
-        generatedPackage.mode === "native"
-          ? `Proof request ${approved.id} approved by the connected wallet. A native Midnight ownership proof was generated, persisted, and is ready for registry verification.`
-          : `Proof request ${approved.id} approved by the connected wallet. Native proof generation failed, so a preview verification package was generated, persisted, and is ready for registry verification instead.${generatedPackage.fallbackReason ? ` Reason: ${generatedPackage.fallbackReason}` : ""}`,
-      );
+
+      const vp = await assembleVP({
+        did: approved.did,
+        scopes: approved.scopes,
+        challenge: approved.challenge,
+        verifier: approved.verifier ?? undefined,
+        purpose: approved.purpose,
+        submission: generatedPackage.package.submission,
+      });
+      const isDegraded = vp.proof?.degraded === true;
+      setUnifiedVP(vp);
+      setVpDegraded(isDegraded);
+
+      if (isDegraded) {
+        setMessage(
+          `Proof request ${approved.id} approved, but the VP was generated in degraded mode (proof-server unavailable). The VP cannot be cryptographically verified.${generatedPackage.fallbackReason ? ` Reason: ${generatedPackage.fallbackReason}` : ""}`,
+        );
+      } else {
+        setMessage(
+          generatedPackage.mode === "native"
+            ? `Proof request ${approved.id} approved by the connected wallet. A native Midnight ownership proof was generated and a Unified Verifiable Presentation is ready for registry verification.`
+            : `Proof request ${approved.id} approved by the connected wallet. Native proof generation fell back to preview mode; a Unified Verifiable Presentation is ready for registry verification.${generatedPackage.fallbackReason ? ` Reason: ${generatedPackage.fallbackReason}` : ""}`,
+        );
+      }
     } catch (error) {
       if (proofRequest && isWalletApprovalRejected(error)) {
         try {
@@ -292,7 +250,8 @@ export function VcPanel({
             `Proof request ${proofRequest.id} was rejected in the wallet and has been marked as rejected.`,
           );
           setDirectProofRequest(null);
-          setProofVerificationPackage(null);
+          setUnifiedVP(null);
+          setVpDegraded(false);
           setProofPackageMode(null);
           setProofPackageFallbackReason("");
           return;
@@ -328,10 +287,10 @@ export function VcPanel({
       setBundle(null);
       setProofMaterial(null);
       setDirectProofRequest(null);
-      setProofVerificationPackage(null);
+      setUnifiedVP(null);
+      setVpDegraded(false);
       setProofPackageMode(null);
       setProofPackageFallbackReason("");
-      setVerificationResult("");
       setMessage(
         `Rotated JWT credentials for ${result.did}. Revoked ${result.revokedCount} and issued ${result.issuedCount} new credential(s).`,
       );
@@ -344,27 +303,6 @@ export function VcPanel({
     }
   }
 
-  async function handleVerifyBundle() {
-    if (!bundle?.presentation) return;
-    setLoading(true);
-    setMessage("");
-    try {
-      const result = await verifyPresentation({
-        presentation: bundle.presentation,
-      });
-      setVerificationResult(
-        result.warning
-          ? `Presentation verified. ${result.warning}`
-          : "Presentation verified.",
-      );
-    } catch (error) {
-      setVerificationResult(
-        error instanceof Error ? error.message : "Failed to verify presentation",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
 
   return (
     <Card className="bg-zinc-900 border-zinc-800">
@@ -440,14 +378,6 @@ export function VcPanel({
               </Button>
               <Button
                 type="button"
-                onClick={handleBuildSignedPresentation}
-                disabled={loading || !connectedApi || !walletAddress}
-                className="bg-teal-700 hover:bg-teal-600 text-white"
-              >
-                {loading ? "Signing..." : "Build Signed Presentation"}
-              </Button>
-              <Button
-                type="button"
                 onClick={handleBuildMidnightProofMaterial}
                 disabled={loading}
                 className="bg-sky-700 hover:bg-sky-600 text-white"
@@ -479,17 +409,6 @@ export function VcPanel({
                 <div className="font-mono break-all">
                   {JSON.stringify(bundle.presentation, null, 2)}
                 </div>
-                <Button
-                  type="button"
-                  onClick={handleVerifyBundle}
-                  disabled={loading}
-                  className="bg-zinc-800 hover:bg-zinc-700 text-white"
-                >
-                  {loading ? "Verifying..." : "Verify Presentation"}
-                </Button>
-                {verificationResult && (
-                  <div className="text-zinc-300">{verificationResult}</div>
-                )}
               </div>
             )}
 
@@ -542,33 +461,35 @@ export function VcPanel({
                     Native proof generation fallback reason: {proofPackageFallbackReason}
                   </div>
                 )}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-white">Proof Verification Package JSON</div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800"
-                      onClick={() =>
-                        copyJson(
-                          "Proof verification package JSON",
-                          proofVerificationPackage || getVerificationPackage(directProofRequest),
-                        )
-                      }
-                    >
-                      Copy
-                    </Button>
+                {vpDegraded && (
+                  <div className="rounded-md border border-amber-700 bg-amber-950/20 p-2 text-amber-200 text-xs">
+                    Warning: This VP was generated in degraded mode. The proof-server was unavailable, so the VP contains no cryptographic proof and cannot be verified.
                   </div>
-                  <textarea
-                    readOnly
-                    value={JSON.stringify(
-                      proofVerificationPackage || getVerificationPackage(directProofRequest),
-                      null,
-                      2,
-                    )}
-                    className="min-h-[22rem] w-full rounded border border-zinc-800 bg-black/30 p-2 font-mono text-[11px] text-zinc-300"
-                  />
-                </div>
+                )}
+                {unifiedVP && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className={vpDegraded ? "text-amber-300" : "text-emerald-300"}>
+                        {vpDegraded ? "Degraded Verifiable Presentation JSON" : "Unified Verifiable Presentation JSON"}
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800"
+                        onClick={() =>
+                          copyJson("Unified Verifiable Presentation JSON", unifiedVP)
+                        }
+                      >
+                        Copy
+                      </Button>
+                    </div>
+                    <textarea
+                      readOnly
+                      value={JSON.stringify(unifiedVP, null, 2)}
+                      className="min-h-[22rem] w-full rounded border border-zinc-800 bg-black/30 p-2 font-mono text-[11px] text-zinc-300"
+                    />
+                  </div>
+                )}
                 {copyMessage && <div className="text-zinc-400">{copyMessage}</div>}
               </div>
             )}

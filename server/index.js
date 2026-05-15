@@ -33,6 +33,7 @@ import {
 } from "./registry-service.js";
 import {
   assembleSignedPresentation,
+  assembleUnifiedVP,
   getCredentialBundle,
   getIssuerDescriptor,
   getMidnightProofMaterial,
@@ -44,6 +45,7 @@ import {
 import {
   createMidnightProofRequest,
   verifyMidnightProofSubmission,
+  verifyUnifiedVP,
 } from "./midnight-proof-service.js";
 import {
   approveProofRequestByHuman,
@@ -500,26 +502,20 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/vcs/bundle") {
       const body = await readJson(req);
+
+      if (body.holderSignatureEnvelope) {
+        sendJson(res, 400, {
+          ok: false,
+          failure_layer: "structural",
+          message: "holderSignatureEnvelope is no longer supported. Use POST /api/vps/assemble to obtain a UnifiedVerifiablePresentation.",
+        });
+        return;
+      }
+
       const bundle = await getCredentialBundle({
         did: body.did,
         scopes: body.scopes,
       });
-
-      if (body.holderSignatureEnvelope) {
-        const { presentation } = await assembleSignedPresentation({
-          did: body.did,
-          scopes: body.scopes,
-          challenge: body.challenge,
-          verifier: body.verifier,
-          purpose: body.purpose,
-          bundleCommitment: body.bundleCommitment,
-          holderBindingCommitment: body.holderBindingCommitment,
-          holderSignatureEnvelope: body.holderSignatureEnvelope,
-        });
-        sendJson(res, 200, { ...bundle, presentation });
-        return;
-      }
-
       sendJson(res, 200, bundle);
       return;
     }
@@ -600,13 +596,68 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && url.pathname === "/api/vps/assemble") {
+      const body = await readJson(req);
+      const { did, scopes, challenge, verifier, purpose, submission } = body;
+      if (!did || !scopes || !challenge || !purpose || !submission) {
+        sendJson(res, 400, {
+          ok: false,
+          failure_layer: "structural",
+          message: "Missing required fields: did, scopes, challenge, purpose, submission",
+        });
+        return;
+      }
+      const proofRequest = await createMidnightProofRequest({ did, scopes, challenge, verifier, purpose });
+      const verification = await verifyMidnightProofSubmission({ proofRequest, submission });
+      if (!verification.valid) {
+        if (verification.failure_layer === "proof_server_unavailable" || verification.degraded) {
+          const { presentation } = await assembleUnifiedVP({
+            did,
+            scopes,
+            challenge,
+            verifier,
+            purpose,
+            proofValue: submission?.proof?.proofValue ?? "",
+            publicInputsHash: submission?.proof?.publicInputsHash,
+            coinPublicKey: submission?.proof?.coinPublicKey ?? submission?.coinPublicKey ?? "",
+            bundleCommitment: submission?.bundleCommitment ?? "",
+            holderBindingCommitment: submission?.holderBindingCommitment ?? "",
+            disclosedScopes: scopes,
+            degraded: true,
+          });
+          sendJson(res, 200, presentation);
+          return;
+        }
+        sendJson(res, 422, {
+          ok: false,
+          ...verification,
+        });
+        return;
+      }
+      const { presentation } = await assembleUnifiedVP({
+        did,
+        scopes,
+        challenge,
+        verifier,
+        purpose,
+        proofValue: submission?.proof?.proofValue ?? "",
+        publicInputsHash: submission?.proof?.publicInputsHash,
+        coinPublicKey: submission?.proof?.coinPublicKey ?? submission?.coinPublicKey ?? "",
+        bundleCommitment: submission?.bundleCommitment ?? "",
+        holderBindingCommitment: submission?.holderBindingCommitment ?? "",
+        disclosedScopes: scopes,
+      });
+      sendJson(res, 200, presentation);
+      return;
+    }
+
     if (req.method === "POST" && url.pathname === "/api/vps/verify") {
       const body = await readJson(req);
-      const result = await verifyPresentation(body);
+      const result = await verifyUnifiedVP({ vp: body });
       if (!result.valid) {
         const layer = result.failure_layer;
         const statusCode =
-          layer === "structural" || layer === "holder_signature" ? 400 : 422;
+          layer === "structural" || layer === "degraded_proof" ? 400 : 422;
         sendJson(res, statusCode, {
           ok: false,
           valid: false,

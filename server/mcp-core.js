@@ -307,17 +307,20 @@ function buildToolDefinitions(auth) {
     },
     {
       name: "credential_midnight_proof_verify",
-      title: "Verify Midnight Proof Submission",
+      title: "Verify Midnight UnifiedVerifiablePresentation",
+      // schema-version: 2
       description:
-        "Verify a submitted Midnight proof envelope against the proof request boundary, DID active status, and issuer credential signatures.",
+        "Verify a Midnight UnifiedVerifiablePresentation (proof.type: MidnightNativeOwnershipProof2024). Pass the VP JSON blob directly as the 'vp' field.",
       requiredScope: "did.credentials",
       inputSchema: {
         type: "object",
         properties: {
-          proofRequest: { type: "object" },
-          submission: { type: "object" },
+          vp: {
+            type: "object",
+            description: "UnifiedVerifiablePresentation JSON blob (proof.type: MidnightNativeOwnershipProof2024)",
+          },
         },
-        required: ["proofRequest", "submission"],
+        required: ["vp"],
         additionalProperties: false,
       },
       annotations: {
@@ -1067,13 +1070,16 @@ export function createMcpServer(deps) {
     }
 
     if (name === "credential_midnight_proof_verify") {
-      const verification = await deps.verifyMidnightProofSubmission({
-        proofRequest: args?.proofRequest,
-        submission: args?.submission,
-      });
+      const verification = await deps.verifyUnifiedVP({ vp: args?.vp });
+      if (!verification.valid) {
+        return textResult(
+          `Verification failed: ${verification.message ?? verification.failure_layer ?? "unknown error"}`,
+          { verified: false, ...verification },
+        );
+      }
       return textResult(
-        `Verified Midnight proof submission for ${verification.did} with status ${verification.status}.`,
-        verification,
+        `Verified Midnight UnifiedVerifiablePresentation for ${verification.did} with status ${verification.status}.`,
+        { verified: true, ...verification },
       );
     }
 

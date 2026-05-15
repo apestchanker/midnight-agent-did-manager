@@ -16,9 +16,9 @@ import type { DidRecord, DeployResult, RegistryAccess, RegistrySummary } from ".
 import type {
   DidRequestRow,
   LogEntry,
-  MidnightProofVerificationPackage,
   MidnightProofVerificationResult,
   RegistryDidRow,
+  UnifiedVerifiablePresentation,
 } from "./types/service";
 import { APP_VERSION } from "./lib/version";
 import {
@@ -41,7 +41,7 @@ import {
   listDidRequests,
   listRegistryDids,
   saveAdminRegistryDeployment,
-  verifyMidnightProofRequest,
+  verifyUnifiedVPRequest,
 } from "./utils/serviceApi";
 
 const SECTION_IDS = {
@@ -784,23 +784,18 @@ export default function App() {
     setRegistryProofVerification(null);
     setRegistryProofReceipt(null);
     try {
-      const parsed = JSON.parse(
-        registryProofPackageJson,
-      ) as MidnightProofVerificationPackage;
-      const proofRequest = parsed.proofRequest;
-      const submission = parsed.submission;
-      const coinPublicKey: string | undefined = providers
-        ? providers.walletProvider.getCoinPublicKey()
-        : undefined;
-      const result = await verifyMidnightProofRequest({
-        proofRequest,
-        submission,
-        coinPublicKey,
-      });
+      const parsed = JSON.parse(registryProofPackageJson) as UnifiedVerifiablePresentation;
+      // Validate: must be a UnifiedVerifiablePresentation (proof.type check)
+      if (!parsed?.proof?.type || parsed.proof.type !== "MidnightNativeOwnershipProof2024") {
+        setRegistryProofMessage(
+          "Legacy format not accepted. Please use a UnifiedVerifiablePresentation (proof.type: MidnightNativeOwnershipProof2024).",
+        );
+        return;
+      }
+      const result = await verifyUnifiedVPRequest(parsed);
       const verifiedAt = new Date().toISOString();
       const receiptPayload = JSON.stringify({
-        proofRequest,
-        submission,
+        vp: parsed,
         result,
         verifiedAt,
       });
@@ -1760,7 +1755,7 @@ export default function App() {
                           <div>
                             <h3 className="text-base font-semibold text-white">Verify Proof</h3>
                             <p className="text-sm text-zinc-500">
-                              Paste the single Proof Verification Package JSON emitted by the wallet approval flow. It can carry either the local preview proof envelope for testing or a later native Midnight proof.
+                              Paste the UnifiedVerifiablePresentation JSON emitted by the wallet approval flow (proof.type: MidnightNativeOwnershipProof2024).
                             </p>
                           </div>
                           <div className="space-y-2">
@@ -1772,7 +1767,7 @@ export default function App() {
                               value={registryProofPackageJson}
                               onChange={(e) => setRegistryProofPackageJson(e.target.value)}
                               className="min-h-[24rem] w-full rounded-md border border-zinc-800 bg-zinc-950 p-3 font-mono text-xs text-white"
-                              placeholder='{"proofRequest":{"requestId":"...","proofRequestType":"midnight-holder-proof-request","material":{...}},"submission":{"did":"...","challenge":"...","bundleCommitment":"...","holderBindingCommitment":"...","proof":{"format":"midnight-zk-proof","proofValue":"..."}}}'
+                              placeholder='{"@context":["https://www.w3.org/ns/credentials/v2"],"type":["VerifiablePresentation"],"holder":"did:midnight:...","verifiableCredential":["eyJ..."],"proof":{"type":"MidnightNativeOwnershipProof2024","created":"2026-01-01T00:00:00.000Z","verificationMethod":"midnight:wallet:did:midnight:...","proofPurpose":"authentication","scheme":"midnight-native-ownership-v1","proofValue":"0x...","publicInputsHash":"0x...","coinPublicKey":"mn1q...","challenge":"...","bundleCommitment":"0x...","holderBindingCommitment":"0x...","disclosedScopes":["ownership"]}}'
                             />
                           </div>
                           <div className="flex items-center gap-3">
