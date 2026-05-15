@@ -655,14 +655,16 @@ const server = createServer(async (req, res) => {
       const body = await readJson(req);
       const result = await verifyUnifiedVP({ vp: body });
       if (!result.valid) {
-        const layer = result.failure_layer;
+        const layer = result.failure_layer || result.status;
         const statusCode =
           layer === "structural" || layer === "degraded_proof" ? 400 : 422;
         sendJson(res, statusCode, {
           ok: false,
           valid: false,
-          failure_layer: result.failure_layer,
-          message: result.message,
+          failure_layer: result.failure_layer || result.status || "unknown",
+          status: result.status,
+          message: result.message || (result.warnings && result.warnings[0]) || "Verification failed.",
+          warnings: result.warnings?.length ? result.warnings : undefined,
         });
         return;
       }

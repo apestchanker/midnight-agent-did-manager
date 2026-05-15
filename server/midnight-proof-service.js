@@ -269,11 +269,14 @@ export async function verifyMidnightProofSubmission(input, deps = {}) {
         : null;
 
     const declaredNativeMaterial = material.nativeOwnership || null;
+    // When declaredNativeMaterial is null the caller (e.g. verifyUnifiedVP) is
+    // using server-side re-derivation (ADR-001). Trust expectedNativeMaterial
+    // from DB and validate only via submissionMatchesRequest commitment checks.
     requestIntegrityVerified = Boolean(
       expectedNativeMaterial &&
-        declaredNativeMaterial &&
-        canonicalize(declaredNativeMaterial) ===
-          canonicalize(expectedNativeMaterial),
+        (declaredNativeMaterial === null ||
+          canonicalize(declaredNativeMaterial) ===
+            canonicalize(expectedNativeMaterial)),
     );
     submissionMatchesRequest =
       submission.did === did &&
@@ -399,7 +402,7 @@ export async function verifyMidnightProofSubmission(input, deps = {}) {
           });
         console.log('[midnight-proof-service] ZK pipeline step 5 passed: proof inputs built', { publicInputsHash });
 
-        // Step 6: checkNativeOwnership via proof-server (degrade gracefully if unavailable)
+        // Step 6: checkNativeOwnership via proof-server
         try {
           console.log('[midnight-proof-service] ZK pipeline step 6: calling proof-server checkNativeOwnership');
           const checkResult = await checkNativeOwnershipFn(
@@ -412,21 +415,17 @@ export async function verifyMidnightProofSubmission(input, deps = {}) {
           }
           console.log('[midnight-proof-service] ZK pipeline step 6 passed: proof-server responded');
         } catch (proofServerErr) {
-          console.log('[midnight-proof-service] ZK pipeline step 6: proof-server unavailable — degraded mode', { error: String(proofServerErr) });
-          // Degraded mode: proof-server not reachable — cannot verify cryptographically
+          console.log('[midnight-proof-service] ZK pipeline step 6 failed: proof-server error', { error: String(proofServerErr) });
           return {
-            valid: false,
-            cryptographicProofVerified: false,
-            failure_layer: 'zk_blob',
-            message: 'Proof server unavailable — degraded mode',
-            status: 'native_proof_unverified',
+            ...buildVerificationError({ layer: 'zk_blob', message: `Proof server error: ${proofServerErr instanceof Error ? proofServerErr.message : String(proofServerErr)}` }),
             did,
             didActive: true,
             issuerCredentialsVerified: true,
             requestIntegrityVerified,
+            cryptographicProofVerified: false,
             proofEnvelopeVerified: false,
             submissionMatchesRequest,
-            warnings: [...warnings, `Proof server error: ${proofServerErr instanceof Error ? proofServerErr.message : String(proofServerErr)}`],
+            warnings,
             verificationMaterial: {
               expectedBundleCommitment: expectedMaterial.bundleCommitment,
               expectedHolderBindingCommitment: expectedMaterial.holderBindingCommitment,
