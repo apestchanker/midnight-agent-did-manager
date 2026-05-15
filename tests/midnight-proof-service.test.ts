@@ -469,7 +469,7 @@ describe("midnight-proof-service", () => {
     }
   });
 
-  it("ZK pipeline step 6 degraded: returns cryptographicProofVerified:false and message containing 'degraded' when proof-server throws", async () => {
+  it("ZK pipeline step 6 error: returns cryptographicProofVerified:false and failure_layer 'zk_blob' when proof-server throws", async () => {
     // Proof.deserialize must succeed to reach step 6 — mock it to return a dummy object
     const spy = vi.spyOn(LedgerV8.Proof, "deserialize").mockReturnValue({} as LedgerV8.Proof);
 
@@ -490,7 +490,8 @@ describe("midnight-proof-service", () => {
 
       expect(result.valid).toBe(false);
       expect(result.cryptographicProofVerified).toBe(false);
-      expect(result.message).toMatch(/degraded/i);
+      expect((result as any).failure_layer).toBe("zk_blob");
+      expect(result.message).toMatch(/proof server error/i);
     } finally {
       spy.mockRestore();
     }
