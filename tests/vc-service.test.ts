@@ -5,6 +5,7 @@ import { canonicalize } from "../lib/canonical-json.js";
 import { getIssuerKeys } from "../server/issuer-keys.js";
 import {
   assembleSignedPresentation,
+  assembleUnifiedVP,
   createMidnightProofMaterialFromRows,
   getIssuerDescriptor,
   verifyCredentialJwt,
@@ -274,5 +275,88 @@ describe("verifyPresentation holderProof validation", () => {
 
     expect(result.valid).toBe(true);
     expect((result as { holderProofVerified?: boolean }).holderProofVerified).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// assembleUnifiedVP — Task 2 TDD tests
+// ---------------------------------------------------------------------------
+
+describe("assembleUnifiedVP", () => {
+  const testDid = "did:midnight:undeployed:0xABC";
+  const baseInput = {
+    did: testDid,
+    scopes: ["ownership"],
+    challenge: "abc123",
+    verifier: "did:midnight:verifier",
+    purpose: "selective-disclosure",
+    proofValue: "0xdeadbeef",
+    publicInputsHash: "0xaabbccdd",
+    coinPublicKey: "mn1q...",
+    bundleCommitment: "0xbundle",
+    holderBindingCommitment: "0xholder",
+    disclosedScopes: ["ownership"],
+  };
+
+  const mockGetCredentialBundle = vi.fn(async () => ({
+    holder: testDid,
+    disclosedScopes: ["ownership"],
+    verifiableCredentials: ["eyJfake.jwt.1"],
+    presentation: {
+      "@context": ["https://www.w3.org/ns/credentials/v2"],
+      type: ["VerifiablePresentation"],
+      holder: testDid,
+      verifiableCredential: ["eyJfake.jwt.1"],
+    },
+  }));
+
+  it("normal path: returns VP with correct proof.type, non-empty proofValue, publicInputsHash present, degraded absent", async () => {
+    const result = await assembleUnifiedVP(baseInput, { getCredentialBundle: mockGetCredentialBundle });
+
+    const { presentation } = result;
+    expect(presentation.proof.type).toBe("MidnightNativeOwnershipProof2024");
+    expect(presentation.proof.proofValue).not.toBe("");
+    expect(presentation.proof.publicInputsHash).toBe("0xaabbccdd");
+    expect(presentation.proof.degraded).toBeUndefined();
+    expect(presentation["@context"]).toEqual(["https://www.w3.org/ns/credentials/v2"]);
+    expect(presentation.type).toEqual(["VerifiablePresentation"]);
+    expect(presentation.holder).toBe(testDid);
+  });
+
+  it("normal path: verifiableCredential array is populated from getCredentialBundle", async () => {
+    const result = await assembleUnifiedVP(baseInput, { getCredentialBundle: mockGetCredentialBundle });
+
+    expect(result.presentation.verifiableCredential).toEqual(["eyJfake.jwt.1"]);
+  });
+
+  it("normal path: proof fields are correctly mapped from input", async () => {
+    const result = await assembleUnifiedVP(baseInput, { getCredentialBundle: mockGetCredentialBundle });
+
+    const { proof } = result.presentation;
+    expect(proof.challenge).toBe("abc123");
+    expect(proof.bundleCommitment).toBe("0xbundle");
+    expect(proof.holderBindingCommitment).toBe("0xholder");
+    expect(proof.coinPublicKey).toBe("mn1q...");
+    expect(proof.disclosedScopes).toEqual(["ownership"]);
+    expect(proof.verificationMethod).toBe(`midnight:wallet:${testDid}`);
+    expect(proof.proofPurpose).toBe("authentication");
+    expect(proof.scheme).toBe("midnight-native-ownership-v1");
+  });
+
+  it("degraded path: proof.degraded === true, proofValue === '', publicInputsHash key absent", async () => {
+    const degradedInput = { ...baseInput, degraded: true };
+    const result = await assembleUnifiedVP(degradedInput, { getCredentialBundle: mockGetCredentialBundle });
+
+    const { proof } = result.presentation;
+    expect(proof.degraded).toBe(true);
+    expect(proof.proofValue).toBe("");
+    expect(Object.prototype.hasOwnProperty.call(proof, "publicInputsHash")).toBe(false);
+  });
+
+  it("degraded path: verifiableCredential still populated from getCredentialBundle", async () => {
+    const degradedInput = { ...baseInput, degraded: true };
+    const result = await assembleUnifiedVP(degradedInput, { getCredentialBundle: mockGetCredentialBundle });
+
+    expect(result.presentation.verifiableCredential).toEqual(["eyJfake.jwt.1"]);
   });
 });

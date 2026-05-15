@@ -123,6 +123,16 @@ function createDeps() {
       cryptographicProofVerified: false,
       warnings: [],
     })),
+    verifyUnifiedVP: vi.fn(async () => ({
+      valid: true,
+      status: "native_proof_verified",
+      did: "did:midnight:preprod:contract:agent",
+      didActive: true,
+      issuerCredentialsVerified: true,
+      requestIntegrityVerified: true,
+      cryptographicProofVerified: true,
+      submissionMatchesRequest: true,
+    })),
   };
 }
 
@@ -405,6 +415,27 @@ describe("MCP server core", () => {
       "midnight-holder-proof-request",
     );
 
+    const validVP = {
+      "@context": ["https://www.w3.org/ns/credentials/v2"],
+      type: ["VerifiablePresentation"],
+      holder: "did:midnight:preprod:contract:agent",
+      verifiableCredential: ["eyJ.jwt1"],
+      proof: {
+        type: "MidnightNativeOwnershipProof2024",
+        created: new Date().toISOString(),
+        verificationMethod: "midnight:wallet:did:midnight:preprod:contract:agent",
+        proofPurpose: "authentication",
+        scheme: "midnight-native-ownership-v1",
+        proofValue: "0xdeadbeef",
+        publicInputsHash: "0xabc123",
+        coinPublicKey: "mn1qtest",
+        challenge: "challenge-1",
+        bundleCommitment: "a".repeat(64),
+        holderBindingCommitment: "b".repeat(64),
+        disclosedScopes: ["ownership"],
+      },
+    };
+
     const verifyResponse = await server.handleRequest(
       {
         jsonrpc: "2.0",
@@ -413,17 +444,7 @@ describe("MCP server core", () => {
         params: {
           name: "credential_midnight_proof_verify",
           arguments: {
-            proofRequest: createResponse?.result.structuredContent,
-            submission: {
-              did: "did:midnight:preprod:contract:agent",
-              challenge: "challenge-1",
-              bundleCommitment: "a".repeat(64),
-              holderBindingCommitment: "b".repeat(64),
-              proof: {
-                format: "midnight-zk-proof",
-                proofValue: "opaque-proof-value",
-              },
-            },
+            vp: validVP,
           },
         },
       },
@@ -435,9 +456,9 @@ describe("MCP server core", () => {
       },
     );
 
-    expect(deps.verifyMidnightProofSubmission).toHaveBeenCalled();
+    expect(deps.verifyUnifiedVP).toHaveBeenCalledWith({ vp: validVP });
     expect(verifyResponse?.result.structuredContent.status).toBe(
-      "boundary_verified_only",
+      "native_proof_verified",
     );
   });
 
@@ -477,5 +498,161 @@ describe("MCP server core", () => {
       did: "did:midnight:preprod:contract:agent",
     });
     expect(response?.result.structuredContent.issuedCount).toBe(2);
+  });
+
+  // Task 5: credential_midnight_proof_verify schema-version: 2 tests
+  describe("credential_midnight_proof_verify (schema-version: 2)", () => {
+    function createCredsDeps() {
+      const deps = createDeps();
+      deps.authenticateMcpKey = vi.fn(async (key: string) => {
+        if (key !== "mcp_valid") return null;
+        return {
+          id: "key-1",
+          customer_id: "customer-1",
+          label: "agent-key",
+          scopes: ["did.credentials"],
+        };
+      });
+      return deps;
+    }
+
+    const credHeaders = { transport: "http", headers: { "x-mcp-key": "mcp_valid" } } as const;
+
+    it("accepts { vp } and returns verified: true on success", async () => {
+      const deps = createCredsDeps();
+      deps.verifyUnifiedVP = vi.fn(async () => ({
+        valid: true,
+        status: "native_proof_verified",
+        did: "did:midnight:test",
+        didActive: true,
+        issuerCredentialsVerified: true,
+        requestIntegrityVerified: true,
+        cryptographicProofVerified: true,
+        submissionMatchesRequest: true,
+      }));
+      const server = createMcpServer(deps);
+
+      const vp = {
+        "@context": ["https://www.w3.org/ns/credentials/v2"],
+        type: ["VerifiablePresentation"],
+        holder: "did:midnight:test",
+        verifiableCredential: [],
+        proof: {
+          type: "MidnightNativeOwnershipProof2024",
+          created: "2026-05-15T00:00:00.000Z",
+          verificationMethod: "midnight:wallet:did:midnight:test",
+          proofPurpose: "authentication",
+          scheme: "midnight-native-ownership-v1",
+          proofValue: "0xdeadbeef",
+          publicInputsHash: "0xabc",
+          coinPublicKey: "mn1q",
+          challenge: "c1",
+          bundleCommitment: "b1",
+          holderBindingCommitment: "h1",
+          disclosedScopes: ["ownership"],
+        },
+      };
+
+      const response = await server.handleRequest(
+        {
+          jsonrpc: "2.0",
+          id: 100,
+          method: "tools/call",
+          params: { name: "credential_midnight_proof_verify", arguments: { vp } },
+        },
+        credHeaders,
+      );
+
+      expect(deps.verifyUnifiedVP).toHaveBeenCalledWith({ vp });
+      expect(response?.result.structuredContent.verified).toBe(true);
+      expect(response?.result.structuredContent.status).toBe("native_proof_verified");
+    });
+
+    it("accepts { vp: degradedVP } and returns verified: false with degraded_proof message", async () => {
+      const deps = createCredsDeps();
+      deps.verifyUnifiedVP = vi.fn(async () => ({
+        valid: false,
+        failure_layer: "degraded_proof",
+        message: "VP was generated in degraded mode and cannot be cryptographically verified.",
+      }));
+      const server = createMcpServer(deps);
+
+      const degradedVP = {
+        "@context": ["https://www.w3.org/ns/credentials/v2"],
+        type: ["VerifiablePresentation"],
+        holder: "did:midnight:test",
+        verifiableCredential: [],
+        proof: {
+          type: "MidnightNativeOwnershipProof2024",
+          created: "2026-05-15T00:00:00.000Z",
+          verificationMethod: "midnight:wallet:did:midnight:test",
+          proofPurpose: "authentication",
+          scheme: "midnight-native-ownership-v1",
+          proofValue: "",
+          coinPublicKey: "mn1q",
+          challenge: "c1",
+          bundleCommitment: "b1",
+          holderBindingCommitment: "h1",
+          disclosedScopes: ["ownership"],
+          degraded: true,
+        },
+      };
+
+      const response = await server.handleRequest(
+        {
+          jsonrpc: "2.0",
+          id: 101,
+          method: "tools/call",
+          params: { name: "credential_midnight_proof_verify", arguments: { vp: degradedVP } },
+        },
+        credHeaders,
+      );
+
+      expect(deps.verifyUnifiedVP).toHaveBeenCalledWith({ vp: degradedVP });
+      expect(response?.result.structuredContent.verified).toBe(false);
+      expect(response?.result.structuredContent.failure_layer).toBe("degraded_proof");
+    });
+
+    it("accepts { vp: {} } (missing proof fields) and returns structured error with verified: false", async () => {
+      const deps = createCredsDeps();
+      deps.verifyUnifiedVP = vi.fn(async () => ({
+        valid: false,
+        failure_layer: "structural",
+        message: "VP proof.type must be MidnightNativeOwnershipProof2024",
+      }));
+      const server = createMcpServer(deps);
+
+      const response = await server.handleRequest(
+        {
+          jsonrpc: "2.0",
+          id: 102,
+          method: "tools/call",
+          params: { name: "credential_midnight_proof_verify", arguments: { vp: {} } },
+        },
+        credHeaders,
+      );
+
+      expect(deps.verifyUnifiedVP).toHaveBeenCalledWith({ vp: {} });
+      expect(response?.result.structuredContent.verified).toBe(false);
+      expect(response?.result.structuredContent.failure_layer).toBe("structural");
+    });
+
+    it("tool definition has 'vp' as sole required property and no proofRequest/submission", async () => {
+      const server = createMcpServer(createDeps());
+      const response = await server.handleRequest(
+        { jsonrpc: "2.0", id: 103, method: "tools/list" },
+        { transport: "http", headers: {} },
+      );
+      const tool = response?.result.tools.find(
+        (t: { name: string }) => t.name === "credential_midnight_proof_verify",
+      );
+      expect(tool).toBeDefined();
+      expect(tool.inputSchema.required).toEqual(["vp"]);
+      expect(tool.inputSchema.properties.vp).toBeDefined();
+      expect(tool.inputSchema.properties.proofRequest).toBeUndefined();
+      expect(tool.inputSchema.properties.submission).toBeUndefined();
+      expect(tool.description).toContain("UnifiedVerifiablePresentation");
+      expect(tool.description).toContain("MidnightNativeOwnershipProof2024");
+    });
   });
 });
