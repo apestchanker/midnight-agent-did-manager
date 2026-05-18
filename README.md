@@ -284,6 +284,12 @@ Public directory view for the selected registry contract.
 
 This repository is W3C-aligned, not a full conformance-certified implementation.
 
+### Why W3C standards and not a custom scheme
+
+Traditional identity systems are silos. Google knows who you are inside Google; a bank knows who you are inside its perimeter. Every time you need to prove something to a third party, you must go back through the original issuer. That creates a hard dependency: the issuer must be available, must cooperate, and must be trusted by the verifier.
+
+W3C DID Core and the Verifiable Credentials Data Model were designed to break that dependency. A DID is an identifier controlled by its subject, not by any issuing organisation. A Verifiable Credential is a signed claim that any verifier can validate independently, without contacting the issuer at runtime. Using these standards means any external system that understands W3C DIDs can resolve a `did:midnight:...` identifier and consume credentials from this implementation without building bespoke integrations. Without them, this identity layer would be a Midnight-only silo, useful only within this ecosystem.
+
 Implemented:
 
 - `did:midnight:<network>:<contract>:<agentKey>` identifiers

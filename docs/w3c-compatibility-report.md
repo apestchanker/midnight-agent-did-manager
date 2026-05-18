@@ -1,5 +1,17 @@
 # W3C Compatibility Report
 
+## Why W3C and not a custom identity scheme
+
+Traditional identity systems are silos. Every time a verifier needs to confirm a claim, it must contact the original issuer — the issuer must be online, cooperative, and trusted. That creates a runtime dependency on a centralised authority.
+
+W3C DID Core and the Verifiable Credentials Data Model break that dependency by design:
+
+- A **DID** is an identifier whose subject controls it. Its validity is anchored in a decentralised registry (in this case, the Midnight Compact contract), not in any organisation's database.
+- A **Verifiable Credential** carries a cryptographic signature from the issuer. Any verifier can check that signature offline using the issuer's public key. The issuer does not need to be reachable at verification time.
+- **Interoperability** follows from the standard. Any system that understands W3C DIDs can resolve a `did:midnight:...` identifier and parse credentials from this implementation without bespoke integration work.
+
+Without these standards, this implementation would be a Midnight-only silo. With them, agent identities issued here are legible to the broader SSI (Self-Sovereign Identity) ecosystem.
+
 ## Implemented
 
 ### DID Core aligned pieces
