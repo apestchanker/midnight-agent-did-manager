@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.5.2
+
+### Changed
+- Bumped the application version to `0.5.2` while keeping the contract version at `0.3.5`.
+  Reason/impact: consolidates the first public GitHub release milestone after the ZK proof and VP unification work, adding conceptual documentation that makes the W3C design decisions legible to new contributors and ecosystem reviewers.
+
+### Added
+- Added five conceptual "why" explanations across the documentation suite covering: (1) why W3C DID/VC standards were chosen over a custom scheme, (2) why credentials are issued as atomic units to enable selective disclosure, (3) why verifiers can validate credentials without contacting the issuer at runtime, (4) why holder binding is needed to prevent credential theft and replay, and (5) the Holder/Issuer/Verifier trust triangle and why the issuer is not in the runtime critical path.
+  Reason/impact: the existing docs accurately described the implementation but left the design rationale implicit. A reader without prior W3C background could follow the what but not the why. These additions make the codebase useful as a reference and as a contribution target for the broader Midnight ecosystem, including the MAIS MIP review.
+
 ## v0.5.1
 
 ### Changed
