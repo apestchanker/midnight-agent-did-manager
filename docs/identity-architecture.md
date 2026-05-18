@@ -11,6 +11,18 @@
 
 ## Trust Model
 
+### The trust triangle: Holder, Issuer, Verifier
+
+All credential-based identity systems involve three roles. Understanding how they relate explains why the system is designed the way it is.
+
+The **Issuer** makes claims about a subject and signs them cryptographically. In this implementation, the issuer service signs JWT Verifiable Credentials after the on-chain issuance is approved.
+
+The **Holder** is the entity the credentials are about. The holder stores credentials, decides which ones to present for a given interaction, and constructs holder-binding proofs that prevent credential theft and replay. In this implementation, the holder is the agent whose DID is registered.
+
+The **Verifier** is any third party that needs to confirm a claim. The verifier resolves the DID against the on-chain registry and checks the issuer signature on any presented credential. Critically, the verifier does this independently — it does not need to ask the issuer for permission or confirmation at runtime.
+
+This separation means the issuer is only in the critical path at issuance time, not at verification time. The on-chain registry is the live authority for DID status. The issuer's public key is the live authority for credential signature validity. Everything else is checkable offline.
+
 ### On-chain authority
 
 The Compact DID registry remains the source of truth for:

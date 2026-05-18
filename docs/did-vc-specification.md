@@ -174,6 +174,14 @@ The holder wallet remains important because it is used for:
 
 ## Verifiable Credential Model
 
+### Why credentials are issued as separate atomic units
+
+This implementation issues one credential per disclosure scope (`ownership`, `name`, `organization`) rather than a single combined credential. The reason is selective disclosure.
+
+If all claims were bundled into one credential, a holder would have to reveal all of them or none of them every time they present proof. Atomic credentials let the holder choose exactly which facts to disclose for each interaction: an agent can prove it owns a DID without revealing its name, and can reveal its name without exposing its organisation affiliation. The verifier receives only what is necessary; everything else stays private.
+
+This is why the presentation layer assembles a subset of the available credentials rather than forwarding the full credential set.
+
 ### Current VC Format
 
 The repository currently issues JWT-based Verifiable Credentials signed by the issuer service.
@@ -226,6 +234,12 @@ The VC subject must resolve to the same DID that the credential claims to descri
 
 ## VC Verification
 
+### Why verifiers can validate without contacting the issuer
+
+In traditional credential systems the verifier must call the issuer at verification time to confirm that a credential is still valid. The issuer becomes a runtime bottleneck and a single point of failure.
+
+JWT-based Verifiable Credentials break this dependency. The issuer signs the credential with a private key. The verifier obtains the issuer's public key once (from the issuer descriptor endpoint) and can then validate any credential signed by that key independently, at any time, without the issuer being available. DID status is the one live check — the verifier resolves the DID against the Midnight registry to confirm it has not been revoked. That check goes to the on-chain registry, not to the issuing service. The issuing service is therefore not in the critical path for verification.
+
 ### Offline JWT Verification
 
 A verifier can validate a JWT VC offline by:
@@ -252,6 +266,12 @@ It does not by itself prove current DID status unless DID status is also checked
 | DID resolver result | resolver / validate endpoint | Confirms DID remains active. |
 
 ## Midnight Proof Model
+
+### Why holder binding is needed
+
+An issuer-signed JWT Verifiable Credential proves that the issuer made a claim. It does not prove that the entity presenting it is the legitimate holder. Anyone who obtains a JWT — whether through theft, a man-in-the-middle, or a compromised transport layer — could replay it as if they were the credential subject.
+
+Holder binding closes this gap. The holder constructs a proof that ties three things together: the DID being proven, a fresh challenge issued by the verifier, and the set of credentials being disclosed. Because the challenge is a single-use nonce generated per verification session, a captured proof cannot be replayed in a different session. The `holderBindingCommitment` is the cryptographic link between all three elements. The verifier checks that the commitment matches the challenge it issued, confirming that the proof was constructed for this specific interaction, by the entity that controls the DID private state — not by someone who only holds the JWT.
 
 ### Proof Material
 
