@@ -1,0 +1,124 @@
+pragma language_version >= 0.20;
+
+import CompactStandardLibrary;
+
+// MAIS Reputation Registry — Compact contract for agent reputation scores
+// Contract version: 0.1.0
+//
+// Scores range from 0 to 100 with three tiers:
+//   Basic: 0-59
+//   Proven: 60-89
+//   Institutional: 90-100
+//
+// Scores are public (readable by anyone). Evidence is private (commitment-based).
+// Only the authorized issuer service can update scores. This follows the same
+// issuer witness pattern as the DID registry.
+
+export ledger initialized: Boolean;
+export ledger issuer_service: Bytes<32>;
+
+// Reputation scores per agent (public reads)
+export ledger scores: Map<Bytes<32>, Uint<8>>;
+
+// Evidence commitments per agent (private — only the hash is on-chain)
+export ledger evidence_commitments: Map<Bytes<32>, Bytes<32>>;
+
+// Last update epoch per agent (for time-decay)
+export ledger last_update_epoch: Map<Bytes<32>, Uint<64>>;
+
+// Total agents with scores
+export ledger total_scored: Uint<64>;
+
+// Nonce for issuer public key rotation
+export ledger issuer_nonce: Counter;
+
+// ── Witnesses ──
+
+witness issuerSecret(): Bytes<32>;
+
+// ── Internal circuits ──
+
+circuit issuerPublicKey(secret: Bytes<32>, nonce: Uint<64>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>(
+           [pad(32, "midnight:mais:reputation:v1"), secret, persistentHash<Uint<64>>(nonce)]);
+}
+
+// ── Constructor ──
+
+constructor(owner_public_key: Bytes<32>) {
+  const public_owner_key = disclose(owner_public_key);
+  assert(public_owner_key != pad(32, ""), "Owner key required");
+  initialized = true;
+  issuer_service = public_owner_key;
+  total_scored = 0;
+  issuer_nonce.increment(1);
+}
+
+// ── Score management (issuer-only) ──
+
+export circuit update_score(
+                 agent_key: Bytes<32>,
+                 new_score: Uint<8>,
+                 evidence_commitment: Bytes<32>,
+                 epoch: Uint<64>
+                 ): [] {
+  assert(initialized, "Contract not initialized");
+  const secret = issuerSecret();
+  const key = issuerPublicKey(secret, issuer_nonce);
+  assert(key == issuer_service, "Unauthorized issuer");
+
+  const public_agent_key = disclose(agent_key);
+  const public_score = disclose(new_score);
+  assert(public_score <= (100 as Uint<8>), "Score must be 0-100");
+
+  if (!scores.member(public_agent_key)) {
+    total_scored = (total_scored + 1) as Uint<64>;
+  }
+  scores.insert(public_agent_key, public_score);
+  evidence_commitments.insert(public_agent_key, disclose(evidence_commitment));
+  last_update_epoch.insert(public_agent_key, disclose(epoch));
+  issuer_nonce.increment(1);
+  issuer_service = disclose(issuerPublicKey(secret, issuer_nonce));
+}
+
+// ── Tier computation ──
+
+export circuit get_tier(agent_key: Bytes<32>): Uint<8> {
+  const public_agent_key = disclose(agent_key);
+  if (scores.member(public_agent_key)) {
+    const score = scores.lookup(public_agent_key);
+    if (score >= (90 as Uint<8>)) {
+      return (2 as Uint<8>);
+    }
+    if (score >= (60 as Uint<8>)) {
+      return (1 as Uint<8>);
+    }
+    return (0 as Uint<8>);
+  }
+  return (0 as Uint<8>);
+}
+
+// ── ZK score floor proof ──
+
+// Proves that an agent's score meets a minimum threshold.
+// The score is passed as a regular circuit parameter (not a witness).
+// The comparison result is returned as a boolean.
+export circuit meets_threshold(agent_key: Bytes<32>, floor: Uint<8>): Boolean {
+  const public_agent_key = disclose(agent_key);
+  const public_floor = disclose(floor);
+  if (scores.member(public_agent_key)) {
+    const score = scores.lookup(public_agent_key);
+    return score >= public_floor;
+  }
+  return false;
+}
+
+// ── Queries ──
+
+export circuit get_score(agent_key: Bytes<32>): Uint<8> {
+  const public_agent_key = disclose(agent_key);
+  if (scores.member(public_agent_key)) {
+    return scores.lookup(public_agent_key);
+  }
+  return (0 as Uint<8>);
+}
