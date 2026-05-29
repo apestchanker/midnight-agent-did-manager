@@ -2,7 +2,7 @@
 
 Midnight Agent DID Manager is a React + Vite application plus a local Node/Postgres service for managing a Compact DID registry on Midnight Network (Preprod or Preview).
 
-This repository is an open-source research project focused on decentralized identity flows aimed to provide a DID and Selective disclosure Verifiable Credential for AI agents on Midnight.
+This repository is an open-source research project focused on Agentic-DIDs: privacy-preserving identity and mandate flows for AI agents. The product direction is an Agent MultiPass: a verifiable agent pass that combines stable agent identity, human or organizational control, valid mandates, limits, capabilities, authorization levels, status, and selective disclosure credentials. Midnight is used as the privacy-first blockchain substrate for DID lifecycle state, commitments, and proof-oriented workflows.
 
 ## Non-Production Warning
 
@@ -29,9 +29,13 @@ The project supports:
 - commitment-based Midnight proof material for holder-side selective disclosure
 - native Midnight ownership proof generation through the wallet or configured proof server
 
+The current MVP implements the identity, ownership, status, resolver, credential, and proof foundations. The Agent MultiPass direction extends these foundations with first-class mandate, limit, capability, and authorization-level credentials and proofs.
+
+The open-source implementation can be self-hosted. A possible hosted-platform direction is to operate issuance, validation, revocation, monitoring, and policy templates as a managed service or trusted certification layer for teams that do not want to run the full stack themselves.
+
 ## Research Status and Disclaimer
 
-This repository is provided as a research and experimentation project for DID workflows, registry models, and credential flows for agents on Midnight.
+This repository is provided as a research and experimentation project for Agent MultiPass, DID workflows, registry models, and credential flows for agents on Midnight.
 
 It is not provided as legal advice, compliance advice, identity assurance, production security certification, or fitness-for-purpose assurance.
 
@@ -86,7 +90,7 @@ The author and contributors disclaim responsibility and liability, to the maximu
 
 ## Reference Architecture
 
-The following reference diagram summarizes the intended relationship between external systems, the AI agent, its DID/credential layer, secure secret custody, and Midnight as the privacy-preserving execution layer.
+The following reference diagram summarizes the intended relationship between external systems, the AI agent, its DID/credential or Agent MultiPass layer, secure secret custody, and Midnight as the privacy-preserving execution layer.
 
 ![Agents DID reference architecture](./docs/images/agents-did-architecture.png)
 
@@ -127,6 +131,8 @@ The Compact contract is the registry of record. It stores:
 - registry admin and issuer service public authorization keys
 - optional public organization disclosure
 
+The registry is intentionally not the full Agent MultiPass payload. Mandates, limits, capabilities, authorization levels, detailed profile claims, and credential JWTs are represented off-chain and selectively disclosed through credentials, presentations, and proof material.
+
 For owner-only authorization, the contract follows Midnight's documented `witness` pattern:
 
 - a random owner secret is kept off-chain in Midnight private state
@@ -140,6 +146,7 @@ It does not store:
 - customer workflow data
 - MCP keys
 - credential JWTs
+- detailed mandate, limit, capability, or authorization-level policy data
 - the owner authorization secret
 
 ### Off-chain
@@ -153,6 +160,7 @@ The local DID service stores:
 - issued DID records
 - audit events
 - verifiable credentials
+- Agent MultiPass-oriented claim manifests, including current and future mandate, limit, capability, and authorization-level scopes
 - Midnight proof material derived from disclosed credential commitments
 
 For the sake of experimentation and local development, this repository uses PostgreSQL as the off-chain persistence layer for request payloads, DID records, and credential data.
@@ -166,6 +174,8 @@ In this repository, the owner witness secret is cached in Midnight private state
 ## Midnight-Centered Credential Direction
 
 The current implementation still issues issuer-signed JWT Verifiable Credentials and can assemble W3C-shaped presentation bundles.
+
+Current implemented credential scopes include ownership, profile name, and organization. The product direction is to extend the same atomic-credential and selective-disclosure model to Agent MultiPass scopes such as mandate, limit, capability, and authorization level.
 
 The repo now also exposes commitment-based Midnight proof material for issued credentials:
 

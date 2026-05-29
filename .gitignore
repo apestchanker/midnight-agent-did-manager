@@ -19,6 +19,9 @@ data/
 # Local-only working files
 sdd/
 local/
+outputs/
+repo-map.html
+.claude/
 vendor/
 artifacts/sdk-package-src/
 artifacts/sdk-package-src/**

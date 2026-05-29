@@ -72,6 +72,8 @@ No personal name is stored on-chain.
 
 Organization may be stored on-chain only if the subject explicitly chooses disclosure. Otherwise it is represented as undisclosed.
 
+Mandates, limits, capabilities, authorization levels, and detailed Agent MultiPass policy data are not stored as plain on-chain state. They are represented as off-chain credentials, manifests, presentations, and proof commitments that can be selectively disclosed.
+
 ## Resolution
 
 Resolution is performed by:
@@ -114,6 +116,8 @@ Control is modeled through the wallet bound to the DID subject and the issuer au
 
 This implementation treats registry issuance authority as part of the method rules.
 
+Agent MultiPass authorization is layered above the DID method. The DID proves the agent identity and registry status; associated credentials and presentations prove current mandates, limits, capabilities, authorization levels, and issuer/holder approval context.
+
 ## Verification Semantics
 
 A verifier validates a DID by:
@@ -128,15 +132,25 @@ A verifier validates a DID by:
 - Names remain off-chain
 - Organization is disclosed on-chain only by subject choice
 - Detailed profile claims are carried in verifiable credentials, not the registry
+- Mandates, limits, capabilities, and authorization levels are carried in verifiable credentials or proof material, not as plain registry state
 - Partial disclosure is achieved by presenting only selected credentials
 
 ## Verifiable Credentials
 
-This method integrates with W3C Verifiable Credentials by issuing atomic credentials bound to the DID:
+This method integrates with W3C Verifiable Credentials by issuing atomic credentials bound to the DID.
+
+Current MVP credential scopes include:
 
 - ownership credential
 - name credential
 - organization credential
+
+The Agent MultiPass extension path adds credentials such as:
+
+- mandate credential
+- capability credential
+- limit credential
+- authorization-level credential
 
 Selective disclosure is achieved by presenting only the credentials needed for a given interaction.
 

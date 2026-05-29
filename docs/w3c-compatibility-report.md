@@ -41,6 +41,26 @@ Without these standards, this implementation would be a Midnight-only silo. With
   - organization
 - Partial disclosure is achieved by selective presentation of separate credentials
 
+### Agent MultiPass alignment
+
+The product direction is an Agent MultiPass: a privacy-preserving pass for AI agents that proves identity, control, mandates, limits, capabilities, authorization levels, status, and selected profile claims.
+
+The current W3C-aligned implementation already supports the foundation:
+
+- DID identity and resolution
+- issuer-signed atomic credentials
+- selective presentation of scopes
+- status validation through the Midnight registry
+- proof material tied to selected credential scopes
+
+The following Agent MultiPass scopes should be treated as extension targets unless implemented in a specific feature branch:
+
+- mandate credentials
+- limit credentials
+- capability credentials
+- authorization-level credentials
+- revocation and status policy for non-identity authority claims
+
 ### Registry semantics
 
 - public registry validation
@@ -64,6 +84,7 @@ This repo now implements practical W3C-compatible DID/VC behavior for testing an
 - DID Resolution result objects
 - JWT Verifiable Credentials
 - W3C-shaped Verifiable Presentations built from selected credentials
+- an extensible credential model for Agent MultiPass authority scopes
 
 However, "full W3C compatibility" in the strictest sense would also require:
 

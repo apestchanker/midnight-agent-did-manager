@@ -6,6 +6,8 @@ This document defines the practical DID and Verifiable Credential behavior imple
 
 It is an implementation specification for this codebase, not a formal standards-track specification.
 
+The product direction is Agent MultiPass: a privacy-preserving pass for AI agents that combines stable DID-based identity, holder or organization control, valid mandates, limits, capabilities, authorization levels, status, and selective disclosure credentials. The current MVP implements the DID, ownership, profile, organization, status, and proof foundations; mandate, limit, capability, and authorization-level credentials are documented here as the aligned extension path.
+
 ## System Roles
 
 - `Holder`: the wallet controller that owns or controls the DID subject context
@@ -86,6 +88,8 @@ The DID document produced by this implementation contains:
   - VC repository or retrieval endpoint
 
 The implementation may also include registry-specific metadata useful for testing and integration.
+
+The DID document should remain a discovery and service document, not the place where detailed Agent MultiPass policy data is exposed. Mandates, limits, capabilities, and authorization levels belong in credentials, presentations, and proof material so they can be selectively disclosed.
 
 ### DID Document Field Table
 
@@ -172,6 +176,34 @@ The holder wallet remains important because it is used for:
 | `subject_wallet_address` | Control / ownership link | Connects the DID subject to the controlling wallet. |
 | `customer_wallet` | Account ownership link | Connects the application account to the human holder. |
 
+## Agent MultiPass Model
+
+An Agent MultiPass is the product-level bundle of credentials and proof material associated with an agent DID. It lets a verifier answer:
+
+- which agent is acting
+- whether the agent DID is active
+- who controls or approved the agent
+- what mandate the agent has
+- what limits apply
+- what capabilities or tools are in scope
+- what authorization level applies
+- whether the relevant pass, mandate, or credential has expired or been revoked
+
+The DID registry provides the public identity and status anchor. The MultiPass claims remain off-chain by default and are disclosed through atomic credentials, W3C-shaped presentations, and Midnight commitment/proof material.
+
+### Agent MultiPass Claim Layers
+
+| Layer | Representation | Current status |
+| --- | --- | --- |
+| Identity | `did:midnight:...` and DID resolution metadata | Implemented |
+| Control / ownership | Ownership credential and holder-bound proof material | Implemented |
+| Profile claims | Name and organization credentials | Implemented for MVP scopes |
+| Mandate | Atomic mandate credential and disclosure scope | Direction / extension |
+| Limits | Atomic limit credential and disclosure scope | Direction / extension |
+| Capabilities | Atomic capability credential and disclosure scope | Direction / extension |
+| Authorization level | Atomic authorization-level credential and disclosure scope | Direction / extension |
+| Status | DID status, credential status, revocation, expiry, and verifier policy | Partially implemented; extension needed for non-identity scopes |
+
 ## Verifiable Credential Model
 
 ### Why credentials are issued as separate atomic units
@@ -197,6 +229,15 @@ The implementation currently issues atomic credentials such as:
 - organization disclosure credential, when enabled
 
 The exact active set depends on DID issuance state and disclosure options.
+
+The aligned Agent MultiPass extension adds atomic credentials for:
+
+- mandate disclosure
+- limit disclosure
+- capability disclosure
+- authorization-level disclosure
+
+These should follow the same selective-disclosure principle: issue small credentials for specific claims so a holder can prove only the authority information needed for a given verifier interaction.
 
 ### Credential Binding
 
@@ -231,6 +272,10 @@ The VC subject must resolve to the same DID that the credential claims to descri
 | `AgentDidOwnershipCredential` | `ownership` | `agentKey`, `contractAddress`, `networkId`, `registryStatus`, `walletAddress` |
 | `AgentProfileNameCredential` | `name` | agent profile name disclosure claims |
 | `AgentOrganizationCredential` | `organization` | organization disclosure claims, when enabled |
+| `AgentMandateCredential` | `mandate` | delegated purpose, issuer/holder approval reference, validity window, status reference |
+| `AgentLimitCredential` | `limit` | bounded action, spend/data/tool/time limit, validity window, status reference |
+| `AgentCapabilityCredential` | `capability` | tool or action capability, scope, mode such as read-only/write, status reference |
+| `AgentAuthorizationLevelCredential` | `authorization_level` | authorization tier, policy context, validity window, status reference |
 
 ## VC Verification
 
@@ -283,6 +328,8 @@ For selected disclosure scopes, the service derives proof material containing:
 - verifier challenge binding
 
 This material defines the disclosure boundary that a holder proof must satisfy.
+
+For Agent MultiPass flows, `disclosedScopes` may include current MVP scopes such as `ownership`, `name`, and `organization`, and future authority scopes such as `mandate`, `limit`, `capability`, and `authorization_level`.
 
 ### Proof Material Field Table
 
@@ -449,6 +496,8 @@ This repository currently provides:
 - proof-request workflows
 - preview verification packages
 - a working native ownership proof path with statement-boundary and circuit-check validation
+
+It does not yet provide a complete production Agent MultiPass authority system. Mandate, limit, capability, authorization-level issuance, policy templates, status handling, and proof circuits should be treated as planned extensions unless implemented in a specific branch or feature.
 
 It does not yet represent a hardened production identity system.
 

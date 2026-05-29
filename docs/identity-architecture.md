@@ -6,7 +6,8 @@
 - Allow humans to buy DID capacity and approve agent requests
 - Allow agents to request DIDs through an MCP/API service
 - Support public DID validation
-- Support off-chain selective disclosure for claims such as name, organization, and ownership
+- Support Agent MultiPass flows: verifiable agent identity plus human-approved mandates, limits, capabilities, authorization levels, status, and selective disclosure
+- Support off-chain selective disclosure for claims such as ownership, name, organization, mandate, limit, capability, and authorization level
 - Move toward a W3C-aligned design using DID Core plus Verifiable Credentials
 
 ## Trust Model
@@ -32,6 +33,8 @@ The Compact DID registry remains the source of truth for:
 - revocation status
 - commitments and counters
 
+The registry is the public identity and status anchor. It is not intended to store the full Agent MultiPass payload. Detailed mandates, limits, capabilities, authorization levels, and profile claims remain off-chain and are disclosed through credentials, presentations, and proof material.
+
 ### Off-chain orchestration
 
 The MCP/API service handles:
@@ -44,6 +47,7 @@ The MCP/API service handles:
 - admin issuance workflow
 - DID resolution and validation convenience endpoints
 - VC issuance and current partial disclosure bundles
+- Agent MultiPass claim manifests for current and future mandate, limit, capability, and authorization-level scopes
 - commitment package generation for future holder-side Midnight proofs
 
 ### Roles
@@ -52,6 +56,7 @@ The MCP/API service handles:
 - Agent: calls the MCP/API with an MCP key to request a DID
 - Issuer admin: validates business rules and executes issuance
 - Registry verifier: anyone resolving or validating an issued DID
+- Hosted platform / certification operator: possible future managed role that issues, validates, monitors, and revokes Agent MultiPass credentials for teams that do not operate the stack themselves
 
 ## W3C Alignment
 
@@ -69,11 +74,12 @@ The long-term target is a `did:midnight` DID method with:
 Selective disclosure should not be implemented by overloading the DID document alone.
 Use VCs and Verifiable Presentations for:
 
+- Agent MultiPass proof of current authority
 - name disclosure
 - organization disclosure
 - proof of DID ownership
 - proof of issuer approval
-- role or entitlement proofs
+- mandate, limit, capability, authorization-level, role, or entitlement proofs
 
 The current repo issues JWT VCs, but the Midnight-centered target is:
 
@@ -111,6 +117,7 @@ Store in Postgres:
 - DID document payload
 - claims manifests
 - presentation templates
+- mandate, limit, capability, and authorization-level templates or manifests
 
 ## Workflow
 
@@ -142,6 +149,10 @@ Examples:
 - ownership-only proof
 - name-only proof
 - organization-only proof
+- mandate-only proof
+- capability or limit proof
+- authorization-level proof
+- Agent MultiPass proof bundle
 - full verified profile
 
 ## Local Development Stack

@@ -7,7 +7,14 @@ European Digital Identity Wallet (EUDI Wallet) model that can improve this
 project without claiming eIDAS or EUDI compliance.
 
 The goal is pragmatic: use the EUDI architecture as a source of product,
-privacy, and security ideas for the current Midnight Agent DID Manager.
+privacy, and security ideas for the current Agentic-DIDs / Midnight Agent DID
+Manager.
+
+The current product definition is Agent MultiPass: a privacy-preserving pass
+for AI agents that can prove identity, holder control, current mandates,
+limits, capabilities, authorization levels, status, and selected profile
+claims. The EUDI-inspired guidance in this document should apply to those
+authority claims as well as to basic identity and profile credentials.
 
 This is not a compliance checklist. Legal registration, certification,
 qualified trust-service status, EU trusted-list participation, and formal
@@ -26,6 +33,10 @@ presented as part of a transaction that includes:
 - proof of holder control
 - credential and DID status checks
 - an auditable verification result
+
+For Agent MultiPass flows, the transaction context should also make clear which
+mandate, limit, capability, or authorization-level claim is being requested and
+why.
 
 These ideas can improve the system even before any EUDI-specific protocol is
 implemented.
@@ -63,6 +74,8 @@ Current direction:
 
 - The system uses disclosure scopes such as `ownership`, `name`, and
   `organization`.
+- The Agent MultiPass direction extends those scopes to include `mandate`,
+  `limit`, `capability`, and `authorization_level`.
 
 Improvement:
 

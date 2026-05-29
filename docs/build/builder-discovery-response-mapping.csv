@@ -1,0 +1,27 @@
+google_form_question,discovery_log_field,notes
+Which best describes your current role?,interviewee_role,
+What kind of product or system do you build or operate?,company_type,Use to assign segment.
+Where are you or your main users/customers primarily based?,geo,
+Briefly describe the last agent or automation workflow you built operated reviewed or integrated.,raw_quote,Use as primary workflow evidence.
+Where did identity authorization approval or permissions show up in that workflow?,"identity_gap,authorization_level_gap",
+Who needed to trust that the agent or automation was legitimate?,trust_gap,
+Who needed to trust what the agent or automation was allowed to do?,"mandate_gap,capability_or_limit_gap",
+Have you ever needed to prove who controls an agent who approved it what it is allowed to do or whether it is still active?,frequency_1_5,"Map Yes often=5; Yes occasionally=4; Once or twice=2; Not yet likely soon=1; No=1 unless Q19 overrides."
+Tell us about the last time that came up. What did someone ask for and what did you actually show them?,"pain_in_customer_words,raw_quote",
+How do you identify agents or automations today?,"current_workaround,identity_gap",
+How do you represent what an agent or automation is allowed to do?,"current_workaround,mandate_gap,capability_or_limit_gap",
+What happens when an agent's permissions purpose limits or approval changes?,"current_workaround,mandate_gap,capability_or_limit_gap",
+Have stale credentials unclear ownership expired permissions or manual revocation ever caused friction or risk?,"severity_1_5,risk_reduced","Map prod/security issue=5; blocked launch/deal=4; internal friction=3; concern=2; no=1 unless Q18 overrides."
+What did that friction cost you?,time_or_money_cost,
+If you had to rate the pain of proving agent identity permissions and current authorization today how severe is it?,severity_1_5,Use direct 1-5 answer.
+How often does this pain show up?,frequency_1_5,Use direct 1-5 answer.
+Have customers partners or other systems ever asked for more information than you wanted to disclose about an agent automation operator or organization?,trust_gap,
+What did you share redact refuse or work around?,"raw_quote,trust_gap",
+Which information should be easy to verify without exposing everything?,"identity_gap,mandate_gap,capability_or_limit_gap,authorization_level_gap,new_value_unlocked",
+What would make this kind of verification safer or more useful?,"new_value_unlocked,risk_reduced",
+On a scale of 1-10 how much do you trust your current setup for agent identity permissions and authorization?,trust_gap,
+What would move that trust score up by one point?,new_value_unlocked,
+Have you paid for built or allocated engineering time to solve identity authorization compliance audit or trust problems around agents or automations?,"time_or_money_cost,decision_impact",
+What would make this urgent in the next quarter?,"decision_impact,follow_up",
+Would you be open to a 20-minute follow-up conversation?,follow_up,
+Optional email or preferred contact method.,follow_up,
