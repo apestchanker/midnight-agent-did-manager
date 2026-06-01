@@ -23,7 +23,6 @@ export interface DeployResult {
     scheme: "wallet-signature-sha256-v1" | "random-secret-v1";
     signDomain?: string;
     deploymentSaltHex?: string;
-    signatureHashHex?: string;
   };
 }
 

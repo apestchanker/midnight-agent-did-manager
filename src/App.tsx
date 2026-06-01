@@ -2104,7 +2104,7 @@ export default function App() {
                   <div>
                     <h2 className="text-lg font-semibold text-white">Owner Vault</h2>
                     <p className="text-sm text-zinc-500">
-                      Export and restore the local admin secret used by issuer-only operations.
+                      Export and restore the wallet derivation metadata used by issuer-only operations.
                     </p>
                   </div>
                 </div>

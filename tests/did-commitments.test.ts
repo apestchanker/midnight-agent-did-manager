@@ -102,6 +102,7 @@ describe("did commitments", () => {
     );
 
     expect(serialized.issuerSecretHex).toBeUndefined();
+    expect("signatureHashHex" in (serialized.ownerDerivation ?? {})).toBe(false);
     expect(serialized.ownerDerivation?.scheme).toBe("wallet-signature-sha256-v1");
   });
 });

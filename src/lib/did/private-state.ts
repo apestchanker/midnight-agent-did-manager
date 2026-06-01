@@ -67,7 +67,6 @@ export async function createWalletDerivedOwnerPrivateState(
     scheme: "wallet-signature-sha256-v1",
     signDomain,
     deploymentSaltHex,
-    signatureHashHex: toHex(issuerSecret),
   }) as DidRegistryPrivateState & { issuerSecret: Uint8Array };
 }
 
