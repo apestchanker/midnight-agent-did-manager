@@ -8,7 +8,14 @@ import {
   serializeOwnerPrivateState,
   deserializeOwnerPrivateState,
 } from "./commitments";
-import { createRandomOwnerPrivateState, isValidPrivateState } from "./private-state";
+import { getSavedDeployment } from "./cache";
+import {
+  createWalletDerivedOwnerPrivateState,
+  hasIssuerSecret,
+  isOwnerPrivateStateMetadata,
+  isValidPrivateState,
+  stripOwnerSecret,
+} from "./private-state";
 import { getContractRuntime } from "./runtime";
 import {
   INITIAL_ISSUER_NONCE,
@@ -61,7 +68,7 @@ export async function getOnChainIssuerNonce(
 export async function assertOwnerPrivateStateMatchesContract(
   providers: AppProviders,
   contractAddress: string,
-  privateState: DidRegistryPrivateState,
+  privateState: DidRegistryPrivateState & { issuerSecret: Uint8Array },
 ): Promise<void> {
   const onChainIssuerPublicKeyHex = await getOnChainIssuerPublicKeyHex(
     providers,
@@ -89,7 +96,7 @@ export async function assertOwnerPrivateStateMatchesContract(
 export async function ensureOwnerPrivateState(
   providers: AppProviders,
   contractAddress: string,
-): Promise<DidRegistryPrivateState> {
+): Promise<DidRegistryPrivateState & { issuerSecret: Uint8Array }> {
   providers.privateStateProvider.setContractAddress(contractAddress as never);
   const existing = await providers.privateStateProvider.get(OWNER_PRIVATE_STATE_ID);
   if (isValidPrivateState(existing)) {
@@ -97,13 +104,47 @@ export async function ensureOwnerPrivateState(
     return existing;
   }
 
+  const savedDerivation =
+    isOwnerPrivateStateMetadata(existing) && existing.ownerDerivation
+      ? existing.ownerDerivation
+      : getSavedDeployment()?.ownerDerivation;
+
+  if (
+    savedDerivation?.scheme === "wallet-signature-sha256-v1" &&
+    savedDerivation.deploymentSaltHex
+  ) {
+    const regenerated = await createWalletDerivedOwnerPrivateState(
+      providers,
+      toHex,
+      savedDerivation.deploymentSaltHex,
+    );
+    await assertOwnerPrivateStateMatchesContract(
+      providers,
+      contractAddress,
+      regenerated,
+    );
+    return regenerated as DidRegistryPrivateState & { issuerSecret: Uint8Array };
+  }
+
   throw new Error(
-    "Owner vault is missing from Midnight private state for this contract. Restore a vault backup before issuing, updating, or revoking DIDs.",
+    "Owner derivation metadata is missing from Midnight private state for this contract. Restore a vault backup before issuing, updating, or revoking DIDs.",
   );
 }
 
-export function createDeploymentOwnerPrivateState(providers: AppProviders) {
-  return createRandomOwnerPrivateState(providers, toHex);
+export async function createDeploymentOwnerPrivateState(providers: AppProviders) {
+  return createWalletDerivedOwnerPrivateState(providers, toHex);
+}
+
+export async function persistOwnerPrivateStateMetadata(
+  providers: AppProviders,
+  contractAddress: string,
+  privateState: DidRegistryPrivateState,
+): Promise<void> {
+  providers.privateStateProvider.setContractAddress(contractAddress as never);
+  await providers.privateStateProvider.set(
+    OWNER_PRIVATE_STATE_ID,
+    stripOwnerSecret(privateState),
+  );
 }
 
 export async function getOwnerVaultStatus(
@@ -126,7 +167,7 @@ export async function getOwnerVaultStatus(
   );
   const onChainIssuerNonce = await getOnChainIssuerNonce(providers, contractAddress);
 
-  if (!isValidPrivateState(existing)) {
+  if (!isOwnerPrivateStateMetadata(existing)) {
     return {
       hasLocalVault: false,
       contractAddress,
@@ -135,12 +176,29 @@ export async function getOwnerVaultStatus(
     };
   }
 
-  const localIssuerPublicKeyHex = toHex(
-    deriveIssuerPublicKey(
-      existing.issuerSecret,
-      onChainIssuerNonce ?? INITIAL_ISSUER_NONCE,
-    ),
-  );
+  let stateWithSecret: (DidRegistryPrivateState & { issuerSecret: Uint8Array }) | null =
+    hasIssuerSecret(existing) ? existing : null;
+
+  if (
+    !stateWithSecret &&
+    existing.ownerDerivation?.scheme === "wallet-signature-sha256-v1" &&
+    existing.ownerDerivation.deploymentSaltHex
+  ) {
+    stateWithSecret = (await createWalletDerivedOwnerPrivateState(
+      providers,
+      toHex,
+      existing.ownerDerivation.deploymentSaltHex,
+    )) as DidRegistryPrivateState & { issuerSecret: Uint8Array };
+  }
+
+  const localIssuerPublicKeyHex = stateWithSecret
+    ? toHex(
+        deriveIssuerPublicKey(
+          stateWithSecret.issuerSecret,
+          onChainIssuerNonce ?? INITIAL_ISSUER_NONCE,
+        ),
+      )
+    : undefined;
 
   return {
     hasLocalVault: true,
@@ -160,7 +218,7 @@ export async function getOwnerVaultStatus(
         : undefined,
     localIssuerPublicKeyHex,
     onChainIssuerPublicKeyHex,
-    matchesOnChain: onChainIssuerPublicKeyHex
+    matchesOnChain: onChainIssuerPublicKeyHex && localIssuerPublicKeyHex
       ? localIssuerPublicKeyHex.toLowerCase() === onChainIssuerPublicKeyHex.toLowerCase()
       : null,
   };
@@ -178,7 +236,7 @@ export async function exportOwnerVaultBackup(
     contractAddress,
     networkId: providers.networkId,
     exportedAt: new Date().toISOString(),
-    privateState: serializeOwnerPrivateState(privateState, toHex),
+    privateState: serializeOwnerPrivateState(stripOwnerSecret(privateState), toHex),
   };
 
   const encrypted = await encryptOwnerVaultBackup(
@@ -212,18 +270,31 @@ export async function restoreOwnerVaultBackup(
   }
 
   const privateState = deserializeOwnerPrivateState(payload.privateState, fromHex);
-  if (!isValidPrivateState(privateState)) {
+  if (!isOwnerPrivateStateMetadata(privateState)) {
     throw new Error("The owner vault backup payload is invalid.");
   }
 
-  await assertOwnerPrivateStateMatchesContract(
-    providers,
-    contractAddress,
-    privateState,
-  );
+  const stateWithSecret = hasIssuerSecret(privateState)
+    ? privateState
+    : privateState.ownerDerivation?.scheme === "wallet-signature-sha256-v1" &&
+        privateState.ownerDerivation.deploymentSaltHex
+      ? await createWalletDerivedOwnerPrivateState(
+          providers,
+          toHex,
+          privateState.ownerDerivation.deploymentSaltHex,
+        )
+      : null;
+
+  if (!stateWithSecret) {
+    throw new Error("The owner vault backup does not include usable owner derivation metadata.");
+  }
+
+  await assertOwnerPrivateStateMatchesContract(providers, contractAddress, stateWithSecret);
 
   providers.privateStateProvider.setContractAddress(contractAddress as never);
-  await providers.privateStateProvider.set(OWNER_PRIVATE_STATE_ID, privateState);
+  await providers.privateStateProvider.set(
+    OWNER_PRIVATE_STATE_ID,
+    stripOwnerSecret(stateWithSecret),
+  );
   return getOwnerVaultStatus(providers, contractAddress);
 }
-

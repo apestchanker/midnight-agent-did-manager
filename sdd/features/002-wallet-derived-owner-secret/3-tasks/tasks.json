@@ -1,0 +1,73 @@
+{
+  "feature": "002-wallet-derived-owner-secret",
+  "generated_at": "2026-06-01",
+  "spec_refs": [
+    "1-functional/spec.md",
+    "2-technical/spec.md"
+  ],
+  "tasks": [
+    {
+      "id": "1",
+      "title": "Query Midnight MCP for signature verification patterns",
+      "status": "done",
+      "acceptance_criteria": [
+        "Confirm whether Compact supports in-circuit wallet signature verification",
+        "Record MCP result in SDD metadata"
+      ]
+    },
+    {
+      "id": "2",
+      "title": "Add wallet-signature owner derivation helpers",
+      "status": "done",
+      "files": [
+        "src/lib/did/commitments.ts",
+        "src/lib/did/private-state.ts"
+      ],
+      "acceptance_criteria": [
+        "Domain includes didMN prefix, network, and deployment salt",
+        "issuerSecret derives from sha256(signature bytes)",
+        "tests cover deterministic derivation"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "Persist derivation metadata instead of raw secret",
+      "status": "done",
+      "files": [
+        "src/lib/did/vault.ts",
+        "src/lib/did/api.ts"
+      ],
+      "acceptance_criteria": [
+        "Deploy stores derivation metadata after contract address is known",
+        "Owner actions regenerate secret from wallet signature",
+        "Metadata is persisted again after owner-only actions"
+      ]
+    },
+    {
+      "id": "4",
+      "title": "Update backup/restore and documentation",
+      "status": "done",
+      "files": [
+        "README.md",
+        "src/components/OwnerVaultPanel.tsx",
+        "src/components/DeployPanel.tsx",
+        "src/components/IssuerPanel.tsx"
+      ],
+      "acceptance_criteria": [
+        "Backup export omits issuerSecretHex in normal flow",
+        "UI copy describes wallet-derived owner authority",
+        "README documents MCP limitation and new custody model"
+      ]
+    },
+    {
+      "id": "5",
+      "title": "Bump app minor version and verify",
+      "status": "done",
+      "acceptance_criteria": [
+        "package version updated to 0.6.0",
+        "npm run build passes",
+        "npm test passes"
+      ]
+    }
+  ]
+}

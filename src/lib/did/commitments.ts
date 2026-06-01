@@ -6,6 +6,7 @@ import {
 import {
   INITIAL_ISSUER_NONCE,
   ISSUER_PUBLIC_KEY_PREFIX,
+  OWNER_SIGN_DOMAIN_PREFIX,
   OWNER_VAULT_IV_BYTES,
   OWNER_VAULT_KIND,
   OWNER_VAULT_PBKDF2_ITERATIONS,
@@ -59,6 +60,35 @@ export function createRandomOwnerSecret(): Uint8Array {
   return randomBytes(32);
 }
 
+export function createDeploymentSaltHex(toHex: (value: Uint8Array) => string): string {
+  return toHex(randomBytes(32));
+}
+
+export function buildOwnerSignatureDomain(input: {
+  networkId: string;
+  deploymentSaltHex: string;
+}): string {
+  return [
+    OWNER_SIGN_DOMAIN_PREFIX,
+    input.networkId.trim(),
+    input.deploymentSaltHex.trim().toLowerCase(),
+  ].join(":");
+}
+
+export async function deriveOwnerSecretFromWalletSignature(
+  signatureHex: string,
+): Promise<Uint8Array> {
+  const cleaned = signatureHex.replace(/^0x/i, "").trim();
+  if (!cleaned || cleaned.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(cleaned)) {
+    throw new Error("Wallet signature must be a non-empty hex string.");
+  }
+  const signatureBytes = new Uint8Array(
+    (cleaned.match(/.{1,2}/g) || []).map((segment) => Number.parseInt(segment, 16)),
+  );
+  const digest = await crypto.subtle.digest("SHA-256", signatureBytes);
+  return new Uint8Array(digest);
+}
+
 export function getInitialIssuerNonce(): bigint {
   return INITIAL_ISSUER_NONCE;
 }
@@ -69,7 +99,9 @@ export function serializeOwnerPrivateState(
 ): SerializedOwnerPrivateState {
   return {
     ...privateState,
-    issuerSecretHex: toHex(privateState.issuerSecret),
+    issuerSecretHex: privateState.issuerSecret
+      ? toHex(privateState.issuerSecret)
+      : undefined,
   };
 }
 
@@ -79,7 +111,9 @@ export function deserializeOwnerPrivateState(
 ): DidRegistryPrivateState {
   return {
     ...value,
-    issuerSecret: fromHex(value.issuerSecretHex),
+    issuerSecret: value.issuerSecretHex
+      ? fromHex(value.issuerSecretHex)
+      : undefined,
   };
 }
 

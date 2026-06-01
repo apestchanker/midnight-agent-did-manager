@@ -134,9 +134,9 @@ export function OwnerVaultPanel({
       <CardHeader>
         <CardTitle className="text-white">Owner Vault</CardTitle>
         <CardDescription className="text-zinc-400">
-          The owner secret lives in Midnight private state as a local vault. Export
-          an encrypted backup after deployment and restore it before admin actions
-          if the local vault is missing.
+          Owner authority is derived from a wallet-signed domain message. The
+          local vault stores recoverable derivation metadata; admin actions ask
+          the wallet to sign again when the secret must be reconstructed.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -150,9 +150,9 @@ export function OwnerVaultPanel({
               <div className={`text-sm font-medium ${statusTone}`}>
                 {status?.hasLocalVault
                   ? status.matchesOnChain === false
-                    ? "Local owner vault does not match this registry"
-                    : "Local owner vault is present"
-                  : "Local owner vault is missing"}
+                    ? "Local owner metadata does not match this registry"
+                    : "Local owner metadata is present"
+                  : "Local owner metadata is missing"}
               </div>
               <div className="mt-2 space-y-1 text-xs text-zinc-400">
                 <div>Contract: <span className="font-mono break-all">{contractAddress}</span></div>

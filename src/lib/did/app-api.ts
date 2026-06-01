@@ -50,8 +50,9 @@ export async function deployDidRegistry(
     mode: "onchain",
     deployedAt: new Date().toISOString(),
     networkId: providers.networkId,
+    ownerDerivation: deployed?.ownerDerivation,
     message:
-      "Contract deployed to Midnight. A random owner secret was generated, only the derived public authorization key was stored on-chain, and the owner vault was saved to Midnight private state. Export a backup before relying on this registry.",
+      "Contract deployed to Midnight. The issuer owner secret was derived from a wallet-signed domain message; only the derived public authorization key was stored on-chain, and recoverable derivation metadata was saved locally. Export a backup before relying on this registry.",
   };
 
   saveDeployment({

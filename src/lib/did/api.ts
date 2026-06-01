@@ -34,7 +34,12 @@ import {
   toRecordHex,
 } from "./ledger";
 import { getContractRuntime, extractContractAddress } from "./runtime";
-import { createDeploymentOwnerPrivateState, ensureOwnerPrivateState, getOwnerVaultStatus } from "./vault";
+import {
+  createDeploymentOwnerPrivateState,
+  ensureOwnerPrivateState,
+  getOwnerVaultStatus,
+  persistOwnerPrivateStateMetadata,
+} from "./vault";
 import { getPersistedDidState } from "./service-sync";
 import {
   MANAGED_CONTRACT_BASE_PATH,
@@ -59,6 +64,7 @@ export class DidRegistryAPI {
     private readonly contract: {
       callTx: Record<string, unknown>;
     },
+    private readonly deploymentOwnerDerivation?: DeployTransactionMetadata["ownerDerivation"],
   ) {
     this.ledgerState$ = this.providers.publicDataProvider
       .contractStateObservable(this.contractAddress as never, { type: "latest" })
@@ -79,10 +85,13 @@ export class DidRegistryAPI {
 
   static async deploy(providers: AppProviders): Promise<DidRegistryAPI> {
     await primeWalletSession(providers);
-    const ownerPrivateState = createDeploymentOwnerPrivateState(providers);
+    const ownerPrivateState = await createDeploymentOwnerPrivateState(providers);
     const ownerPublicKey = ownerPrivateState.issuerPublicKeyHex
       ? fromHex(ownerPrivateState.issuerPublicKeyHex)
       : ownerPrivateState.issuerSecret;
+    if (!ownerPublicKey) {
+      throw new Error("Owner public authorization key could not be derived from wallet signature.");
+    }
     const { module, compiledContract } = await getContractRuntime(MANAGED_CONTRACT_BASE_PATH);
     const deployed = await deployContract(providers as never, {
       compiledContract: compiledContract as never,
@@ -98,8 +107,7 @@ export class DidRegistryAPI {
       );
     }
 
-    providers.privateStateProvider.setContractAddress(contractAddress as never);
-    await providers.privateStateProvider.set(OWNER_PRIVATE_STATE_ID, ownerPrivateState);
+    await persistOwnerPrivateStateMetadata(providers, contractAddress, ownerPrivateState);
 
     return new DidRegistryAPI(
       providers,
@@ -107,6 +115,7 @@ export class DidRegistryAPI {
       module,
       compiledContract,
       deployed as { callTx: Record<string, unknown> },
+      ownerPrivateState.ownerDerivation,
     );
   }
 
@@ -128,12 +137,14 @@ export class DidRegistryAPI {
 
   private async getOwnerContract() {
     const ownerPrivateState = await ensureOwnerPrivateState(this.providers, this.contractAddress);
-    return findDeployedContract(this.providers as never, {
+    const contract = await findDeployedContract(this.providers as never, {
       compiledContract: this.compiledContract as never,
       contractAddress: this.contractAddress as never,
       privateStateId: OWNER_PRIVATE_STATE_ID,
       initialPrivateState: ownerPrivateState,
-    }) as Promise<{ callTx: Record<string, unknown> }>;
+    }) as { callTx: Record<string, unknown> };
+
+    return { contract, ownerPrivateState };
   }
 
   async requestDid(input: {
@@ -192,7 +203,7 @@ export class DidRegistryAPI {
   }
 
   async issueDid(input: IssueDidInput): Promise<DidRecord> {
-    const ownerContract = await this.getOwnerContract();
+    const { contract: ownerContract, ownerPrivateState } = await this.getOwnerContract();
     const agentKey = await createAgentKey(input.agentId);
     const agentKeyHex = toHex(agentKey);
     const did = await createDidIdentifier(
@@ -231,6 +242,7 @@ export class DidRegistryAPI {
       organizationLabelArg: Uint8Array,
       organizationDisclosureArg: bigint,
     ) => Promise<TxResult>)(agentKey, didCommitment, documentCommitment, proofCommitment, organizationLabel, organizationDisclosure);
+    await persistOwnerPrivateStateMetadata(this.providers, this.contractAddress, ownerPrivateState);
 
     const now = new Date().toISOString();
     const cached = mergeDidMetadata(this.contractAddress, input.agentId, {
@@ -273,7 +285,7 @@ export class DidRegistryAPI {
   }
 
   async updateDid(input: UpdateDidInput): Promise<DidRecord> {
-    const ownerContract = await this.getOwnerContract();
+    const { contract: ownerContract, ownerPrivateState } = await this.getOwnerContract();
     const agentKey = await createAgentKey(input.agentId);
     const agentKeyHex = toHex(agentKey);
     const did = await createDidIdentifier(
@@ -312,6 +324,7 @@ export class DidRegistryAPI {
       organizationLabelArg: Uint8Array,
       organizationDisclosureArg: bigint,
     ) => Promise<TxResult>)(agentKey, didCommitment, documentCommitment, proofCommitment, organizationLabel, organizationDisclosure);
+    await persistOwnerPrivateStateMetadata(this.providers, this.contractAddress, ownerPrivateState);
 
     const now = new Date().toISOString();
     const cached = mergeDidMetadata(this.contractAddress, input.agentId, {
@@ -353,7 +366,7 @@ export class DidRegistryAPI {
   }
 
   async revokeDid(input: RevokeDidInput): Promise<DidRecord> {
-    const ownerContract = await this.getOwnerContract();
+    const { contract: ownerContract, ownerPrivateState } = await this.getOwnerContract();
     const agentKey = await createAgentKey(input.agentId);
     const agentKeyHex = toHex(agentKey);
     const did = await createDidIdentifier(
@@ -373,6 +386,7 @@ export class DidRegistryAPI {
       agentKeyArg: Uint8Array,
       revocationCommitmentArg: Uint8Array,
     ) => Promise<TxResult>)(agentKey, revocationCommitment);
+    await persistOwnerPrivateStateMetadata(this.providers, this.contractAddress, ownerPrivateState);
 
     const now = new Date().toISOString();
     const cached = mergeDidMetadata(this.contractAddress, input.agentId, {
@@ -599,6 +613,9 @@ export class DidRegistryAPI {
 
   getDeployMetadata(): DeployTransactionMetadata | null {
     if (!("deployTxData" in (this.contract as object))) return null;
-    return this.contract as unknown as DeployTransactionMetadata;
+    return {
+      ...(this.contract as unknown as DeployTransactionMetadata),
+      ownerDerivation: this.deploymentOwnerDerivation,
+    };
   }
 }

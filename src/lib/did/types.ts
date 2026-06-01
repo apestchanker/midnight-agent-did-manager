@@ -5,6 +5,7 @@ export const DEPLOY_KEY = "did-registry:last-deploy:v6";
 export const COMPILE_KEY = "did-registry:last-compile:v4";
 export const DID_CACHE_PREFIX = "did-registry:request-cache:v2";
 export const OWNER_PRIVATE_STATE_ID = "issuer-owner-state:v1";
+export const OWNER_SIGN_DOMAIN_PREFIX = "didMN:issuer-owner:v1";
 export const MANAGED_CONTRACT_BASE_PATH =
   (import.meta.env.VITE_MANAGED_CONTRACT_PATH || "").trim() ||
   "/contracts/managed/did-registry";
@@ -19,7 +20,7 @@ export const OWNER_VAULT_SALT_BYTES = 16;
 export const OWNER_VAULT_IV_BYTES = 12;
 
 export type DidRegistryPrivateState = {
-  issuerSecret: Uint8Array;
+  issuerSecret?: Uint8Array;
   createdAt: string;
   vaultVersion: string;
   contractVersion: string;
@@ -27,10 +28,16 @@ export type DidRegistryPrivateState = {
   networkId: string;
   custodianWalletAddress: string;
   issuerPublicKeyHex: string;
+  ownerDerivation?: {
+    scheme: "wallet-signature-sha256-v1" | "random-secret-v1";
+    signDomain?: string;
+    deploymentSaltHex?: string;
+    signatureHashHex?: string;
+  };
 };
 
 export type SerializedOwnerPrivateState = Omit<DidRegistryPrivateState, "issuerSecret"> & {
-  issuerSecretHex: string;
+  issuerSecretHex?: string;
 };
 
 export type OwnerVaultBackupPayload = {
@@ -75,6 +82,7 @@ export type SavedCompileArtifact = {
 export type SavedDeployment = DeployResult & {
   networkId: string;
   deployedAt: string;
+  ownerDerivation?: DidRegistryPrivateState["ownerDerivation"];
 };
 
 export type CachedDidMetadata = {
@@ -110,6 +118,7 @@ export type DeployTransactionMetadata = {
       txId?: string;
     };
   };
+  ownerDerivation?: DidRegistryPrivateState["ownerDerivation"];
 };
 
 export interface CompileResult {
