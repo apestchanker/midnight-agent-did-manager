@@ -198,18 +198,18 @@ export default function App() {
       configuredAdminShieldedAddress
     );
   }, [configuredAdminShieldedAddress, providers?.shieldedAddress]);
-  const hasLocalOwnerDerivation = Boolean(
+  const hasLocalOwnerDeployment = Boolean(
     deployResult?.contractAddress &&
       contractAddress.trim() &&
       deployResult.contractAddress.trim() === contractAddress.trim() &&
-      deployResult.ownerDerivation?.scheme === "wallet-signature-sha256-v1",
+      deployResult.ownerDerivation,
   );
   const canBootstrapRegistry = Boolean(providers && !contractAddress.trim());
   const hasAdminAccess = Boolean(
     isConfiguredAdminWallet ||
       registryAccess?.isIssuer ||
       registryAccess?.isRegistryAdmin ||
-      hasLocalOwnerDerivation ||
+      hasLocalOwnerDeployment ||
       canBootstrapRegistry,
   );
   const managedAgents = useMemo<AgentSummary[]>(() => {
@@ -609,6 +609,7 @@ export default function App() {
         mode: result.mode,
         metadata: {
           deployedAt: result.deployedAt,
+          ownerDerivation: result.ownerDerivation,
         },
       });
     } catch (error) {
@@ -956,6 +957,12 @@ export default function App() {
                 mode: deployment.deployment_mode,
                 deployedAt: deployment.created_at,
                 networkId: deployment.network_id,
+                ownerDerivation:
+                  deployment.metadata &&
+                  typeof deployment.metadata === "object" &&
+                  "ownerDerivation" in deployment.metadata
+                    ? (deployment.metadata.ownerDerivation as DeployResult["ownerDerivation"])
+                    : undefined,
               } satisfies DeployResult),
         );
       })
@@ -1956,6 +1963,7 @@ export default function App() {
                 ) : (
                   <IssuerPanel
                     contractAddress={contractAddress}
+                    networkId={providers?.networkId}
                     requestId={selectedAdminDid.id}
                     targetAgentId={selectedAdminDid.agent_id || ""}
                     targetSubjectWalletAddress={selectedAdminDid.subject_wallet_address}

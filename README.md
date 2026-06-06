@@ -135,11 +135,11 @@ The registry is intentionally not the full Agent MultiPass payload. Mandates, li
 
 For owner-only authorization, the contract follows Midnight's documented `witness` pattern:
 
-- the owner secret is derived from a wallet signature over a domain-separated message
-- the local vault stores recoverable derivation metadata, not the raw owner secret, in the normal flow
+- the owner secret is generated once as a stable 32-byte local private-state secret
 - a public authorization key derived from that secret is stored on-chain
 - `issue/update/revoke` require a Compact `witness` proving knowledge of the secret
-- Compact does not provide an in-circuit `verify_signature` builtin; wallet signatures are verified/used off-chain to derive the witness secret
+- Compact does not provide an in-circuit `verify_signature` builtin
+- wallet signatures are not used as the deterministic owner secret source because the connected wallet may return different signatures for the same message
 
 It does not store:
 
@@ -149,7 +149,7 @@ It does not store:
 - MCP keys
 - credential JWTs
 - detailed mandate, limit, capability, or authorization-level policy data
-- the owner authorization secret
+- the owner authorization secret on-chain or in PostgreSQL
 
 ### Off-chain
 
@@ -171,7 +171,7 @@ That is a convenience choice for research and prototyping, not a recommended pro
 
 In a production deployment, off-chain identity payloads, credentials, and other sensitive holder material should be moved to a proper vault or secure custody system so that only the agent, the human owner/operator, or another explicitly authorized principal can access them.
 
-In this repository, the owner witness secret is regenerated from the connected wallet signature when needed. The encrypted backup contains the derivation metadata required to regenerate it with the same wallet. In production, recovery and custody should move to a proper secure vault or custody system.
+In this repository, the owner witness secret is stored in browser-backed Midnight private state for local development and can be exported only inside an encrypted Owner Vault backup. In production, recovery and custody should move to a proper secure vault or custody system.
 
 ## Midnight-Centered Credential Direction
 
@@ -388,23 +388,24 @@ The registry contract no longer authorizes `issue/update/revoke` by comparing a 
 
 What it is:
 
-- a 32-byte secret derived from `sha256(wallet.signData(domain).signature)`
+- a stable 32-byte secret generated at registry deployment time
 - used locally to derive the deploy-time public authorization key and later authorize `issue/update/revoke`
 - not stored on-chain
 - not stored in Postgres
+- stored in local Midnight private state and exported only inside encrypted Owner Vault backups
 
 How it works:
 
-- at deploy time, the DApp generates a deployment salt, asks the admin wallet to sign `didMN:issuer-owner:v1:<networkId>:<deploymentSaltHex>`, derives the witness secret from the signature hash, and sends only the derived public authorization key to the constructor
-- the deployment salt and derivation metadata are cached in Midnight private state for that contract instance
-- at `issue/update/revoke` time, the DApp asks the same wallet to sign the same domain, regenerates the secret, and supplies it via `witness issuerSecret()`
+- at deploy time, the DApp generates a random owner secret and sends only the derived public authorization key to the constructor
+- the owner secret is stored in Midnight private state for that contract instance
+- at `issue/update/revoke` time, the DApp loads the local owner secret and supplies it via `witness issuerSecret()`
 - the contract verifies that the derived public key matches the owner key stored on-chain
 
 How to recover it:
 
 1. Export an encrypted owner vault backup after deployment.
 2. If the local private state is lost, reconnect the admin wallet.
-3. Open the `Owner Vault` panel and restore the encrypted metadata backup for the target registry.
+3. Open the `Owner Vault` panel and restore the encrypted backup for the target registry.
 4. Use a backup password with at least 10 characters.
 
 Test-only warning:
@@ -461,7 +462,7 @@ Important:
 
 - the contract is initialized in its constructor
 - there is no separate `initialize` step anymore
-- `issue/update/revoke` are authorized by an owner witness secret regenerated from the connected wallet signature
+- `issue/update/revoke` are authorized by the stable owner witness secret in local Midnight private state
 - if browser-backed private state is lost, restore the encrypted owner vault backup before attempting issuer actions
 
 Validate local Preprod prerequisites:

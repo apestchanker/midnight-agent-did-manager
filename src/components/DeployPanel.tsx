@@ -102,10 +102,10 @@ export function DeployPanel({ providers, onDeployed }: DeployPanelProps) {
         </div>
         <div className="rounded-md bg-amber-950/30 border border-amber-800 p-3">
           <p className="text-xs text-amber-200">
-            Deployment derives the owner secret from a wallet-signed domain
-            message and stores only recoverable derivation metadata locally.
-            Export an encrypted backup immediately after deployment so the
-            metadata can be restored if local state is lost.
+            Deployment generates a stable owner secret in local Midnight private
+            state and stores only the derived public authorization key on-chain.
+            Export an encrypted backup immediately after deployment; this secret
+            cannot be regenerated from wallet signatures.
           </p>
         </div>
         <div className="space-y-2">

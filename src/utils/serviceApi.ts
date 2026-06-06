@@ -522,6 +522,7 @@ export function getLatestAdminRegistryDeployment(filters: {
   initialize_tx_id?: string | null;
   initialize_tx_hash?: string | null;
   deployment_mode: "onchain" | "local-fallback";
+  metadata?: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 } | null> {
@@ -644,4 +645,3 @@ export function verifyCredential(payload: {
     body: JSON.stringify(payload),
   });
 }
-

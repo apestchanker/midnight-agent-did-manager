@@ -6,6 +6,12 @@ import {
   restoreOwnerVaultBackup,
   type OwnerVaultStatus,
 } from "../lib/didContract";
+import {
+  buildOwnerSignatureDomain,
+  createDeploymentSaltHex,
+  deriveOwnerSecretFromWalletSignature,
+} from "../lib/did/commitments";
+import { toHex } from "../../lib/wallet-bridge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
@@ -15,6 +21,28 @@ interface OwnerVaultPanelProps {
   providers: AppProviders;
   contractAddress: string;
 }
+
+type SignatureDeterminismCheck = {
+  domain: string;
+  source: "fresh-test-domain" | "contract-owner-domain";
+  sameSignature: boolean;
+  sameDerivedSecret: boolean;
+  signatureOnePrefix: string;
+  signatureTwoPrefix: string;
+  derivedSecretOnePrefix: string;
+  derivedSecretTwoPrefix: string;
+  checkedAt: string;
+};
+
+type PendingSignatureTest = {
+  domain: string;
+  source: SignatureDeterminismCheck["source"];
+  signatureOne: string;
+  derivedSecretOneHex: string;
+  signatureOnePrefix: string;
+  derivedSecretOnePrefix: string;
+  startedAt: string;
+};
 
 export function OwnerVaultPanel({
   providers,
@@ -29,7 +57,15 @@ export function OwnerVaultPanel({
   const [showRestorePassword, setShowRestorePassword] = useState(false);
   const [restoreJson, setRestoreJson] = useState("");
   const [message, setMessage] = useState("");
-  const [loading, setLoading] = useState<"status" | "export" | "restore" | "">("");
+  const [signatureCheck, setSignatureCheck] =
+    useState<SignatureDeterminismCheck | null>(null);
+  const [pendingSignatureTest, setPendingSignatureTest] =
+    useState<PendingSignatureTest | null>(null);
+  const [signatureProgress, setSignatureProgress] = useState("");
+  const [signatureError, setSignatureError] = useState("");
+  const [signatureAttemptedAt, setSignatureAttemptedAt] = useState("");
+  const [loading, setLoading] =
+    useState<"status" | "export" | "restore" | "signature" | "">("");
 
   async function refreshStatus() {
     if (!contractAddress.trim()) {
@@ -118,6 +154,125 @@ export function OwnerVaultPanel({
     }
   }
 
+  async function handleStartSignatureDeterminismCheck(
+    source: SignatureDeterminismCheck["source"],
+  ) {
+    if (typeof providers.connectedAPI.signData !== "function") {
+      setMessage("Connected Midnight wallet does not support signData().");
+      return;
+    }
+
+    setLoading("signature");
+    setMessage("");
+    setSignatureCheck(null);
+    setPendingSignatureTest(null);
+    setSignatureError("");
+    setSignatureAttemptedAt(new Date().toISOString());
+    setSignatureProgress("Preparing signature test domain.");
+    try {
+      const contractDeploymentSaltHex =
+        status?.ownerDerivation?.scheme === "wallet-signature-sha256-v1"
+          ? status.ownerDerivation.deploymentSaltHex
+          : undefined;
+      if (source === "contract-owner-domain" && !contractDeploymentSaltHex) {
+        throw new Error(
+          "This registry does not expose owner derivation metadata for a contract-domain test.",
+        );
+      }
+      const deploymentSaltHex =
+        source === "contract-owner-domain" && contractDeploymentSaltHex
+          ? contractDeploymentSaltHex
+          : createDeploymentSaltHex(toHex);
+      const domain = buildOwnerSignatureDomain({
+        networkId: providers.networkId,
+        deploymentSaltHex,
+      });
+
+      setSignatureProgress("Wallet prompt 1 of 2: sign the test domain.");
+      const first = await providers.connectedAPI.signData(domain, {
+        encoding: "text",
+        keyType: "unshielded",
+      });
+      const firstSignature = String(first.signature || "").replace(/^0x/i, "");
+      const firstSecret = await deriveOwnerSecretFromWalletSignature(firstSignature);
+      const firstSecretHex = toHex(firstSecret);
+
+      setPendingSignatureTest({
+        domain,
+        source,
+        signatureOne: firstSignature,
+        derivedSecretOneHex: firstSecretHex,
+        signatureOnePrefix: `${firstSignature.slice(0, 16)}...${firstSignature.slice(-8)}`,
+        derivedSecretOnePrefix: `${firstSecretHex.slice(0, 16)}...${firstSecretHex.slice(-8)}`,
+        startedAt: new Date().toISOString(),
+      });
+      setSignatureProgress("");
+    } catch (error) {
+      const nextError =
+        error instanceof Error
+          ? error.message
+          : "Failed to run wallet signature determinism check.";
+      setSignatureError(nextError);
+      setMessage(nextError);
+    } finally {
+      setLoading("");
+    }
+  }
+
+  async function handleCompleteSignatureDeterminismCheck() {
+    if (!pendingSignatureTest) {
+      setSignatureError("Run the first signature step before completing the test.");
+      return;
+    }
+    if (typeof providers.connectedAPI.signData !== "function") {
+      setMessage("Connected Midnight wallet does not support signData().");
+      return;
+    }
+
+    setLoading("signature");
+    setMessage("");
+    setSignatureCheck(null);
+    setSignatureError("");
+    setSignatureProgress("Wallet prompt 2 of 2: sign the exact same domain again.");
+    try {
+      const second = await providers.connectedAPI.signData(pendingSignatureTest.domain, {
+        encoding: "text",
+        keyType: "unshielded",
+      });
+      setSignatureProgress("Comparing signatures and derived owner secrets.");
+      const secondSignature = String(second.signature || "").replace(/^0x/i, "");
+      const secondSecret = await deriveOwnerSecretFromWalletSignature(secondSignature);
+      const secondSecretHex = toHex(secondSecret);
+
+      setSignatureCheck({
+        domain: pendingSignatureTest.domain,
+        source: pendingSignatureTest.source,
+        sameSignature:
+          pendingSignatureTest.signatureOne.toLowerCase() ===
+          secondSignature.toLowerCase(),
+        sameDerivedSecret:
+          pendingSignatureTest.derivedSecretOneHex.toLowerCase() ===
+          secondSecretHex.toLowerCase(),
+        signatureOnePrefix: pendingSignatureTest.signatureOnePrefix,
+        signatureTwoPrefix: `${secondSignature.slice(0, 16)}...${secondSignature.slice(-8)}`,
+        derivedSecretOnePrefix: pendingSignatureTest.derivedSecretOnePrefix,
+        derivedSecretTwoPrefix: `${secondSecretHex.slice(0, 16)}...${secondSecretHex.slice(-8)}`,
+        checkedAt: new Date().toISOString(),
+      });
+      setPendingSignatureTest(null);
+    } catch (error) {
+      const nextError =
+        error instanceof Error
+          ? error.message
+          : "Failed to complete wallet signature determinism check.";
+      setSignatureError(nextError);
+      setMessage(nextError);
+    } finally {
+      setLoading("");
+      setSignatureProgress("");
+    }
+  }
+
   function downloadBackup() {
     if (!backupJson) return;
     const blob = new Blob([backupJson], { type: "application/json" });
@@ -134,9 +289,9 @@ export function OwnerVaultPanel({
       <CardHeader>
         <CardTitle className="text-white">Owner Vault</CardTitle>
         <CardDescription className="text-zinc-400">
-          Owner authority is derived from a wallet-signed domain message. The
-          local vault stores recoverable derivation metadata; admin actions ask
-          the wallet to sign again when the secret must be reconstructed.
+          Owner authority uses a stable secret stored in local Midnight private
+          state. The chain stores only the derived public authorization key;
+          export an encrypted backup before relying on a registry.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -161,17 +316,112 @@ export function OwnerVaultPanel({
                 <div>On-chain issuer key: <span className="font-mono break-all">{status?.onChainIssuerPublicKeyHex || "not readable"}</span></div>
               </div>
               <div className="mt-3">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    void refreshStatus();
-                  }}
-                  disabled={loading !== ""}
-                  className="border-zinc-700 text-zinc-200 hover:bg-zinc-800"
-                >
-                  {loading === "status" ? "Checking..." : "Refresh Vault Status"}
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      void refreshStatus();
+                    }}
+                    disabled={loading !== ""}
+                    className="border-zinc-700 text-zinc-200 hover:bg-zinc-800"
+                  >
+                    {loading === "status" ? "Checking..." : "Refresh Vault Status"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      void handleStartSignatureDeterminismCheck("fresh-test-domain");
+                    }}
+                    disabled={loading !== ""}
+                    className="border-zinc-700 text-zinc-200 hover:bg-zinc-800"
+                  >
+                    {loading === "signature" ? "Signing..." : "Start Fresh Signature Test"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      void handleStartSignatureDeterminismCheck("contract-owner-domain");
+                    }}
+                    disabled={loading !== "" || !status?.ownerDerivation?.deploymentSaltHex}
+                    className="border-zinc-700 text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
+                  >
+                    Start Contract Domain Test
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      void handleCompleteSignatureDeterminismCheck();
+                    }}
+                    disabled={loading !== "" || !pendingSignatureTest}
+                    className="bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50"
+                  >
+                    Sign Same Domain Again
+                  </Button>
+                </div>
+                <div className="mt-3 rounded-md border border-zinc-800 bg-black/40 p-3">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    Signature Test Output
+                  </div>
+                  {!signatureAttemptedAt && !signatureCheck && !signatureError ? (
+                    <div className="mt-2 text-xs text-zinc-400">
+                      No signature test has been run in this browser session.
+                    </div>
+                  ) : null}
+                  {signatureProgress ? (
+                    <div className="mt-2 text-xs text-blue-200">
+                      {signatureProgress}
+                    </div>
+                  ) : null}
+                  {signatureError ? (
+                    <div className="mt-2 text-xs text-red-300">
+                      Error: {signatureError}
+                    </div>
+                  ) : null}
+                  {pendingSignatureTest ? (
+                    <div className="mt-2 space-y-1 text-xs text-zinc-400">
+                      <div className="font-medium text-blue-200">
+                        Step 1 captured. Click "Sign Same Domain Again" to complete the comparison.
+                      </div>
+                      <div>Started: <span className="font-mono">{pendingSignatureTest.startedAt}</span></div>
+                      <div>Domain source: <span className="font-mono">{pendingSignatureTest.source === "contract-owner-domain" ? "current contract owner derivation" : "fresh test domain, independent from deployed contract"}</span></div>
+                      <div>Domain: <span className="font-mono break-all">{pendingSignatureTest.domain}</span></div>
+                      <div>Signature #1: <span className="font-mono">{pendingSignatureTest.signatureOnePrefix}</span></div>
+                      <div>Derived secret #1: <span className="font-mono">{pendingSignatureTest.derivedSecretOnePrefix}</span></div>
+                    </div>
+                  ) : null}
+                  {signatureCheck ? (
+                    <div className="mt-2 space-y-1 text-xs text-zinc-400">
+                      <div
+                        className={`font-medium ${
+                          signatureCheck.sameSignature && signatureCheck.sameDerivedSecret
+                            ? "text-emerald-300"
+                            : "text-red-300"
+                        }`}
+                      >
+                        {signatureCheck.sameSignature && signatureCheck.sameDerivedSecret
+                          ? "PASS: same message produced the same derived owner secret"
+                          : "FAIL: same message produced a different derived owner secret"}
+                      </div>
+                      <div>Checked: <span className="font-mono">{signatureCheck.checkedAt}</span></div>
+                      <div>Domain source: <span className="font-mono">{signatureCheck.source === "contract-owner-domain" ? "current contract owner derivation" : "fresh test domain, independent from deployed contract"}</span></div>
+                      <div>Domain: <span className="font-mono break-all">{signatureCheck.domain}</span></div>
+                      <div>Signature #1: <span className="font-mono">{signatureCheck.signatureOnePrefix}</span></div>
+                      <div>Signature #2: <span className="font-mono">{signatureCheck.signatureTwoPrefix}</span></div>
+                      <div>Same signature: <span className="font-mono">{String(signatureCheck.sameSignature)}</span></div>
+                      <div>Derived secret #1: <span className="font-mono">{signatureCheck.derivedSecretOnePrefix}</span></div>
+                      <div>Derived secret #2: <span className="font-mono">{signatureCheck.derivedSecretTwoPrefix}</span></div>
+                      <div>Same derived secret: <span className="font-mono">{String(signatureCheck.sameDerivedSecret)}</span></div>
+                    </div>
+                  ) : null}
+                  {signatureAttemptedAt && !signatureProgress && !signatureCheck && !signatureError ? (
+                    <div className="mt-2 text-xs text-zinc-400">
+                      Last attempt started at <span className="font-mono">{signatureAttemptedAt}</span>.
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </div>
 

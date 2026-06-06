@@ -13,6 +13,7 @@ import type { DidRecord } from "../types/did";
 
 interface IssuerPanelProps {
   contractAddress: string;
+  networkId?: string;
   requestId?: string;
   targetAgentId: string;
   targetSubjectWalletAddress?: string;
@@ -24,6 +25,7 @@ interface IssuerPanelProps {
 
 export function IssuerPanel({
   contractAddress,
+  networkId = "preprod",
   requestId,
   targetAgentId,
   targetSubjectWalletAddress,
@@ -46,7 +48,7 @@ export function IssuerPanel({
         {
           id:
           record?.did ||
-          `did:midnight:preprod:${contractAddress || "contract"}:${agentId || "agent"}`,
+          `did:midnight:${networkId}:${contractAddress || "contract"}:${agentId || "agent"}`,
         controller: targetSubjectWalletAddress || record?.subjectWalletAddress || "",
         agentName: record?.agentName || null,
         organization:
@@ -68,6 +70,7 @@ export function IssuerPanel({
   }, [
     agentId,
     contractAddress,
+    networkId,
     record?.agentName,
     record?.did,
     record?.didDocument,

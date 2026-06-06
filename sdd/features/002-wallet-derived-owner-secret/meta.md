@@ -4,10 +4,13 @@
 - **ID**: 002
 - **Slug**: 002-wallet-derived-owner-secret
 - **Tipo**: feature
-- **Estado**: done
+- **Estado**: superseded
 
 ## Resumen
-Reemplaza el owner secret aleatorio persistido en el vault por un owner secret regenerable desde una firma de la wallet admin. El contrato sigue usando el patron Compact soportado de `witness issuerSecret()` + `persistentHash`, pero la raiz operativa de control pasa a ser la wallet que firma el dominio de owner.
+Reemplazaba el owner secret aleatorio persistido en el vault por un owner secret regenerable desde una firma de la wallet admin. El contrato seguia usando el patron Compact soportado de `witness issuerSecret()` + `persistentHash`.
+
+## Superseded
+El 2026-06-06 se probo en la app que la wallet conectada puede devolver firmas distintas para el mismo dominio exacto. Como el secret se derivaba de `sha256(signature)`, el esquema no es deterministico y no sirve como raiz persistente de ownership. Queda reemplazado por `003-stable-owner-vault-secret`.
 
 ## Stack detectado
 - **Lenguaje**: TypeScript / JavaScript (ESM)

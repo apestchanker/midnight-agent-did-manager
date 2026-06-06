@@ -10,11 +10,11 @@ import {
 } from "./commitments";
 import { getSavedDeployment } from "./cache";
 import {
+  createRandomOwnerPrivateState,
   createWalletDerivedOwnerPrivateState,
   hasIssuerSecret,
   isOwnerPrivateStateMetadata,
   isValidPrivateState,
-  stripOwnerSecret,
 } from "./private-state";
 import { getContractRuntime } from "./runtime";
 import {
@@ -107,7 +107,12 @@ export async function ensureOwnerPrivateState(
   const savedDerivation =
     isOwnerPrivateStateMetadata(existing) && existing.ownerDerivation
       ? existing.ownerDerivation
-      : getSavedDeployment()?.ownerDerivation;
+      : (() => {
+          const savedDeployment = getSavedDeployment();
+          return savedDeployment?.contractAddress?.trim() === contractAddress.trim()
+            ? savedDeployment.ownerDerivation
+            : undefined;
+        })();
 
   if (
     savedDerivation?.scheme === "wallet-signature-sha256-v1" &&
@@ -127,12 +132,12 @@ export async function ensureOwnerPrivateState(
   }
 
   throw new Error(
-    "Owner derivation metadata is missing from Midnight private state for this contract. Restore a vault backup before issuing, updating, or revoking DIDs.",
+    "Owner secret is missing from Midnight private state for this contract. Restore an encrypted owner vault backup before issuing, updating, or revoking DIDs.",
   );
 }
 
 export async function createDeploymentOwnerPrivateState(providers: AppProviders) {
-  return createWalletDerivedOwnerPrivateState(providers, toHex);
+  return createRandomOwnerPrivateState(providers, toHex);
 }
 
 export async function persistOwnerPrivateStateMetadata(
@@ -143,7 +148,7 @@ export async function persistOwnerPrivateStateMetadata(
   providers.privateStateProvider.setContractAddress(contractAddress as never);
   await providers.privateStateProvider.set(
     OWNER_PRIVATE_STATE_ID,
-    stripOwnerSecret(privateState),
+    privateState,
   );
 }
 
@@ -216,6 +221,7 @@ export async function getOwnerVaultStatus(
       typeof existing.custodianWalletAddress === "string"
         ? existing.custodianWalletAddress
         : undefined,
+    ownerDerivation: existing.ownerDerivation,
     localIssuerPublicKeyHex,
     onChainIssuerPublicKeyHex,
     matchesOnChain: onChainIssuerPublicKeyHex && localIssuerPublicKeyHex
@@ -236,7 +242,7 @@ export async function exportOwnerVaultBackup(
     contractAddress,
     networkId: providers.networkId,
     exportedAt: new Date().toISOString(),
-    privateState: serializeOwnerPrivateState(stripOwnerSecret(privateState), toHex),
+    privateState: serializeOwnerPrivateState(privateState, toHex),
   };
 
   const encrypted = await encryptOwnerVaultBackup(
@@ -294,7 +300,7 @@ export async function restoreOwnerVaultBackup(
   providers.privateStateProvider.setContractAddress(contractAddress as never);
   await providers.privateStateProvider.set(
     OWNER_PRIVATE_STATE_ID,
-    stripOwnerSecret(stateWithSecret),
+    stateWithSecret,
   );
   return getOwnerVaultStatus(providers, contractAddress);
 }

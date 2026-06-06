@@ -67,6 +67,7 @@ export type OwnerVaultStatus = {
   contractAddress: string;
   createdAt?: string;
   custodianWalletAddress?: string;
+  ownerDerivation?: DidRegistryPrivateState["ownerDerivation"];
   localIssuerPublicKeyHex?: string;
   onChainIssuerPublicKeyHex?: string;
   matchesOnChain: boolean | null;

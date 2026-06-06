@@ -90,7 +90,7 @@ export class DidRegistryAPI {
       ? fromHex(ownerPrivateState.issuerPublicKeyHex)
       : ownerPrivateState.issuerSecret;
     if (!ownerPublicKey) {
-      throw new Error("Owner public authorization key could not be derived from wallet signature.");
+      throw new Error("Owner public authorization key could not be derived from the local owner secret.");
     }
     const { module, compiledContract } = await getContractRuntime(MANAGED_CONTRACT_BASE_PATH);
     const deployed = await deployContract(providers as never, {

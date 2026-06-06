@@ -82,9 +82,10 @@ describe("did commitments", () => {
     expect(toHex(one)).not.toBe(toHex(other));
   });
 
-  it("can serialize owner derivation metadata without exporting issuerSecretHex", () => {
+  it("serializes owner vault backups with the issuer secret for encrypted recovery", () => {
     const serialized = serializeOwnerPrivateState(
       {
+        issuerSecret: new Uint8Array(32).fill(7),
         createdAt: "2026-06-01T00:00:00.000Z",
         vaultVersion: "v1",
         contractVersion: "0.3.5",
@@ -93,16 +94,14 @@ describe("did commitments", () => {
         custodianWalletAddress: "mn_test_wallet",
         issuerPublicKeyHex: "11".repeat(32),
         ownerDerivation: {
-          scheme: "wallet-signature-sha256-v1",
-          signDomain: "didMN:issuer-owner:v1:preprod:aa",
-          deploymentSaltHex: "aa",
+          scheme: "random-secret-v1",
         },
       },
       toHex,
     );
 
-    expect(serialized.issuerSecretHex).toBeUndefined();
+    expect(serialized.issuerSecretHex).toBe("07".repeat(32));
     expect("signatureHashHex" in (serialized.ownerDerivation ?? {})).toBe(false);
-    expect(serialized.ownerDerivation?.scheme).toBe("wallet-signature-sha256-v1");
+    expect(serialized.ownerDerivation?.scheme).toBe("random-secret-v1");
   });
 });
