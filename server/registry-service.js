@@ -306,34 +306,39 @@ export async function createSubscription(input) {
 
 export async function createCustomerMcpKey(input) {
   return withTransaction(async (client) => {
-    const material = createMcpKey();
-    const scopes = normalizeMcpScopes(input.scopes);
-    const result = await client.query(
-      `insert into mcp_keys (customer_id, label, key_id, key_hash, status, scopes, expires_at)
-       values ($1, $2, $3, $4, 'active', $5::jsonb, $6)
-       returning id, customer_id, label, key_id, status, scopes, created_at, expires_at`,
-      [
-        input.customerId,
-        input.label,
-        material.keyId,
-        material.keyHash,
-        JSON.stringify(scopes.length ? scopes : DEFAULT_MCP_SCOPES),
-        input.expiresAt || null,
-      ],
-    );
-    await audit(client, {
-      actorType: "customer",
-      actorRef: input.customerId,
-      eventType: "mcp_key_created",
-      entityType: "mcp_key",
-      entityId: result.rows[0].id,
-      eventData: { label: input.label, scopes: scopes.length ? scopes : DEFAULT_MCP_SCOPES },
-    });
-    return {
-      ...result.rows[0],
-      plainTextKey: material.plainText,
-    };
+    return createCustomerMcpKeyInTransaction(client, input);
   });
+}
+
+async function createCustomerMcpKeyInTransaction(client, input) {
+  const material = createMcpKey();
+  const scopes = normalizeMcpScopes(input.scopes);
+  const effectiveScopes = scopes.length ? scopes : DEFAULT_MCP_SCOPES;
+  const result = await client.query(
+    `insert into mcp_keys (customer_id, label, key_id, key_hash, status, scopes, expires_at)
+     values ($1, $2, $3, $4, 'active', $5::jsonb, $6)
+     returning id, customer_id, label, key_id, status, scopes, created_at, expires_at`,
+    [
+      input.customerId,
+      input.label,
+      material.keyId,
+      material.keyHash,
+      JSON.stringify(effectiveScopes),
+      input.expiresAt || null,
+    ],
+  );
+  await audit(client, {
+    actorType: "customer",
+    actorRef: input.customerId,
+    eventType: "mcp_key_created",
+    entityType: "mcp_key",
+    entityId: result.rows[0].id,
+    eventData: { label: input.label, scopes: effectiveScopes },
+  });
+  return {
+    ...result.rows[0],
+    plainTextKey: material.plainText,
+  };
 }
 
 export async function updateCustomerMcpKeyScopes(input) {
@@ -449,7 +454,7 @@ export async function bootstrapDemoCustomer(input) {
       ).rows[0];
     }
 
-    const mcpKey = await createCustomerMcpKey({
+    const mcpKey = await createCustomerMcpKeyInTransaction(client, {
       customerId: customer.id,
       label: input.mcpLabel || "demo-agent-key",
       scopes: ["did.request", "did.status", "did.resolve", "did.validate"],

@@ -64,8 +64,44 @@ import {
 } from "./utils.js";
 
 const PORT = Number(process.env.DID_API_PORT || 8787);
+const DB_INIT_ATTEMPTS = Number(process.env.DID_API_DB_INIT_ATTEMPTS || 12);
+const DB_INIT_RETRY_MS = Number(process.env.DID_API_DB_INIT_RETRY_MS || 2500);
 
 installProcessLogger("backend");
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableDatabaseStartupError(error) {
+  const code = error && typeof error === "object" ? error.code : "";
+  return [
+    "ECONNREFUSED",
+    "EHOSTUNREACH",
+    "ENETUNREACH",
+    "ETIMEDOUT",
+    "EAI_AGAIN",
+    "EPERM",
+  ].includes(code);
+}
+
+async function initializeDatabaseWithRetry() {
+  for (let attempt = 1; attempt <= DB_INIT_ATTEMPTS; attempt += 1) {
+    try {
+      await initializeDatabase();
+      return;
+    } catch (error) {
+      if (attempt >= DB_INIT_ATTEMPTS || !isRetryableDatabaseStartupError(error)) {
+        throw error;
+      }
+      const code = error && typeof error === "object" ? error.code : "unknown";
+      console.warn(
+        `[did-api] database not reachable yet (${code}); retrying ${attempt}/${DB_INIT_ATTEMPTS - 1} in ${DB_INIT_RETRY_MS}ms`,
+      );
+      await wait(DB_INIT_RETRY_MS);
+    }
+  }
+}
 
 const server = createServer(async (req, res) => {
   if (!req.url || !req.method) {
@@ -681,7 +717,7 @@ const server = createServer(async (req, res) => {
   }
 });
 
-initializeDatabase()
+initializeDatabaseWithRetry()
   .then(() => {
     server.listen(PORT, () => {
       console.log(`[did-api] listening on http://localhost:${PORT}`);
