@@ -1,5 +1,16 @@
 import crypto from "crypto";
 
+const DEFAULT_MAX_JSON_BODY_BYTES = 1024 * 1024;
+
+export class RequestBodyError extends Error {
+  constructor(message, { statusCode = 400, code = "invalid_json_body" } = {}) {
+    super(message);
+    this.name = "RequestBodyError";
+    this.statusCode = statusCode;
+    this.code = code;
+  }
+}
+
 export function uniqueScopes(scopes) {
   return Array.isArray(scopes)
     ? [...new Set(scopes.map((scope) => String(scope).trim()).filter(Boolean))]
@@ -53,13 +64,40 @@ export function createMcpKey() {
   };
 }
 
-export async function readJson(req) {
+export async function readJson(req, options = {}) {
+  const maxBytes = Number(options.maxBytes || process.env.DID_MAX_JSON_BODY_BYTES || DEFAULT_MAX_JSON_BODY_BYTES);
+  if (!Number.isFinite(maxBytes) || maxBytes <= 0) {
+    throw new RequestBodyError("Invalid JSON body size limit.", {
+      statusCode: 500,
+      code: "invalid_json_body_limit",
+    });
+  }
+
   const chunks = [];
+  let totalBytes = 0;
   for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buffer.byteLength;
+    if (totalBytes > maxBytes) {
+      throw new RequestBodyError(`JSON body exceeds ${maxBytes} byte limit.`, {
+        statusCode: 413,
+        code: "json_body_too_large",
+      });
+    }
+    chunks.push(buffer);
   }
   const raw = Buffer.concat(chunks).toString("utf8");
-  return JSON.parse(raw || "{}");
+  try {
+    return JSON.parse(raw || "{}");
+  } catch (error) {
+    throw new RequestBodyError(
+      error instanceof Error ? error.message : "Malformed JSON payload.",
+      {
+        statusCode: 400,
+        code: "malformed_json",
+      },
+    );
+  }
 }
 
 export function sendJson(res, status, body) {

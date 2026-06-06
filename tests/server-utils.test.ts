@@ -7,6 +7,7 @@ import {
   normalizeWallet,
   parseRequestPath,
   readJson,
+  RequestBodyError,
   sendJson,
   sendText,
   sha256Hex,
@@ -74,7 +75,23 @@ describe("server/utils", () => {
       yield Buffer.from('{"hello":"world"}{"extra":true}');
     }
 
-    await expect(readJson(body())).rejects.toThrow(SyntaxError);
+    await expect(readJson(body())).rejects.toMatchObject({
+      name: "RequestBodyError",
+      statusCode: 400,
+      code: "malformed_json",
+    } satisfies Partial<RequestBodyError>);
+  });
+
+  it("rejects JSON payloads larger than the configured limit", async () => {
+    async function* body() {
+      yield Buffer.from('{"hello":"world"}');
+    }
+
+    await expect(readJson(body(), { maxBytes: 4 })).rejects.toMatchObject({
+      name: "RequestBodyError",
+      statusCode: 413,
+      code: "json_body_too_large",
+    } satisfies Partial<RequestBodyError>);
   });
 
   it("sends JSON responses with CORS headers", () => {

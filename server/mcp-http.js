@@ -4,7 +4,7 @@ import { URL } from "url";
 import { initializeDatabase } from "./db.js";
 import { getRecentLogs, installProcessLogger } from "./log-store.js";
 import { createDidMcpApp } from "./mcp-app.js";
-import { readJson, sendJson, sendText, setCorsHeaders } from "./utils.js";
+import { readJson, RequestBodyError, sendJson, sendText, setCorsHeaders } from "./utils.js";
 
 const PORT = Number(process.env.DID_MCP_PORT || 8788);
 const app = createDidMcpApp();
@@ -62,15 +62,18 @@ const server = createServer(async (req, res) => {
       }
       sendJson(res, 200, response);
     } catch (error) {
-      if (error instanceof SyntaxError) {
+      if (error instanceof RequestBodyError) {
         console.warn("[mcp-http] invalid JSON payload", error.message);
-        sendJson(res, 400, {
+        sendJson(res, error.statusCode, {
           jsonrpc: "2.0",
           id: null,
           error: {
-            code: -32700,
-            message: "Parse error",
-            data: error.message,
+            code: error.code === "json_body_too_large" ? -32000 : -32700,
+            message: error.code === "json_body_too_large" ? "Request body too large" : "Parse error",
+            data: {
+              code: error.code,
+              message: error.message,
+            },
           },
         });
         return;

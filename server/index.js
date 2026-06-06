@@ -58,6 +58,7 @@ import {
 import {
   parseRequestPath,
   readJson,
+  RequestBodyError,
   sendJson,
   sendText,
   setCorsHeaders,
@@ -708,6 +709,16 @@ const server = createServer(async (req, res) => {
 
     sendText(res, 404, "Not found");
   } catch (error) {
+    if (error instanceof RequestBodyError) {
+      console.warn("[did-api] invalid request body", error.message);
+      sendJson(res, error.statusCode, {
+        ok: false,
+        error: error.code,
+        message: error.message,
+      });
+      return;
+    }
+
     const message = error instanceof Error ? error.message : String(error);
     console.error("[did-api] request failed", error);
     sendJson(res, 500, {
