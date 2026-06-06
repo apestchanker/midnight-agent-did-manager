@@ -158,6 +158,7 @@ export async function createMidnightProofRequest(input, deps = {}) {
     challenge: input.challenge,
     verifier: input.verifier,
     purpose: input.purpose || "selective-disclosure",
+    customerId: input.customerId,
   });
 
   const createdAt = new Date().toISOString();
@@ -417,8 +418,29 @@ export async function verifyMidnightProofSubmission(input, deps = {}) {
             checkResultLength: Array.isArray(checkResult) ? checkResult.length : undefined,
           });
         } catch (proofServerErr) {
-          console.log('[midnight-proof-service] ZK pipeline step 6: proof-server unavailable or incompatible — falling back to publicInputsHash boundary check', { error: String(proofServerErr) });
-          warnings.push(`Proof server check skipped (${proofServerErr instanceof Error ? proofServerErr.message : String(proofServerErr)}). Verification based on publicInputsHash boundary check only.`);
+          const proofServerMessage =
+            proofServerErr instanceof Error ? proofServerErr.message : String(proofServerErr);
+          console.log('[midnight-proof-service] ZK pipeline step 6 failed: proof-server unavailable or incompatible', { error: proofServerMessage });
+          return {
+            ...buildVerificationError({
+              layer: 'proof_server_unavailable',
+              message: `Strict native proof verification failed: ${proofServerMessage}`,
+            }),
+            did,
+            didActive: true,
+            issuerCredentialsVerified: true,
+            requestIntegrityVerified,
+            cryptographicProofVerified: false,
+            proofEnvelopeVerified: false,
+            submissionMatchesRequest,
+            warnings,
+            verificationMaterial: {
+              expectedBundleCommitment: expectedMaterial.bundleCommitment,
+              expectedHolderBindingCommitment: expectedMaterial.holderBindingCommitment,
+              verifiedScopes: expectedMaterial.disclosedScopes,
+              credentialCount: expectedMaterial.credentialCount,
+            },
+          };
         }
 
         // Step 7: Verify publicInputsHash match

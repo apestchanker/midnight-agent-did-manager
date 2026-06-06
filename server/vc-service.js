@@ -158,6 +158,9 @@ export async function rotateCredentialsForDid(input, deps = {}) {
     if (!record) {
       throw new Error("DID record not found.");
     }
+    if (input.customerId && record.customer_id !== input.customerId) {
+      throw new Error("DID record not found.");
+    }
     if (record.status !== "active") {
       throw new Error("Credentials can only be rotated for an active DID.");
     }
@@ -203,13 +206,19 @@ export async function rotateCredentialsForDid(input, deps = {}) {
   });
 }
 
-export async function listCredentialsForDid(did) {
+export async function listCredentialsForDid(did, options = {}) {
+  const params = [did];
+  let customerClause = "";
+  if (options.customerId) {
+    params.push(options.customerId);
+    customerClause = ` and customer_id = $2`;
+  }
   const result = await query(
     `select id, credential_type, disclosure_scope, issuer_id, subject_did, claims, status, issued_at, expires_at, jwt
      from verifiable_credentials
-     where subject_did = $1
+     where subject_did = $1${customerClause}
      order by issued_at asc`,
-    [did],
+    params,
   );
   return result.rows;
 }
@@ -221,6 +230,11 @@ export async function getCredentialBundle(input) {
   if (input.scopes?.length) {
     params.push(input.scopes);
     where += ` and disclosure_scope = any($2::text[])`;
+  }
+
+  if (input.customerId) {
+    params.push(input.customerId);
+    where += ` and customer_id = $${params.length}`;
   }
 
   const result = await query(
@@ -347,7 +361,9 @@ export async function createMidnightProofMaterialFromRows(input) {
 }
 
 export async function getMidnightProofMaterial(input) {
-  const credentialRows = await listCredentialsForDid(input.did);
+  const credentialRows = await listCredentialsForDid(input.did, {
+    customerId: input.customerId,
+  });
   return createMidnightProofMaterialFromRows({
     ...input,
     credentialRows,

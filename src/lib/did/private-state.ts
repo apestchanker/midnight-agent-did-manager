@@ -101,7 +101,8 @@ export function isValidPrivateState(value: unknown): value is DidRegistryPrivate
 export function stripOwnerSecret(
   privateState: DidRegistryPrivateState,
 ): DidRegistryPrivateState {
-  const { issuerSecret: _issuerSecret, ...metadata } = privateState;
+  const { issuerSecret, ...metadata } = privateState;
+  void issuerSecret;
   return metadata;
 }
 

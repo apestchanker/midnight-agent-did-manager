@@ -719,7 +719,11 @@ function extractMcpKey(ctx) {
     return ctx.mcpKey.trim();
   }
 
-  if (typeof process.env.MCP_KEY === "string" && process.env.MCP_KEY.trim()) {
+  if (
+    ctx.transport !== "http" &&
+    typeof process.env.MCP_KEY === "string" &&
+    process.env.MCP_KEY.trim()
+  ) {
     return process.env.MCP_KEY.trim();
   }
 
@@ -800,6 +804,7 @@ export function createMcpServer(deps) {
       if (!auth) {
         throw createJsonRpcError(-32001, "MCP key required");
       }
+      requireToolAccess(auth, "did_request_list");
       const customer = await deps.getCustomerContextById(auth.customer_id);
       return {
         contents: [
@@ -847,6 +852,7 @@ export function createMcpServer(deps) {
       if (!auth) {
         throw createJsonRpcError(-32001, "MCP key required");
       }
+      requireToolAccess(auth, "did_request_get");
       const request = await deps.getDidRequestById(template.requestId);
       if (!request || request.customer_id !== auth.customer_id) {
         throw createJsonRpcError(-32004, "DID request not found");
@@ -879,7 +885,14 @@ export function createMcpServer(deps) {
     }
 
     if (template.type === "did-credentials") {
-      const credentials = await deps.listCredentialsForDid(template.did);
+      const auth = authInfo?.auth;
+      if (!auth) {
+        throw createJsonRpcError(-32001, "MCP key required");
+      }
+      requireToolAccess(auth, "credential_list");
+      const credentials = await deps.listCredentialsForDid(template.did, {
+        customerId: auth.customer_id,
+      });
       return {
         contents: [
           {
@@ -1043,6 +1056,7 @@ export function createMcpServer(deps) {
       const bundle = await deps.getCredentialBundle({
         did: args?.did,
         scopes: args?.scopes,
+        customerId: auth.customer_id,
       });
       return textResult(`Built credential bundle for ${args.did}.`, bundle);
     }
@@ -1054,6 +1068,7 @@ export function createMcpServer(deps) {
         challenge: args?.challenge,
         verifier: args?.verifier,
         purpose: args?.purpose,
+        customerId: auth.customer_id,
       });
       return textResult(`Built Midnight proof material for ${args.did}.`, proofMaterial);
     }
@@ -1065,6 +1080,7 @@ export function createMcpServer(deps) {
         challenge: args?.challenge,
         verifier: args?.verifier,
         purpose: args?.purpose,
+        customerId: auth.customer_id,
       });
       return textResult(`Created Midnight proof request for ${args.did}.`, proofRequest);
     }
@@ -1084,7 +1100,9 @@ export function createMcpServer(deps) {
     }
 
     if (name === "credential_list") {
-      const credentials = await deps.listCredentialsForDid(args?.did);
+      const credentials = await deps.listCredentialsForDid(args?.did, {
+        customerId: auth.customer_id,
+      });
       return textResult(
         `Found ${credentials.length} credential(s) for ${args.did}.`,
         { credentials },
@@ -1094,6 +1112,7 @@ export function createMcpServer(deps) {
     if (name === "credential_rotate") {
       const rotated = await deps.rotateCredentialsForDid({
         did: args?.did,
+        customerId: auth.customer_id,
       });
       return textResult(`Rotated JWT credentials for ${args.did}.`, rotated);
     }

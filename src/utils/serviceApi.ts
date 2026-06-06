@@ -22,6 +22,7 @@ const API_BASE =
   (import.meta.env.VITE_DID_API_BASE_URL || "").trim() || "http://localhost:8787";
 const MCP_BASE =
   (import.meta.env.VITE_DID_MCP_BASE_URL || "").trim() || "http://localhost:8788";
+const API_AUTH_TOKEN = (import.meta.env.VITE_DID_API_AUTH_TOKEN || "").trim();
 
 function apiUrl(path: string): string {
   return `${API_BASE}${path}`;
@@ -45,7 +46,14 @@ async function readError(response: Response): Promise<string> {
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(apiUrl(path), init);
+  const headers = new Headers(init?.headers || {});
+  if (API_AUTH_TOKEN && !headers.has("X-DID-API-Key")) {
+    headers.set("X-DID-API-Key", API_AUTH_TOKEN);
+  }
+  const response = await fetch(apiUrl(path), {
+    ...init,
+    headers,
+  });
   if (!response.ok) {
     throw new Error(await readError(response));
   }
@@ -61,7 +69,11 @@ export function fetchBackendLogs(limit = 200): Promise<{ entries: LogEntry[] }> 
 }
 
 export async function fetchMcpLogs(limit = 200): Promise<{ entries: LogEntry[] }> {
-  const response = await fetch(mcpUrl(`/logs?limit=${encodeURIComponent(String(limit))}`));
+  const headers = new Headers();
+  if (API_AUTH_TOKEN) headers.set("X-DID-API-Key", API_AUTH_TOKEN);
+  const response = await fetch(mcpUrl(`/logs?limit=${encodeURIComponent(String(limit))}`), {
+    headers,
+  });
   if (!response.ok) {
     throw new Error(await readError(response));
   }
@@ -71,8 +83,11 @@ export async function fetchMcpLogs(limit = 200): Promise<{ entries: LogEntry[] }
 export async function getCustomerByWallet(
   walletAddress: string,
 ): Promise<CustomerContext | null> {
+  const headers = new Headers();
+  if (API_AUTH_TOKEN) headers.set("X-DID-API-Key", API_AUTH_TOKEN);
   const response = await fetch(
     apiUrl(`/api/customers/by-wallet?walletAddress=${encodeURIComponent(walletAddress)}`),
+    { headers },
   );
   if (response.status === 404) return null;
   if (!response.ok) {

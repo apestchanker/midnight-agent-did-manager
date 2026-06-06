@@ -1,6 +1,6 @@
 {
   "name": "midnight-agent-did-manager",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "contractVersion": "0.3.5",
   "type": "module",
   "scripts": {
@@ -63,8 +63,8 @@
     "@midnight-ntwrk/compact-runtime": "^0.16.0",
     "@types/react": "^18.2.43",
     "@types/react-dom": "^18.2.17",
-    "@typescript-eslint/eslint-plugin": "^6.14.0",
-    "@typescript-eslint/parser": "^6.14.0",
+    "@typescript-eslint/eslint-plugin": "^8.60.1",
+    "@typescript-eslint/parser": "^8.60.1",
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.16",
     "esbuild": "^0.27.7",

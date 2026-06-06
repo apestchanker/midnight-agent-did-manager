@@ -380,7 +380,27 @@ VITE_DID_API_BASE_URL=http://localhost:8787
 DID_API_PORT=8787
 DATABASE_URL=postgresql://postgres:YOUR_DB_PASSWORD_HERE@127.0.0.1:5432/agent_registry_db
 VITE_ADMIN_WALLET_SHIELDED_ADDR=mn_shield-addr_XXXXXXXX
+
+# API auth hardening (local DID + MCP HTTP servers)
+# Private REST routes and the MCP /logs endpoint require this shared token.
+# DID_API_AUTH_TOKEN is read by the servers; VITE_DID_API_AUTH_TOKEN must match
+# so the frontend (admin Logs view included) can authenticate.
+DID_API_AUTH_TOKEN=replace-with-a-long-random-token
+VITE_DID_API_AUTH_TOKEN=replace-with-a-long-random-token
+
+# Loopback binding and CORS allowlist (defaults shown)
+DID_API_HOST=127.0.0.1
+DID_MCP_HOST=127.0.0.1
+DID_MCP_PORT=8788
+DID_CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 ```
+
+The local DID REST service and the MCP HTTP server gate their private routes
+behind a shared token. Set `DID_API_AUTH_TOKEN` (server) and a matching
+`VITE_DID_API_AUTH_TOKEN` (frontend); requests may carry the token as
+`X-DID-API-Key: <token>` or `Authorization: Bearer <token>`. The admin Logs view
+needs the matching frontend token to load both the backend and MCP log streams.
+This token is a coarse local-development gate, not production access control.
 
 ## Owner Authorization Vault
 

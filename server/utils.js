@@ -1,6 +1,10 @@
 import crypto from "crypto";
 
 const DEFAULT_MAX_JSON_BODY_BYTES = 1024 * 1024;
+const DEFAULT_ALLOWED_ORIGINS = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+];
 
 export class RequestBodyError extends Error {
   constructor(message, { statusCode = 400, code = "invalid_json_body" } = {}) {
@@ -100,28 +104,50 @@ export async function readJson(req, options = {}) {
   }
 }
 
-export function sendJson(res, status, body) {
+function getAllowedOrigins() {
+  const configured = String(process.env.DID_CORS_ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  return configured.length ? configured : DEFAULT_ALLOWED_ORIGINS;
+}
+
+function getCorsOrigin(req) {
+  const requestOrigin = req?.headers?.origin;
+  const allowedOrigins = getAllowedOrigins();
+  if (allowedOrigins.includes("*")) return "*";
+  if (typeof requestOrigin === "string" && allowedOrigins.includes(requestOrigin)) {
+    return requestOrigin;
+  }
+  return allowedOrigins[0] || "http://localhost:5173";
+}
+
+export function applyCorsHeaders(res, req) {
+  res.setHeader("Access-Control-Allow-Origin", getCorsOrigin(req));
+  res.setHeader("Vary", "Origin");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, X-MCP-Key, X-DID-API-Key, Authorization",
+  );
+}
+
+export function sendJson(res, status, body, req) {
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json");
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-MCP-Key, Authorization");
+  applyCorsHeaders(res, req);
   res.end(JSON.stringify(body));
 }
 
-export function sendText(res, status, body) {
+export function sendText(res, status, body, req) {
   res.statusCode = status;
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-MCP-Key, Authorization");
+  applyCorsHeaders(res, req);
   res.end(body);
 }
 
-export function setCorsHeaders(res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-MCP-Key, Authorization");
+export function setCorsHeaders(res, req) {
+  applyCorsHeaders(res, req);
 }
 
 export function deriveAgentKey(agentId) {

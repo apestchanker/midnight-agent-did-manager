@@ -469,7 +469,7 @@ describe("midnight-proof-service", () => {
     }
   });
 
-  it("ZK pipeline step 6 error: falls back to publicInputsHash boundary check when proof-server throws", async () => {
+  it("ZK pipeline step 6 error: rejects the submission when strict proof-server verification throws", async () => {
     // Proof.deserialize must succeed to reach step 6 — mock it to return a dummy object
     const spy = vi.spyOn(LedgerV8.Proof, "deserialize").mockReturnValue({} as LedgerV8.Proof);
 
@@ -490,11 +490,10 @@ describe("midnight-proof-service", () => {
         }),
       );
 
-      // Proof server failed → falls through to hash boundary check
-      // Hash matched → cryptographicProofVerified:true, status:boundary_verified_only
-      expect(result.valid).toBe(true);
-      expect((result as any).status).toBe("boundary_verified_only");
-      expect(result.warnings?.some((w: string) => /proof server/i.test(w))).toBe(true);
+      expect(result.valid).toBe(false);
+      expect(result.failure_layer).toBe("proof_server_unavailable");
+      expect(result.cryptographicProofVerified).toBe(false);
+      expect(result.message).toMatch(/strict native proof verification failed/i);
     } finally {
       spy.mockRestore();
     }

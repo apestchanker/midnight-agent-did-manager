@@ -111,7 +111,7 @@ describe("server/utils", () => {
 
     expect(res.statusCode).toBe(201);
     expect(headers.get("Content-Type")).toBe("application/json");
-    expect(headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(headers.get("Access-Control-Allow-Origin")).toBe("http://localhost:5173");
     expect(res.body).toBe(JSON.stringify({ ok: true }));
   });
 
@@ -132,7 +132,7 @@ describe("server/utils", () => {
 
     expect(res.statusCode).toBe(400);
     expect(headers.get("Content-Type")).toBe("text/plain; charset=utf-8");
-    expect(headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(headers.get("Access-Control-Allow-Origin")).toBe("http://localhost:5173");
     expect(res.body).toBe("bad request");
   });
 });

@@ -370,6 +370,7 @@ describe("MCP server core", () => {
       expect.objectContaining({
         did: "did:midnight:preprod:contract:agent",
         scopes: ["ownership"],
+        customerId: "customer-1",
       }),
     );
     expect(response?.result.structuredContent.proofType).toBe(
@@ -496,8 +497,103 @@ describe("MCP server core", () => {
 
     expect(deps.rotateCredentialsForDid).toHaveBeenCalledWith({
       did: "did:midnight:preprod:contract:agent",
+      customerId: "customer-1",
     });
     expect(response?.result.structuredContent.issuedCount).toBe(2);
+  });
+
+  it("does not accept process.env.MCP_KEY as authentication for HTTP requests", async () => {
+    const oldMcpKey = process.env.MCP_KEY;
+    process.env.MCP_KEY = "mcp_valid";
+    const deps = createDeps();
+    const server = createMcpServer(deps);
+
+    try {
+      const response = await server.handleRequest(
+        {
+          jsonrpc: "2.0",
+          id: 16,
+          method: "tools/call",
+          params: {
+            name: "did_request_list",
+            arguments: {},
+          },
+        },
+        {
+          transport: "http",
+          headers: {},
+        },
+      );
+
+      expect(response?.error.message).toContain("MCP key required");
+      expect(deps.authenticateMcpKey).not.toHaveBeenCalled();
+    } finally {
+      if (oldMcpKey === undefined) {
+        delete process.env.MCP_KEY;
+      } else {
+        process.env.MCP_KEY = oldMcpKey;
+      }
+    }
+  });
+
+  it("requires credential scope and customer filtering for DID credential resources", async () => {
+    const deps = createDeps();
+    deps.authenticateMcpKey = vi.fn(async (key: string) => {
+      if (key !== "mcp_valid") return null;
+      return {
+        id: "key-1",
+        customer_id: "customer-1",
+        label: "agent-key",
+        scopes: ["did.credentials"],
+      };
+    });
+    deps.listCredentialsForDid = vi.fn(async () => [
+      {
+        id: "credential-1",
+        credential_jwt: "eyJ.secret.jwt",
+      },
+    ]);
+    const server = createMcpServer(deps);
+
+    const unauthenticated = await server.handleRequest(
+      {
+        jsonrpc: "2.0",
+        id: 17,
+        method: "resources/read",
+        params: {
+          uri: "didmn://dids/did:midnight:preprod:contract:agent/credentials",
+        },
+      },
+      {
+        transport: "http",
+        headers: {},
+      },
+    );
+
+    expect(unauthenticated?.error.message).toContain("MCP key required");
+
+    const response = await server.handleRequest(
+      {
+        jsonrpc: "2.0",
+        id: 18,
+        method: "resources/read",
+        params: {
+          uri: "didmn://dids/did:midnight:preprod:contract:agent/credentials",
+        },
+      },
+      {
+        transport: "http",
+        headers: {
+          "x-mcp-key": "mcp_valid",
+        },
+      },
+    );
+
+    expect(deps.listCredentialsForDid).toHaveBeenCalledWith(
+      "did:midnight:preprod:contract:agent",
+      { customerId: "customer-1" },
+    );
+    expect(response?.result.contents[0].text).toContain("eyJ.secret.jwt");
   });
 
   // Task 5: credential_midnight_proof_verify schema-version: 2 tests
