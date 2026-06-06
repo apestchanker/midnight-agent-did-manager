@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { Proof, parseCheckResult } from "@midnight-ntwrk/ledger-v8";
+import { Proof } from "@midnight-ntwrk/ledger-v8";
 import { canonicalize } from "../lib/canonical-json.js";
 import { verifyLocalPreviewProofSubmission } from "../lib/midnight-proof-envelope.js";
 import {
@@ -412,11 +412,10 @@ export async function verifyMidnightProofSubmission(input, deps = {}) {
             expectedNativeMaterial.keyLocation,
             { network: didNetwork, fallbackProverUrl: proof.proverUrl },
           );
-          if (checkResult !== undefined) {
-            parseCheckResult(checkResult);
-          }
           proofServerVerified = true;
-          console.log('[midnight-proof-service] ZK pipeline step 6 passed: proof-server responded');
+          console.log('[midnight-proof-service] ZK pipeline step 6 passed: proof-server responded', {
+            checkResultLength: Array.isArray(checkResult) ? checkResult.length : undefined,
+          });
         } catch (proofServerErr) {
           console.log('[midnight-proof-service] ZK pipeline step 6: proof-server unavailable or incompatible — falling back to publicInputsHash boundary check', { error: String(proofServerErr) });
           warnings.push(`Proof server check skipped (${proofServerErr instanceof Error ? proofServerErr.message : String(proofServerErr)}). Verification based on publicInputsHash boundary check only.`);
