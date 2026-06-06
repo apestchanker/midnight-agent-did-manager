@@ -69,6 +69,14 @@ describe("server/utils", () => {
     await expect(readJson(body())).resolves.toEqual({ hello: "world" });
   });
 
+  it("rejects malformed JSON payloads", async () => {
+    async function* body() {
+      yield Buffer.from('{"hello":"world"}{"extra":true}');
+    }
+
+    await expect(readJson(body())).rejects.toThrow(SyntaxError);
+  });
+
   it("sends JSON responses with CORS headers", () => {
     const headers = new Map<string, string>();
     const res = {

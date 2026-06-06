@@ -49,17 +49,44 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/mcp") {
-    const payload = await readJson(req);
-    const response = await app.handleRequest(payload, {
-      transport: "http",
-      headers: req.headers,
-    });
-    if (response == null) {
-      res.statusCode = 204;
-      res.end("");
-      return;
+    try {
+      const payload = await readJson(req);
+      const response = await app.handleRequest(payload, {
+        transport: "http",
+        headers: req.headers,
+      });
+      if (response == null) {
+        res.statusCode = 204;
+        res.end("");
+        return;
+      }
+      sendJson(res, 200, response);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        console.warn("[mcp-http] invalid JSON payload", error.message);
+        sendJson(res, 400, {
+          jsonrpc: "2.0",
+          id: null,
+          error: {
+            code: -32700,
+            message: "Parse error",
+            data: error.message,
+          },
+        });
+        return;
+      }
+
+      console.error("[mcp-http] request failed", error);
+      sendJson(res, 500, {
+        jsonrpc: "2.0",
+        id: null,
+        error: {
+          code: -32603,
+          message: "Internal error",
+          data: error instanceof Error ? error.message : String(error),
+        },
+      });
     }
-    sendJson(res, 200, response);
     return;
   }
 
