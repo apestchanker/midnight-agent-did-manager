@@ -198,10 +198,19 @@ export default function App() {
       configuredAdminShieldedAddress
     );
   }, [configuredAdminShieldedAddress, providers?.shieldedAddress]);
+  const hasLocalOwnerDerivation = Boolean(
+    deployResult?.contractAddress &&
+      contractAddress.trim() &&
+      deployResult.contractAddress.trim() === contractAddress.trim() &&
+      deployResult.ownerDerivation?.scheme === "wallet-signature-sha256-v1",
+  );
+  const canBootstrapRegistry = Boolean(providers && !contractAddress.trim());
   const hasAdminAccess = Boolean(
     isConfiguredAdminWallet ||
       registryAccess?.isIssuer ||
-      registryAccess?.isRegistryAdmin,
+      registryAccess?.isRegistryAdmin ||
+      hasLocalOwnerDerivation ||
+      canBootstrapRegistry,
   );
   const managedAgents = useMemo<AgentSummary[]>(() => {
     const latestByAgent = new Map<string, DidRequestRow>();

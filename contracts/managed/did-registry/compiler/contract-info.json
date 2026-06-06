@@ -1,7 +1,7 @@
 {
-  "compiler-version": "0.30.0",
-  "language-version": "0.22.0",
-  "runtime-version": "0.15.0",
+  "compiler-version": "0.31.0",
+  "language-version": "0.23.0",
+  "runtime-version": "0.16.0",
   "circuits": [
     {
       "name": "contract_version",
@@ -288,5 +288,259 @@
     }
   ],
   "contracts": [
+  ],
+  "ledger": [
+    {
+      "name": "initialized",
+      "index": [
+        0,
+        0
+      ],
+      "exported": true,
+      "storage": "Cell",
+      "type": {
+        "type-name": "Boolean"
+      }
+    },
+    {
+      "name": "registry_admin",
+      "index": [
+        0,
+        1
+      ],
+      "exported": true,
+      "storage": "Cell",
+      "type": {
+        "type-name": "Bytes",
+        "length": 32
+      }
+    },
+    {
+      "name": "issuer_service",
+      "index": [
+        1,
+        0
+      ],
+      "exported": true,
+      "storage": "Cell",
+      "type": {
+        "type-name": "Bytes",
+        "length": 32
+      }
+    },
+    {
+      "name": "total_requests",
+      "index": [
+        1,
+        1
+      ],
+      "exported": true,
+      "storage": "Cell",
+      "type": {
+        "type-name": "Uint",
+        "maxval": 18446744073709551615
+      }
+    },
+    {
+      "name": "total_active_dids",
+      "index": [
+        1,
+        2
+      ],
+      "exported": true,
+      "storage": "Cell",
+      "type": {
+        "type-name": "Uint",
+        "maxval": 18446744073709551615
+      }
+    },
+    {
+      "name": "status_by_agent",
+      "index": [
+        1,
+        3
+      ],
+      "exported": true,
+      "storage": "Map",
+      "key": {
+        "type-name": "Bytes",
+        "length": 32
+      },
+      "value": {
+        "type-name": "Uint",
+        "maxval": 255
+      }
+    },
+    {
+      "name": "request_commitments",
+      "index": [
+        1,
+        4
+      ],
+      "exported": true,
+      "storage": "Map",
+      "key": {
+        "type-name": "Bytes",
+        "length": 32
+      },
+      "value": {
+        "type-name": "Bytes",
+        "length": 32
+      }
+    },
+    {
+      "name": "update_request_commitments",
+      "index": [
+        1,
+        5
+      ],
+      "exported": true,
+      "storage": "Map",
+      "key": {
+        "type-name": "Bytes",
+        "length": 32
+      },
+      "value": {
+        "type-name": "Bytes",
+        "length": 32
+      }
+    },
+    {
+      "name": "revocation_request_commitments",
+      "index": [
+        1,
+        6
+      ],
+      "exported": true,
+      "storage": "Map",
+      "key": {
+        "type-name": "Bytes",
+        "length": 32
+      },
+      "value": {
+        "type-name": "Bytes",
+        "length": 32
+      }
+    },
+    {
+      "name": "did_commitments",
+      "index": [
+        1,
+        7
+      ],
+      "exported": true,
+      "storage": "Map",
+      "key": {
+        "type-name": "Bytes",
+        "length": 32
+      },
+      "value": {
+        "type-name": "Bytes",
+        "length": 32
+      }
+    },
+    {
+      "name": "document_commitments",
+      "index": [
+        1,
+        8
+      ],
+      "exported": true,
+      "storage": "Map",
+      "key": {
+        "type-name": "Bytes",
+        "length": 32
+      },
+      "value": {
+        "type-name": "Bytes",
+        "length": 32
+      }
+    },
+    {
+      "name": "proof_commitments",
+      "index": [
+        1,
+        9
+      ],
+      "exported": true,
+      "storage": "Map",
+      "key": {
+        "type-name": "Bytes",
+        "length": 32
+      },
+      "value": {
+        "type-name": "Bytes",
+        "length": 32
+      }
+    },
+    {
+      "name": "organization_labels",
+      "index": [
+        1,
+        10
+      ],
+      "exported": true,
+      "storage": "Map",
+      "key": {
+        "type-name": "Bytes",
+        "length": 32
+      },
+      "value": {
+        "type-name": "Bytes",
+        "length": 64
+      }
+    },
+    {
+      "name": "organization_disclosures",
+      "index": [
+        1,
+        11
+      ],
+      "exported": true,
+      "storage": "Map",
+      "key": {
+        "type-name": "Bytes",
+        "length": 32
+      },
+      "value": {
+        "type-name": "Uint",
+        "maxval": 255
+      }
+    },
+    {
+      "name": "revocation_commitments",
+      "index": [
+        1,
+        12
+      ],
+      "exported": true,
+      "storage": "Map",
+      "key": {
+        "type-name": "Bytes",
+        "length": 32
+      },
+      "value": {
+        "type-name": "Bytes",
+        "length": 32
+      }
+    },
+    {
+      "name": "registry_nonce",
+      "index": [
+        1,
+        13
+      ],
+      "exported": true,
+      "storage": "Counter"
+    },
+    {
+      "name": "issuer_nonce",
+      "index": [
+        1,
+        14
+      ],
+      "exported": true,
+      "storage": "Counter"
+    }
   ]
 }
