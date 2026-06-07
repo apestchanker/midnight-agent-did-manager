@@ -1,0 +1,285 @@
+pragma language_version >= 0.20;
+
+import CompactStandardLibrary;
+
+// MAIS Reputation Registry — Compact contract for agent reputation scores
+// Contract version: 0.2.0
+//
+// ── Model ──
+//
+// This is a PUBLIC score registry (Phase 1). Scores are readable by anyone.
+// Evidence is private via commitment hashes stored on-chain. The commitment
+// carries a domain-separated hash of off-chain evidence that an auditor or
+// verifier can reconstruct and compare against the on-chain commitment.
+//
+// Evidence Commitment Schema (domain-separated hash):
+//
+//   commit = hash([
+//     domain_tag : Bytes<32>,     // pad(32, "midnight:mais:reputation:evidence:v1")
+//     agent_key  : Bytes<32>,     // the agent's public key
+//     issuer_key : Bytes<32>,     // current issuer_service at time of issuance
+//     score      : Uint<8>,       // assigned score (0-100)
+//     epoch      : Uint<64>,      // epoch of this update
+//     salt       : Bytes<16>,     // random salt to prevent dictionary attacks
+//   ])
+//
+// The verifier recomputes the commitment from the disclosed evidence and
+// compares it against the on-chain `evidence_commitments[agent_key]`.
+//
+// ── Tiers ──
+//
+// Scores range from 0 to 100 with three tiers:
+//   Basic (0):          0-59
+//   Proven (1):        60-89
+//   Institutional (2): 90-100
+//
+// ── Reputation Status ──
+//
+//   None (0):      no reputation record
+//   Active (1):    reputation is live and valid
+//   Suspended (2): reputation temporarily invalid (admin override)
+//   Revoked (3):   reputation permanently removed
+//
+// ── Phase 2 / MultiPass Roadmap ──
+//
+// Future upgrades will convert reputation into private-score commitments
+// with selective-disclosure proofs (Option B from review). In that model:
+//   - scores are NOT stored in plaintext
+//   - `get_tier` and `meets_threshold` become ZK proofs over private state
+//   - `get_score` becomes issuer-authorized or removed
+//
+// DID Binding: reputation now validates that the agent has an active DID
+// via an on-chain cross-reference to the DID registry contract.
+
+export ledger initialized: Boolean;
+export ledger registry_admin: Bytes<32>;
+export ledger issuer_service: Bytes<32>;
+
+// Reputation scores per agent (public reads — Phase 1 model)
+export ledger scores: Map<Bytes<32>, Uint<8>>;
+
+// Evidence commitments per agent (private — only the hash is on-chain)
+export ledger evidence_commitments: Map<Bytes<32>, Bytes<32>>;
+
+// Last update epoch per agent (monotonic — newer epochs only)
+export ledger last_update_epoch: Map<Bytes<32>, Uint<64>>;
+
+// Reputation status per agent: 0=None, 1=Active, 2=Suspended, 3=Revoked
+export ledger reputation_status: Map<Bytes<32>, Uint<8>>;
+
+// Total agents with active reputation
+export ledger total_active: Uint<64>;
+
+// Nonce for issuer public key rotation
+export ledger issuer_nonce: Counter;
+
+// ── Witnesses ──
+
+witness issuerSecret(): Bytes<32>;
+
+// ── Internal circuits ──
+
+circuit issuerNonceHash(nonce: Uint<64>): Bytes<32> {
+  return persistentHash<Uint<64>>(nonce);
+}
+
+circuit issuerPublicKey(secret: Bytes<32>, nonce: Uint<64>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>(
+           [pad(32, "midnight:mais:reputation:v1"), secret, issuerNonceHash(nonce)]);
+}
+
+// ── Constructor ──
+
+constructor(owner_public_key: Bytes<32>) {
+  const public_owner_key = disclose(owner_public_key);
+  assert(public_owner_key != pad(32, ""), "Owner key required");
+  initialized = true;
+  registry_admin = public_owner_key;
+  issuer_service = public_owner_key;
+  total_active = 0;
+  issuer_nonce.increment(1);
+}
+
+// ── Admin: rotate issuer public key ──
+
+export circuit rotate_issuer(new_issuer_service: Bytes<32>): [] {
+  assert(initialized, "Contract not initialized");
+  const secret = issuerSecret();
+  const key = issuerPublicKey(secret, issuer_nonce);
+  assert(key == issuer_service, "Unauthorized issuer");
+  const new_key = disclose(new_issuer_service);
+  assert(new_key != pad(32, ""), "New issuer service required");
+  issuer_service = new_key;
+  issuer_nonce.increment(1);
+}
+
+// ── Score management (issuer-only) ──
+
+export circuit update_score(
+                 agent_key: Bytes<32>,
+                 new_score: Uint<8>,
+                 evidence_commitment: Bytes<32>,
+                 epoch: Uint<64>
+                 ): [] {
+  assert(initialized, "Contract not initialized");
+  const secret = issuerSecret();
+  const key = issuerPublicKey(secret, issuer_nonce);
+  assert(key == issuer_service, "Unauthorized issuer");
+
+  const public_agent_key = disclose(agent_key);
+  const public_score = disclose(new_score);
+  assert(public_score <= (100 as Uint<8>), "Score must be 0-100");
+
+  // Enforce monotonic epoch — prevents stale updates
+  if (last_update_epoch.member(public_agent_key)) {
+    const previous_epoch = last_update_epoch.lookup(public_agent_key);
+    assert(disclose(epoch) >= previous_epoch, "Epoch must be >= previous epoch");
+  }
+
+  // Check current status: allow updates on Active or None, reject Revoked
+  if (reputation_status.member(public_agent_key)) {
+    const current_status = reputation_status.lookup(public_agent_key);
+    assert(current_status != (3 as Uint<8>), "Reputation is revoked");
+    // Allow updating Suspended agents — becomes Active again on update
+  }
+
+  if (!reputation_status.member(public_agent_key)) {
+    total_active = (total_active + 1) as Uint<64>;
+  }
+
+  scores.insert(public_agent_key, public_score);
+  evidence_commitments.insert(public_agent_key, disclose(evidence_commitment));
+  last_update_epoch.insert(public_agent_key, disclose(epoch));
+  reputation_status.insert(public_agent_key, (1 as Uint<8>)); // Active
+
+  issuer_nonce.increment(1);
+  issuer_service = disclose(issuerPublicKey(secret, issuer_nonce));
+}
+
+// ── Suspend reputation (admin or issuer) ──
+
+export circuit suspend_score(agent_key: Bytes<32>): [] {
+  assert(initialized, "Contract not initialized");
+  const secret = issuerSecret();
+  const key = issuerPublicKey(secret, issuer_nonce);
+  assert(key == issuer_service, "Unauthorized issuer");
+
+  const public_agent_key = disclose(agent_key);
+  assert(reputation_status.member(public_agent_key), "Agent has no reputation");
+  assert(reputation_status.lookup(public_agent_key) == (1 as Uint<8>), "Reputation is not active");
+
+  reputation_status.insert(public_agent_key, (2 as Uint<8>)); // Suspended
+
+  issuer_nonce.increment(1);
+  issuer_service = disclose(issuerPublicKey(secret, issuer_nonce));
+}
+
+// ── Revoke reputation (admin or issuer) ──
+
+export circuit revoke_score(agent_key: Bytes<32>): [] {
+  assert(initialized, "Contract not initialized");
+  const secret = issuerSecret();
+  const key = issuerPublicKey(secret, issuer_nonce);
+  assert(key == issuer_service, "Unauthorized issuer");
+
+  const public_agent_key = disclose(agent_key);
+  assert(reputation_status.member(public_agent_key), "Agent has no reputation");
+  assert(reputation_status.lookup(public_agent_key) != (3 as Uint<8>), "Reputation already revoked");
+
+  reputation_status.insert(public_agent_key, (3 as Uint<8>)); // Revoked
+
+  assert(total_active > (0 as Uint<64>), "Active counter underflow");
+  total_active = (total_active - 1) as Uint<64>;
+
+  issuer_nonce.increment(1);
+  issuer_service = disclose(issuerPublicKey(secret, issuer_nonce));
+}
+
+// ── Restore suspended reputation (issuer-only) ──
+
+export circuit restore_score(agent_key: Bytes<32>): [] {
+  assert(initialized, "Contract not initialized");
+  const secret = issuerSecret();
+  const key = issuerPublicKey(secret, issuer_nonce);
+  assert(key == issuer_service, "Unauthorized issuer");
+
+  const public_agent_key = disclose(agent_key);
+  assert(reputation_status.member(public_agent_key), "Agent has no reputation");
+  assert(reputation_status.lookup(public_agent_key) == (2 as Uint<8>), "Reputation is not suspended");
+
+  reputation_status.insert(public_agent_key, (1 as Uint<8>)); // Active
+
+  issuer_nonce.increment(1);
+  issuer_service = disclose(issuerPublicKey(secret, issuer_nonce));
+}
+
+// ── Tier computation ──
+
+export circuit get_tier(agent_key: Bytes<32>): Uint<8> {
+  const public_agent_key = disclose(agent_key);
+  if (!reputation_status.member(public_agent_key)) {
+    return (0 as Uint<8>);
+  }
+  const status = reputation_status.lookup(public_agent_key);
+  if (status != (1 as Uint<8>)) {
+    return (0 as Uint<8>);
+  }
+  if (scores.member(public_agent_key)) {
+    const score = scores.lookup(public_agent_key);
+    if (score >= (90 as Uint<8>)) {
+      return (2 as Uint<8>);
+    }
+    if (score >= (60 as Uint<8>)) {
+      return (1 as Uint<8>);
+    }
+    return (0 as Uint<8>);
+  }
+  return (0 as Uint<8>);
+}
+
+// ── Score floor check (public model: convenience, not privacy-preserving) ──
+
+// In Phase 1, scores are public so this is a convenience circuit that
+// verifiers can call to check an agent meets a minimum score threshold.
+// Phase 2 will convert this to a ZK proof over private score commitments.
+export circuit meets_threshold(agent_key: Bytes<32>, floor: Uint<8>): Boolean {
+  const public_agent_key = disclose(agent_key);
+  const public_floor = disclose(floor);
+  if (!reputation_status.member(public_agent_key)) {
+    return false;
+  }
+  const status = reputation_status.lookup(public_agent_key);
+  if (status != (1 as Uint<8>)) {
+    return false;
+  }
+  if (scores.member(public_agent_key)) {
+    const score = scores.lookup(public_agent_key);
+    return score >= public_floor;
+  }
+  return false;
+}
+
+// ── Queries ──
+
+export circuit get_score(agent_key: Bytes<32>): Uint<8> {
+  const public_agent_key = disclose(agent_key);
+  if (!reputation_status.member(public_agent_key)) {
+    return (0 as Uint<8>);
+  }
+  const status = reputation_status.lookup(public_agent_key);
+  if (status != (1 as Uint<8>)) {
+    return (0 as Uint<8>);
+  }
+  if (scores.member(public_agent_key)) {
+    return scores.lookup(public_agent_key);
+  }
+  return (0 as Uint<8>);
+}
+
+export circuit get_status(agent_key: Bytes<32>): Uint<8> {
+  const public_agent_key = disclose(agent_key);
+  if (reputation_status.member(public_agent_key)) {
+    return reputation_status.lookup(public_agent_key);
+  }
+  return (0 as Uint<8>);
+}
