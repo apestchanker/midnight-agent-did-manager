@@ -22,9 +22,6 @@ vi.mock("@midnight-ntwrk/midnight-js-types", () => ({
   ZKConfigProvider: class {},
 }));
 
-vi.mock("../lib/patched-private-state-provider", () => ({
-  createPatchedSdkPrivateStateProvider: vi.fn(),
-}));
 
 describe("providers reconnect", () => {
   it("routes connectedAPI calls through the reconnectable current wallet session", async () => {

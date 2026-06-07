@@ -97,16 +97,16 @@ export function WalletPanel({
                   <span className="font-medium text-white">App local vault</span>
                 </div>
                 <div className="mt-1 text-zinc-400">
-                  Safe default. Uses the app-managed browser local vault and does not depend on the unofficial SDK patch.
+                  Safe default. Uses the app-managed browser local vault for private state storage.
                 </div>
               </label>
-              <label className="rounded-lg border border-amber-700/50 bg-amber-950/20 p-3">
+              <label className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
                 <div className="flex items-center gap-2">
                   <input type="radio" checked={storageMode === "sdk_level"} readOnly />
-                  <span className="font-medium text-amber-100">Midnight SDK (LevelDB)</span>
+                  <span className="font-medium text-white">Midnight SDK (LevelDB)</span>
                 </div>
-                <div className="mt-1 text-amber-100/80">
-                  Experimental. This uses a official Midnight SDK LevelDB private-state provider (v4.0.4+). Encrypted IndexedDB storage with import/export support.
+                <div className="mt-1 text-zinc-400">
+                  Uses the official Midnight SDK LevelDB private-state provider. Encrypted IndexedDB storage with import/export support.
                 </div>
               </label>
             </div>
@@ -151,12 +151,12 @@ export function WalletPanel({
                 <div>
                   <div className="font-medium text-white">App local vault</div>
                   <div className="mt-1 text-xs text-zinc-400">
-                    Safe default. Uses the app-managed browser local vault and avoids relying on the unofficial SDK patch.
+                    Safe default. Uses the app-managed browser local vault for private state storage.
                   </div>
                 </div>
               </div>
             </label>
-            <label className="rounded-lg border border-amber-700/50 bg-amber-950/20 p-3">
+            <label className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
               <div className="flex items-start gap-2">
                 <input
                   type="radio"
@@ -166,9 +166,9 @@ export function WalletPanel({
                   disabled={!canChangeStorageMode}
                 />
                 <div>
-                  <div className="font-medium text-amber-100">Midnight SDK (LevelDB)</div>
-                  <div className="mt-1 text-xs text-amber-100/80">
-                    Uses the official Midnight SDK LevelDB private-state provider (v4.0.4+). Encrypted IndexedDB storage with import/export support.
+                  <div className="font-medium text-white">Midnight SDK (LevelDB)</div>
+                  <div className="mt-1 text-xs text-zinc-400">
+                    Uses the official Midnight SDK LevelDB private-state provider. Encrypted IndexedDB storage with import/export support.
                   </div>
                 </div>
               </div>
