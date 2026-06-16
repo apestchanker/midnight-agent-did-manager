@@ -136,10 +136,11 @@ export function deriveRegistrySummary(
     contractAddress,
     networkId,
     mode: "onchain",
+    totalRequests: 0,
     totalActiveDids: bigintishToNumber(ledgerState.total_active_dids),
     totalRevokedDids: countStatuses(ledgerState.party_status, 3),
     lastUpdatedAt: new Date().toISOString(),
-  } as RegistrySummary;
+  };
 }
 
 const ADMIN_ROLE_TAG = new Uint8Array(32);

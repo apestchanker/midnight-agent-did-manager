@@ -1,4 +1,3 @@
-import { CompactTypeUnsignedInteger } from "@midnight-ntwrk/compact-runtime";
 import type { DeployResult } from "../../types/did";
 
 export const DEPLOY_KEY = "did-registry:last-deploy:v6";
@@ -7,8 +6,6 @@ export const DID_CACHE_PREFIX = "did-registry:request-cache:v2";
 export const MANAGED_CONTRACT_BASE_PATH =
   (import.meta.env.VITE_MANAGED_CONTRACT_PATH || "").trim() ||
   "/contracts/managed/did-registry";
-export const UINT64_MAX = (1n << 64n) - 1n;
-export const Uint64Descriptor = new CompactTypeUnsignedInteger(UINT64_MAX, 8);
 
 export const DID_SUBJECT_NONCE_PREFIX = "didmn:default-slot:v1";
 export const DEFAULT_SUBJECT_NONCE = "ba3649522b461286f41043ca6548f1d5dcd2c3e74e1d59fa74102fc1eb1ce531";
@@ -35,6 +32,7 @@ export type SavedDeployment = DeployResult & {
 export type CachedDidMetadata = {
   contractAddress: string;
   agentId: string;
+  didKeyHex?: string;
   subjectWalletAddress?: string;
   agentName?: string;
   organization?: string;

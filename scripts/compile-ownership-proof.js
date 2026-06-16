@@ -61,7 +61,7 @@ function ensureManagedOutput() {
   mkdirSync(generatedSourceDir, { recursive: true });
   const generatedRuntimeJs = readFileSync(managedContractJs, "utf8").replace(
     /\/\/# sourceMappingURL=index\.js\.map\s*$/,
-    "//# sourceMappingURL=nativeOwnershipProof.runtime.js.map",
+    "",
   );
   writeFileSync(generatedRuntimeJsPath, generatedRuntimeJs);
   if (existsSync(managedContractDts)) {

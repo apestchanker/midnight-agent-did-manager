@@ -3,8 +3,7 @@ export type DidStatus =
   | "pending_issuance"
   | "active"
   | "revoked"
-  | "pending_update"
-  | "pending_revocation";
+  | "pending_update";
 export type ProofStatus = "not_requested" | "generated" | "verified";
 export type TxStatus = "draft" | "submitted" | "confirmed" | "failed";
 
@@ -41,6 +40,7 @@ export interface IssueDidInput {
   agentId: string;
   subjectWalletAddress?: string;
   didDocument: string;
+  didKeyHex?: string;
 }
 
 export interface UpdateDidInput {
@@ -55,6 +55,7 @@ export interface RevokeDidInput {
   agentId: string;
   subjectWalletAddress?: string;
   reason: string;
+  didKeyHex?: string;
 }
 
 export interface DidRecord {
@@ -64,6 +65,7 @@ export interface DidRecord {
   organization?: string;
   organizationDisclosure?: "disclosed" | "undisclosed";
   didDocument?: string;
+  didKeyHex?: string;
   agentKeyHex: string;
   did?: string;
   didHashHex?: string;
@@ -92,6 +94,12 @@ export interface RegistrySummary {
   totalActiveDids: number;
   totalRevokedDids: number;
   lastUpdatedAt: string;
+}
+
+export interface OwnerVaultStatus {
+  hasLocalVault: false;
+  contractAddress: string;
+  matchesOnChain: null;
 }
 
 export interface RegistryAccess {

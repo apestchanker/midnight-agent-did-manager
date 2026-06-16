@@ -102,10 +102,10 @@ export function DeployPanel({ providers, onDeployed }: DeployPanelProps) {
         </div>
         <div className="rounded-md bg-amber-950/30 border border-amber-800 p-3">
           <p className="text-xs text-amber-200">
-            Deployment generates a stable owner secret in local Midnight private
-            state and stores only the derived public authorization key on-chain.
-            Export an encrypted backup immediately after deployment; this secret
-            cannot be regenerated from wallet signatures.
+            Deployment creates the registry with a random registry salt, then
+            registers the connected wallet as the first admin through
+            `ownPublicKey()`. User DIDs are self-registered by controller key
+            and subject nonce.
           </p>
         </div>
         <div className="space-y-2">

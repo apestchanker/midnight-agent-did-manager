@@ -980,7 +980,7 @@ export default function App() {
           { id: SECTION_IDS.workflow, label: "Review Queue", shortLabel: "Q" },
           { id: SECTION_IDS.issuer, label: "Issuer", shortLabel: "I" },
           { id: "admin-logs", label: "Logs", shortLabel: "L" },
-          { id: "owner-vault", label: "Owner Vault", shortLabel: "V" },
+          { id: "owner-vault", label: "Controller", shortLabel: "C" },
           { id: "deploy-did-registry", label: "Deploy DID Registry", shortLabel: "D" },
         ]
       : viewMode === "registry"
@@ -2119,9 +2119,9 @@ export default function App() {
               <section id="owner-vault" className="scroll-mt-24 space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h2 className="text-lg font-semibold text-white">Owner Vault</h2>
+                    <h2 className="text-lg font-semibold text-white">Registry Controller</h2>
                     <p className="text-sm text-zinc-500">
-                      Export and restore the wallet derivation metadata used by issuer-only operations.
+                      Inspect the v2 controller-bound registry state. Owner vault backups are no longer used.
                     </p>
                   </div>
                 </div>

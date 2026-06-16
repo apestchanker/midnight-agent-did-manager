@@ -3,7 +3,6 @@ import {
   CompactTypeVector,
   persistentHash,
 } from "@midnight-ntwrk/compact-runtime";
-import { Uint64Descriptor } from "./types";
 
 async function sha256Bytes(value: string): Promise<Uint8Array> {
   const bytes = new TextEncoder().encode(value);

@@ -1,5 +1,4 @@
 import * as CompactCompiledContract from "@midnight-ntwrk/compact-js/effect/CompiledContract";
-import { createWitnesses } from "./private-state";
 import type { ManagedContractModule } from "./types";
 
 let runtimePromise: Promise<{
@@ -29,12 +28,8 @@ export async function getContractRuntime(managedContractBasePath: string) {
         "did-registry",
         module.Contract as never,
       ) as never;
-      const contractWithWitnesses = CompactCompiledContract.withWitnesses(
-        contractDefinition,
-        createWitnesses() as never,
-      ) as never;
       const compiledContract = CompactCompiledContract.withCompiledFileAssets(
-        contractWithWitnesses,
+        contractDefinition,
         managedContractBasePath as never,
       ) as never;
 
@@ -59,4 +54,3 @@ export function extractContractAddress(value: unknown): string {
 
   return "";
 }
-

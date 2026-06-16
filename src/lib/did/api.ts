@@ -17,7 +17,9 @@ import {
   createDidIdentifier,
   createDocumentCommitment,
   createLifecycleProofCommitment,
+  createRequestCommitment,
   createRevocationCommitment,
+  randomBytes,
 } from "./commitments";
 import {
   bigintishToNumber,
@@ -31,8 +33,8 @@ import { getContractRuntime, extractContractAddress } from "./runtime";
 import {
   createDeploymentPrivateState,
   getOwnerVaultStatus,
-  persistSlotPrivateState,
 } from "./vault";
+import { getDefaultSubjectNonce } from "./private-state";
 import { getPersistedDidState } from "./service-sync";
 import {
   MANAGED_CONTRACT_BASE_PATH,
@@ -53,7 +55,6 @@ export class DidRegistryAPI {
     readonly providers: AppProviders,
     readonly contractAddress: string,
     private readonly module: Awaited<ReturnType<typeof getContractRuntime>>["module"],
-    private readonly compiledContract: Awaited<ReturnType<typeof getContractRuntime>>["compiledContract"],
     private readonly contract: {
       callTx: Record<string, unknown>;
     },
@@ -80,7 +81,7 @@ export class DidRegistryAPI {
     const { module, compiledContract } = await getContractRuntime(MANAGED_CONTRACT_BASE_PATH);
     const deployed = await deployContract(providers as never, {
       compiledContract: compiledContract as never,
-      args: [],
+      args: [randomBytes(32)],
       privateStateId: SLOT_PRIVATE_STATE_ID,
       initialPrivateState: await createDeploymentPrivateState(providers),
     });
@@ -96,7 +97,6 @@ export class DidRegistryAPI {
       providers,
       contractAddress,
       module,
-      compiledContract,
       deployed as { callTx: Record<string, unknown> },
     );
   }
@@ -112,9 +112,95 @@ export class DidRegistryAPI {
       providers,
       contractAddress,
       module,
-      compiledContract,
       contract as { callTx: Record<string, unknown> },
     );
+  }
+
+  async registerInitialAdmin(): Promise<{ txHash: string; txId?: string }> {
+    const tx = await (this.contract.callTx.register_initial_admin as () => Promise<TxResult>)();
+    return {
+      txHash: String(tx.public.txHash || ""),
+      txId: String(tx.public.txId || ""),
+    };
+  }
+
+  async requestDid(input: {
+    requesterWalletAddress?: string;
+    agentId: string;
+    subjectWalletAddress?: string;
+    agentName?: string;
+    organization?: string;
+    organizationDisclosure?: "disclosed" | "undisclosed";
+    didDocument: string;
+    subjectNonce?: Uint8Array;
+  }): Promise<DidRecord> {
+    const nonce = input.subjectNonce ?? (await getDefaultSubjectNonce());
+    const registration = await this.selfRegisterDid({
+      subjectNonce: nonce,
+      agentId: input.agentId,
+      subjectWalletAddress: input.subjectWalletAddress,
+      didDocument: input.didDocument,
+    });
+    const did = await createDidIdentifier(
+      this.providers.networkId,
+      this.contractAddress,
+      registration.didKeyHex,
+    );
+    const requestCommitment = await createRequestCommitment({
+      contractAddress: this.contractAddress,
+      agentId: input.agentId,
+      agentName: input.agentName,
+      organization: input.organization,
+      organizationDisclosure: input.organizationDisclosure || "undisclosed",
+      didDocument: input.didDocument,
+    });
+    const proofCommitment = await createLifecycleProofCommitment({
+      action: "issue_did",
+      networkId: this.providers.networkId,
+      contractAddress: this.contractAddress,
+      agentId: input.agentId,
+      did,
+      didDocument: input.didDocument,
+    });
+    const now = new Date().toISOString();
+    const cached = mergeDidMetadata(this.contractAddress, input.agentId, {
+      didKeyHex: registration.didKeyHex,
+      subjectWalletAddress: input.subjectWalletAddress,
+      agentName: input.agentName,
+      organization:
+        input.organizationDisclosure === "disclosed"
+          ? input.organization
+          : undefined,
+      organizationDisclosure: input.organizationDisclosure,
+      didDocument: input.didDocument.trim(),
+      updatedAt: now,
+      txHash: registration.txHash,
+      txId: registration.txId,
+      requestCommitmentHex: toHex(requestCommitment),
+      proofCommitmentHex: toHex(proofCommitment),
+    });
+
+    return {
+      agentId: input.agentId,
+      subjectWalletAddress: input.subjectWalletAddress,
+      agentName: cached.agentName,
+      organization: cached.organization,
+      organizationDisclosure: cached.organizationDisclosure,
+      didDocument: input.didDocument.trim(),
+      didKeyHex: registration.didKeyHex,
+      agentKeyHex: registration.didKeyHex,
+      did,
+      requestCommitmentHex: toHex(requestCommitment),
+      proofCommitmentHex: toHex(proofCommitment),
+      status: "pending_issuance",
+      proofStatus: "not_requested",
+      txStatus: "confirmed",
+      createdAt: cached.createdAt,
+      updatedAt: now,
+      txHash: registration.txHash,
+      txId: registration.txId,
+      mode: "onchain",
+    };
   }
 
   async selfRegisterDid(input: {
@@ -123,7 +209,7 @@ export class DidRegistryAPI {
     subjectWalletAddress?: string;
     didDocument?: string;
   }): Promise<{ didKeyHex: string; txHash: string; txId?: string }> {
-    const nonce = input.subjectNonce ?? new Uint8Array(32);
+    const nonce = input.subjectNonce ?? (await getDefaultSubjectNonce());
     const tx = await (this.contract.callTx.self_register_did as (
       subjectNonce: Uint8Array,
     ) => Promise<{ public: { txHash: string; txId?: string }; result: Uint8Array }>)(nonce);
@@ -135,14 +221,16 @@ export class DidRegistryAPI {
     };
   }
 
-  async issueDid(input: IssueDidInput & { didKeyHex: string }): Promise<DidRecord> {
-    const didKeyBytes = fromHex(input.didKeyHex);
-    const agentKey = await createAgentKey(input.agentId);
-    const agentKeyHex = toHex(agentKey);
+  async issueDid(input: IssueDidInput): Promise<DidRecord> {
+    const didKeyHex = input.didKeyHex || getDidMetadata(this.contractAddress, input.agentId)?.didKeyHex;
+    if (!didKeyHex) {
+      throw new Error("DID key is missing. Self-register the DID before issuing it.");
+    }
+    const didKeyBytes = fromHex(didKeyHex);
     const did = await createDidIdentifier(
       this.providers.networkId,
       this.contractAddress,
-      agentKeyHex,
+      didKeyHex,
     );
     const didCommitment = await createDidCommitment({
       did,
@@ -169,6 +257,7 @@ export class DidRegistryAPI {
     const now = new Date().toISOString();
     const cached = mergeDidMetadata(this.contractAddress, input.agentId, {
       subjectWalletAddress: input.subjectWalletAddress,
+      didKeyHex,
       updatedAt: now,
       issuedAt: now,
       revokedAt: undefined,
@@ -187,7 +276,8 @@ export class DidRegistryAPI {
       organization: cached.organization,
       organizationDisclosure: cached.organizationDisclosure,
       didDocument: input.didDocument.trim(),
-      agentKeyHex,
+      didKeyHex,
+      agentKeyHex: didKeyHex,
       did,
       didHashHex: toHex(didCommitment),
       didCommitmentHex: toHex(didCommitment),
@@ -206,13 +296,15 @@ export class DidRegistryAPI {
   }
 
   async updateDid(input: UpdateDidInput & { subjectNonce?: Uint8Array }): Promise<DidRecord> {
-    const nonce = input.subjectNonce ?? new Uint8Array(32);
-    const agentKey = await createAgentKey(input.agentId);
-    const agentKeyHex = toHex(agentKey);
+    const nonce = input.subjectNonce ?? (await getDefaultSubjectNonce());
+    const didKeyHex = getDidMetadata(this.contractAddress, input.agentId)?.didKeyHex;
+    if (!didKeyHex) {
+      throw new Error("DID key is missing. Self-register the DID before updating it.");
+    }
     const did = await createDidIdentifier(
       this.providers.networkId,
       this.contractAddress,
-      agentKeyHex,
+      didKeyHex,
     );
     const documentCommitment = await createDocumentCommitment(input.didDocument);
     const proofCommitment = await createLifecycleProofCommitment({
@@ -233,6 +325,7 @@ export class DidRegistryAPI {
     const now = new Date().toISOString();
     const cached = mergeDidMetadata(this.contractAddress, input.agentId, {
       subjectWalletAddress: input.subjectWalletAddress,
+      didKeyHex,
       updatedAt: now,
       txHash: String(tx.public.txHash || ""),
       txId: String(tx.public.txId || ""),
@@ -248,7 +341,8 @@ export class DidRegistryAPI {
       organization: cached.organization,
       organizationDisclosure: cached.organizationDisclosure,
       didDocument: input.didDocument.trim(),
-      agentKeyHex,
+      didKeyHex,
+      agentKeyHex: didKeyHex,
       did,
       didHashHex: cached.didCommitmentHex,
       didCommitmentHex: cached.didCommitmentHex,
@@ -268,12 +362,15 @@ export class DidRegistryAPI {
   }
 
   async revokeDid(input: RevokeDidInput): Promise<DidRecord> {
-    const agentKey = await createAgentKey(input.agentId);
-    const agentKeyHex = toHex(agentKey);
+    const didKeyHex = input.didKeyHex || getDidMetadata(this.contractAddress, input.agentId)?.didKeyHex;
+    if (!didKeyHex) {
+      throw new Error("DID key is missing. Self-register the DID before revoking it.");
+    }
+    const didKey = fromHex(didKeyHex);
     const did = await createDidIdentifier(
       this.providers.networkId,
       this.contractAddress,
-      agentKeyHex,
+      didKeyHex,
     );
     const revocationCommitment = await createRevocationCommitment({
       networkId: this.providers.networkId,
@@ -284,13 +381,13 @@ export class DidRegistryAPI {
     });
 
     const tx = await (this.contract.callTx.revoke_did as (
-      agentKeyArg: Uint8Array,
-      revocationCommitmentArg: Uint8Array,
-    ) => Promise<TxResult>)(agentKey, revocationCommitment);
+      didKeyArg: Uint8Array,
+    ) => Promise<TxResult>)(didKey);
 
     const now = new Date().toISOString();
     const cached = mergeDidMetadata(this.contractAddress, input.agentId, {
       subjectWalletAddress: input.subjectWalletAddress,
+      didKeyHex,
       updatedAt: now,
       revokedAt: now,
       txHash: String(tx.public.txHash || ""),
@@ -305,7 +402,8 @@ export class DidRegistryAPI {
       organization: cached.organization,
       organizationDisclosure: cached.organizationDisclosure,
       didDocument: cached.didDocument,
-      agentKeyHex,
+      didKeyHex,
+      agentKeyHex: didKeyHex,
       did,
       didHashHex: cached.didCommitmentHex,
       didCommitmentHex: cached.didCommitmentHex,
@@ -405,29 +503,30 @@ export class DidRegistryAPI {
     subjectWalletAddress?: string,
   ): Promise<DidRecord | null> {
     const agentKey = await createAgentKey(agentId);
-    const agentKeyHex = toHex(agentKey);
+    const fallbackAgentKeyHex = toHex(agentKey);
+    const cached = getDidMetadata(this.contractAddress, agentId);
+    const didKeyHex = cached?.didKeyHex || fallbackAgentKeyHex;
     const statusCode = bigintishToNumber(
-      mapLookupByHexKey(ledgerState.party_status, agentKeyHex, fromHex, toHex),
+      mapLookupByHexKey(ledgerState.party_status, didKeyHex, fromHex, toHex),
     );
     if (!statusCode) return null;
 
     const didCommitmentHex = toRecordHex(
-      mapLookupByHexKey(ledgerState.did_commitments, agentKeyHex, fromHex, toHex),
+      mapLookupByHexKey(ledgerState.did_commitments, didKeyHex, fromHex, toHex),
       toHex,
     );
     const documentHashHex = toRecordHex(
-      mapLookupByHexKey(ledgerState.document_commitments, agentKeyHex, fromHex, toHex),
+      mapLookupByHexKey(ledgerState.document_commitments, didKeyHex, fromHex, toHex),
       toHex,
     );
     const proofCommitmentHex = toRecordHex(
-      mapLookupByHexKey(ledgerState.proof_commitments, agentKeyHex, fromHex, toHex),
+      mapLookupByHexKey(ledgerState.proof_commitments, didKeyHex, fromHex, toHex),
       toHex,
     );
     const revocationCommitmentHex = toRecordHex(
-      mapLookupByHexKey(ledgerState.revocation_commitments, agentKeyHex, fromHex, toHex),
+      mapLookupByHexKey(ledgerState.revocation_commitments, didKeyHex, fromHex, toHex),
       toHex,
     );
-    const cached = getDidMetadata(this.contractAddress, agentId);
     let persisted: Awaited<ReturnType<typeof getPersistedDidState>> | null = null;
     try {
       persisted = await getPersistedDidState({
@@ -441,7 +540,7 @@ export class DidRegistryAPI {
     const persistedRequest = persisted?.request || null;
     const persistedRecord = persisted?.record || null;
     const did = didCommitmentHex
-      ? await createDidIdentifier(this.providers.networkId, this.contractAddress, agentKeyHex)
+      ? await createDidIdentifier(this.providers.networkId, this.contractAddress, didKeyHex)
       : undefined;
 
     return {
@@ -462,7 +561,8 @@ export class DidRegistryAPI {
           : typeof persistedRequest?.request_payload?.didDocument === "string"
             ? persistedRequest.request_payload.didDocument
             : undefined) || cached?.didDocument,
-      agentKeyHex,
+      didKeyHex,
+      agentKeyHex: didKeyHex,
       did,
       didHashHex: didCommitmentHex,
       didCommitmentHex,

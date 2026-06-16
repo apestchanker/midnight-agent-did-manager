@@ -45,7 +45,7 @@ export {
   getSavedDeployment,
   restoreOwnerVaultBackup,
 };
-export type { OwnerVaultStatus } from "./did/types";
+export type { OwnerVaultStatus } from "../types/did";
 
 export async function requestDid(
   providers: AppProviders,

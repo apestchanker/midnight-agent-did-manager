@@ -77,7 +77,7 @@ export function IssuerPanel({
     record?.organization,
     record?.organizationDisclosure,
     record?.proofCommitmentHex,
-    targetAgentId,
+    record?.subjectWalletAddress,
     targetSubjectWalletAddress,
   ]);
 
@@ -193,10 +193,9 @@ export function IssuerPanel({
         </div>
 
         <div className="rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-400">
-          Owner-only actions derive the issuer secret from the connected wallet
-          signature and local derivation metadata. If the metadata is missing,
-          restore an encrypted backup in the Owner Vault section before issuing,
-          updating, or revoking.
+          Issuance and revocation are authorized by on-chain roles bound to the
+          connected wallet controller. The registry no longer uses a browser
+          owner secret.
         </div>
 
         <div>

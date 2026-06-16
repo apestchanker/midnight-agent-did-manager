@@ -6,10 +6,20 @@ import type {
   RevokeDidInput,
   UpdateDidInput,
 } from "../../types/did";
-import { createWalletDidRequest, syncWalletIssuedDidStorage, syncWalletRevokedDidStorage, syncWalletUpdatedDidStorage } from "./service-sync";
+import {
+  createWalletDidRequest,
+  syncWalletIssuedDidStorage,
+  syncWalletRevokedDidStorage,
+  syncWalletUpdatedDidStorage,
+} from "./service-sync";
 import { createDidIdentifier } from "./commitments";
 import { DidRegistryAPI } from "./api";
-import { getSavedCompileArtifact, mergeDidMetadata, saveCompileArtifact, saveDeployment } from "./cache";
+import {
+  getSavedCompileArtifact,
+  mergeDidMetadata,
+  saveCompileArtifact,
+  saveDeployment,
+} from "./cache";
 import { MANAGED_CONTRACT_BASE_PATH, type CompileResult } from "./types";
 import { loadManagedContractModule } from "./runtime";
 
@@ -42,17 +52,19 @@ export async function deployDidRegistry(
 
   const api = await DidRegistryAPI.deploy(providers);
   const deployed = api.getDeployMetadata();
+  const initializeTx = await api.registerInitialAdmin();
   const result: DeployResult = {
     contractAddress: api.contractAddress,
     txHash: String(deployed?.deployTxData?.public?.txHash || ""),
     txId: String(deployed?.deployTxData?.public?.txId || ""),
+    initializeTxHash: initializeTx.txHash,
+    initializeTxId: initializeTx.txId,
     txStatus: "confirmed",
     mode: "onchain",
     deployedAt: new Date().toISOString(),
     networkId: providers.networkId,
-    ownerDerivation: deployed?.ownerDerivation,
     message:
-      "Contract deployed to Midnight. A stable issuer owner secret was generated in local Midnight private state, and only the derived public authorization key was stored on-chain. Export an encrypted Owner Vault backup before relying on this registry.",
+      "Contract deployed to Midnight and the connected wallet was registered as the initial registry admin.",
   };
 
   saveDeployment({
@@ -97,7 +109,7 @@ export async function requestDidWithSync(
   const requestedDid = await createDidIdentifier(
     api.providers.networkId,
     api.contractAddress,
-    record.agentKeyHex,
+    record.didKeyHex || record.agentKeyHex,
   );
 
   try {

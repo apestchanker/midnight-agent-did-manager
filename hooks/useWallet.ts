@@ -104,27 +104,30 @@ export function useWallet(storageMode: StorageMode = "app_local") {
     [connectedWalletName, selectedWalletName],
   );
 
-  const finalizeConnection = async (
-    connectedApi: ConnectedAPI,
-    walletName: string,
-  ) => {
-    await requestWalletPermissionsIfSupported(connectedApi);
+  const finalizeConnection = useCallback(
+    async (
+      connectedApi: ConnectedAPI,
+      walletName: string,
+    ) => {
+      await requestWalletPermissionsIfSupported(connectedApi);
 
-    const provs = await buildProviders(connectedApi, {
-      reconnect: async () => reconnectApi(walletName),
-      onReconnect: (reconnectedApi) => {
-        setApi(reconnectedApi);
-      },
-      storageMode,
-      onProofProviderStatusChange: setProofService,
-    });
-    setApi(connectedApi);
-    setProviders(provs);
-    setAddress(provs.unshieldedAddress);
-    setConnectedWalletName(walletName);
-    setStatus("connected");
-    persistSelectedWallet(walletName);
-  };
+      const provs = await buildProviders(connectedApi, {
+        reconnect: async () => reconnectApi(walletName),
+        onReconnect: (reconnectedApi) => {
+          setApi(reconnectedApi);
+        },
+        storageMode,
+        onProofProviderStatusChange: setProofService,
+      });
+      setApi(connectedApi);
+      setProviders(provs);
+      setAddress(provs.unshieldedAddress);
+      setConnectedWalletName(walletName);
+      setStatus("connected");
+      persistSelectedWallet(walletName);
+    },
+    [persistSelectedWallet, reconnectApi, storageMode],
+  );
 
   const tryRecoverExistingSession = useCallback(
     async (walletNameHint?: string): Promise<boolean> => {
