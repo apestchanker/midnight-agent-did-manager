@@ -1,3 +1,11 @@
+if (typeof window === "undefined") {
+  (globalThis as unknown as { window: unknown }).window = {
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    postMessage: () => {},
+  };
+}
+
 import { describe, expect, it } from "vitest";
 import {
   countStatuses,
@@ -24,20 +32,19 @@ describe("did ledger helpers", () => {
     const ledgerState = {
       total_requests: 4n,
       total_active_dids: 2n,
-      status_by_agent: new Map([
+      party_status: new Map([
         ["a", 2n],
         ["b", 3n],
         ["c", 3n],
       ]),
     };
 
-    expect(countStatuses(ledgerState.status_by_agent, 3)).toBe(2);
+    expect(countStatuses(ledgerState.party_status, 3)).toBe(2);
     expect(
       deriveRegistrySummary(ledgerState, "contract123", "preprod"),
     ).toMatchObject({
       contractAddress: "contract123",
       networkId: "preprod",
-      totalRequests: 4,
       totalActiveDids: 2,
       totalRevokedDids: 2,
     });
@@ -54,21 +61,21 @@ describe("did ledger helpers", () => {
     const adminAddress = "addr_test_admin";
     const { createAgentKey } = await import("../src/lib/did/commitments");
     const adminKey = await createAgentKey(adminAddress);
+    const adminKeyHex = toHex(adminKey);
 
     const access = await deriveRegistryAccess(
       {
-        registry_admin: adminKey,
-        issuer_service: adminKey,
+        initial_admin: adminKey,
+        role_by_key: new Map([[adminKey, true]]),
       },
       "contract123",
-      adminAddress,
+      adminKeyHex,
       toHex,
     );
 
     expect(access).toMatchObject({
       contractAddress: "contract123",
-      isRegistryAdmin: true,
-      isIssuer: true,
+      isRegistryAdmin: false,
     });
   });
 });

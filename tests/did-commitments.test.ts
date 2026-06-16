@@ -1,16 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildOwnerSignatureDomain,
   createAgentKey,
   createDidIdentifier,
   createDocumentCommitment,
   createRequestCommitment,
   decodeFixedBytes,
-  deriveOwnerSecretFromWalletSignature,
+  deriveDidKey,
   disclosureFlag,
   disclosureFromValue,
   encodeFixedBytes,
-  serializeOwnerPrivateState,
 } from "../src/lib/did/commitments";
 
 function toHex(value: Uint8Array): string {
@@ -63,45 +61,17 @@ describe("did commitments", () => {
     expect(toHex(requestCommitment)).not.toBe(toHex(documentCommitment));
   });
 
-  it("derives the owner signature domain from network and deployment salt", () => {
-    expect(
-      buildOwnerSignatureDomain({
-        networkId: "preprod",
-        deploymentSaltHex: "AABB",
-      }),
-    ).toBe("didMN:issuer-owner:v1:preprod:aabb");
-  });
+  it("derives DID key from controller public key, subject nonce, and registry salt", () => {
+    const controllerKey = new Uint8Array(32).fill(1);
+    const subjectNonce = new Uint8Array(32).fill(2);
+    const registrySalt = new Uint8Array(32).fill(3);
 
-  it("derives deterministic owner secrets from wallet signatures", async () => {
-    const one = await deriveOwnerSecretFromWalletSignature("ab".repeat(64));
-    const two = await deriveOwnerSecretFromWalletSignature("0x" + "ab".repeat(64));
-    const other = await deriveOwnerSecretFromWalletSignature("cd".repeat(64));
+    const didKey = deriveDidKey(controllerKey, subjectNonce, registrySalt);
 
-    expect(one).toHaveLength(32);
-    expect(toHex(one)).toBe(toHex(two));
-    expect(toHex(one)).not.toBe(toHex(other));
-  });
-
-  it("serializes owner vault backups with the issuer secret for encrypted recovery", () => {
-    const serialized = serializeOwnerPrivateState(
-      {
-        issuerSecret: new Uint8Array(32).fill(7),
-        createdAt: "2026-06-01T00:00:00.000Z",
-        vaultVersion: "v1",
-        contractVersion: "0.3.5",
-        appVersion: "0.5.2",
-        networkId: "preprod",
-        custodianWalletAddress: "mn_test_wallet",
-        issuerPublicKeyHex: "11".repeat(32),
-        ownerDerivation: {
-          scheme: "random-secret-v1",
-        },
-      },
-      toHex,
-    );
-
-    expect(serialized.issuerSecretHex).toBe("07".repeat(32));
-    expect("signatureHashHex" in (serialized.ownerDerivation ?? {})).toBe(false);
-    expect(serialized.ownerDerivation?.scheme).toBe("random-secret-v1");
+    expect(didKey).toHaveLength(32);
+    const didKey2 = deriveDidKey(controllerKey, subjectNonce, registrySalt);
+    expect(toHex(didKey)).toBe(toHex(didKey2));
+    const different = deriveDidKey(new Uint8Array(32).fill(9), subjectNonce, registrySalt);
+    expect(toHex(didKey)).not.toBe(toHex(different));
   });
 });
