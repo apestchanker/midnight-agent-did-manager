@@ -58,7 +58,7 @@ flowchart TD
 
     DS["🗄️ DID Service + Postgres\n─────────────────────────────\n• accounts and MCP keys\n• request persistence\n• approvals and DID records\n• VC issuance and resolution"]
 
-    WL["🔐 1AM Wallet\n─────────────────────────────\n• ownPublicKey() controller binding\n• transaction signing and submission\n• built-in wallet prover (optional)"]
+    WL["🔐 1AM Wallet · Lace\n─────────────────────────────\n• ownPublicKey() controller binding\n• transaction signing and submission\n• built-in wallet prover (optional)"]
 
     PS["⚙️ Local Proof Server\n─────────────────────────────\n• Midnight proof generation\n• runs at 127.0.0.1:6300\n• optional — wallet prover can replace it"]
 
