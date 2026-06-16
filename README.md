@@ -50,42 +50,33 @@ The author and contributors disclaim responsibility and liability, to the maximu
 
 ## Agent Identity Flow
 
-```text
-┌──────────────────────────────────────────────────────────────────────┐
-│                     Human User / Agent Operator                     │
-│        (human-managed account, or agent with wallet-controlled key) │
-└──────────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                        React Frontend (DApp)                        │
-│  - connect 1AM wallet                                               │
-│  - request, issue, update, revoke DID flows                         │
-│  - user, admin, and registry views                                  │
-└──────────────────────────────────────────────────────────────────────┘
-                                │
-                ┌───────────────┴────────────────┐
-                │                                │
-                ▼                                ▼
-┌───────────────────────────────┐      ┌──────────────────────────────┐
-│ DID Service + Postgres        │      │ 1AM Wallet + Proof Server    │
-│ - accounts and MCP keys       │      │ - signatures and proof flow  │
-│ - request persistence         │      │ - transaction submission      │
-│ - approvals and DID records   │      └──────────────────────────────┘
-│ - VC issuance and resolution  │                    │
-└───────────────────────────────┘                    ▼
-                │                        ┌──────────────────────────────┐
-                └──────────────────────▶│ Midnight Compact Contract     │
-                                         │ DID registry of record       │
-                                         │ - commitments and status      │
-                                         │ - issuer/admin constraints    │
-                                         └──────────────────────────────┘
-                                                      │
-                                                      ▼
-                                         ┌──────────────────────────────┐
-                                         │ Midnight Preprod + Indexer   │
-                                         │ canonical public registry    │
-                                         └──────────────────────────────┘
+```mermaid
+flowchart TD
+    HU(["👤 Human User / Agent Operator\n─────────────────────────────\nhuman-managed account\nor agent with wallet-controlled key"])
+
+    FE["🖥️ React Frontend — DApp\n─────────────────────────────\n• connect 1AM wallet\n• self-register DID · issue · update · revoke\n• user · admin · registry views"]
+
+    DS["🗄️ DID Service + Postgres\n─────────────────────────────\n• accounts and MCP keys\n• request persistence\n• approvals and DID records\n• VC issuance and resolution"]
+
+    WP["🔐 1AM Wallet + Proof Server\n─────────────────────────────\n• ownPublicKey() controller binding\n• signatures and proof flow\n• transaction submission"]
+
+    CC["⛓️ Midnight Compact Contract\n─────────────────────────────\n• DID registry of record\n• commitments and party_status\n• role_by_key · ADMIN · ISSUER\n• controller binding via ownPublicKey()"]
+
+    MN["🌐 Midnight Preprod + Indexer\n─────────────────────────────\n• canonical public registry\n• ledger state and event stream"]
+
+    HU --> FE
+    FE --> DS
+    FE --> WP
+    DS --> CC
+    WP --> CC
+    CC --> MN
+
+    style HU fill:#4B5563,stroke:#9CA3AF,color:#F9FAFB
+    style FE fill:#1D4ED8,stroke:#93C5FD,color:#F9FAFB
+    style DS fill:#065F46,stroke:#6EE7B7,color:#F9FAFB
+    style WP fill:#6B21A8,stroke:#C4B5FD,color:#F9FAFB
+    style CC fill:#92400E,stroke:#FCD34D,color:#F9FAFB
+    style MN fill:#1E3A5F,stroke:#7DD3FC,color:#F9FAFB
 ```
 
 ## Reference Architecture
