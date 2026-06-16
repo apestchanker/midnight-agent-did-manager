@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { toHex } from "../src/lib/wallet-bridge";
+import { toHex } from "../lib/wallet-bridge";
 import {
   getDefaultSubjectNonce,
   createDidSlotPrivateState,

@@ -1,11 +1,3 @@
-if (typeof window === "undefined") {
-  (globalThis as unknown as { window: unknown }).window = {
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    postMessage: () => {},
-  };
-}
-
 import { describe, expect, it } from "vitest";
 import {
   countStatuses,

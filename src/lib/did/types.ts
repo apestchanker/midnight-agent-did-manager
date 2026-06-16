@@ -4,73 +4,21 @@ import type { DeployResult } from "../../types/did";
 export const DEPLOY_KEY = "did-registry:last-deploy:v6";
 export const COMPILE_KEY = "did-registry:last-compile:v4";
 export const DID_CACHE_PREFIX = "did-registry:request-cache:v2";
-export const OWNER_PRIVATE_STATE_ID = "issuer-owner-state:v1";
-export const OWNER_SIGN_DOMAIN_PREFIX = "didMN:issuer-owner:v1";
 export const MANAGED_CONTRACT_BASE_PATH =
   (import.meta.env.VITE_MANAGED_CONTRACT_PATH || "").trim() ||
   "/contracts/managed/did-registry";
-export const ISSUER_PUBLIC_KEY_PREFIX = new TextEncoder().encode("midnight:did:issuer:v1");
 export const UINT64_MAX = (1n << 64n) - 1n;
 export const Uint64Descriptor = new CompactTypeUnsignedInteger(UINT64_MAX, 8);
-export const INITIAL_ISSUER_NONCE = 1n;
-export const OWNER_VAULT_KIND = "midnight-did-owner-vault-backup";
-export const OWNER_VAULT_VERSION = "v1";
-export const OWNER_VAULT_PBKDF2_ITERATIONS = 600_000;
-export const OWNER_VAULT_SALT_BYTES = 16;
-export const OWNER_VAULT_IV_BYTES = 12;
 
-export type DidRegistryPrivateState = {
-  issuerSecret?: Uint8Array;
+export const DID_SUBJECT_NONCE_PREFIX = "didmn:default-slot:v1";
+export const DEFAULT_SUBJECT_NONCE = "ba3649522b461286f41043ca6548f1d5dcd2c3e74e1d59fa74102fc1eb1ce531";
+export const SLOT_PRIVATE_STATE_ID = "did-slot-state:v2";
+
+export type DidSlotPrivateState = {
+  subjectNonce: string;
   createdAt: string;
-  vaultVersion: string;
-  contractVersion: string;
-  appVersion: string;
   networkId: string;
-  custodianWalletAddress: string;
-  issuerPublicKeyHex: string;
-  ownerDerivation?: {
-    scheme: "wallet-signature-sha256-v1" | "random-secret-v1";
-    signDomain?: string;
-    deploymentSaltHex?: string;
-  };
-};
-
-export type SerializedOwnerPrivateState = Omit<DidRegistryPrivateState, "issuerSecret"> & {
-  issuerSecretHex?: string;
-};
-
-export type OwnerVaultBackupPayload = {
-  kind: typeof OWNER_VAULT_KIND;
-  version: typeof OWNER_VAULT_VERSION;
   contractAddress: string;
-  networkId: string;
-  exportedAt: string;
-  privateState: SerializedOwnerPrivateState;
-};
-
-export type OwnerVaultBackupEnvelope = {
-  kind: typeof OWNER_VAULT_KIND;
-  version: typeof OWNER_VAULT_VERSION;
-  contractAddress: string;
-  networkId: string;
-  exportedAt: string;
-  algorithm: "AES-GCM";
-  kdf: "PBKDF2-SHA-256";
-  iterations: number;
-  saltBase64: string;
-  ivBase64: string;
-  ciphertextBase64: string;
-};
-
-export type OwnerVaultStatus = {
-  hasLocalVault: boolean;
-  contractAddress: string;
-  createdAt?: string;
-  custodianWalletAddress?: string;
-  ownerDerivation?: DidRegistryPrivateState["ownerDerivation"];
-  localIssuerPublicKeyHex?: string;
-  onChainIssuerPublicKeyHex?: string;
-  matchesOnChain: boolean | null;
 };
 
 export type SavedCompileArtifact = {
@@ -82,7 +30,6 @@ export type SavedCompileArtifact = {
 export type SavedDeployment = DeployResult & {
   networkId: string;
   deployedAt: string;
-  ownerDerivation?: DidRegistryPrivateState["ownerDerivation"];
 };
 
 export type CachedDidMetadata = {
@@ -118,7 +65,6 @@ export type DeployTransactionMetadata = {
       txId?: string;
     };
   };
-  ownerDerivation?: DidRegistryPrivateState["ownerDerivation"];
 };
 
 export interface CompileResult {
