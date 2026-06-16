@@ -123,23 +123,23 @@ Admin proof review and verification package management view:
 
 ### On-chain
 
-The Compact contract is the registry of record. It stores:
+The Compact contract (v2, `ownPublicKey()` controller model) is the registry of record. It stores:
 
-- subject binding through a wallet-derived agent key
-- DID lifecycle state
-- request, update, revoke, DID, document, and proof commitments
-- registry admin and issuer service public authorization keys
-- optional public organization disclosure
+- controller binding through `ZswapCoinPublicKey` — the connected wallet's public key is the sole authority, no local secret
+- DID key derived on-chain from `hash(domain, registry_salt, controller_public_key, subject_nonce)`
+- DID lifecycle state via `party_status` map
+- DID, document, proof, capability, and revocation commitments
+- role-based access control (`role_by_key` map) with on-chain roles: ADMIN, ISSUER, USER, AGENT
+- initial admin bootstrap as the first registered role in the contract
 
 The registry is intentionally not the full Agent MultiPass payload. Mandates, limits, capabilities, authorization levels, detailed profile claims, and credential JWTs are represented off-chain and selectively disclosed through credentials, presentations, and proof material.
 
-For owner-only authorization, the contract follows Midnight's documented `witness` pattern:
+Authorization model (v2):
 
-- the owner secret is generated once as a stable 32-byte local private-state secret
-- a public authorization key derived from that secret is stored on-chain
-- `issue/update/revoke` require a Compact `witness` proving knowledge of the secret
-- Compact does not provide an in-circuit `verify_signature` builtin
-- wallet signatures are not used as the deterministic owner secret source because the connected wallet may return different signatures for the same message
+- `self_register_did(subject_nonce)` — any wallet can register a DID slot; the wallet's `ownPublicKey()` is the controller; no local secret required
+- `register_initial_admin()` — first caller claims the ADMIN role; only callable once
+- `issue_did`, `grant_role`, `revoke_role`, `revoke_did` — ADMIN or ISSUER authorized via `ownPublicKey()` check in Compact
+- no `issuerSecret` witness; no local private state needed for authorization
 
 It does not store:
 
@@ -149,7 +149,6 @@ It does not store:
 - MCP keys
 - credential JWTs
 - detailed mandate, limit, capability, or authorization-level policy data
-- the owner authorization secret on-chain or in PostgreSQL
 
 ### Off-chain
 
@@ -170,8 +169,6 @@ For the sake of experimentation and local development, this repository uses Post
 That is a convenience choice for research and prototyping, not a recommended production custody model for sensitive agent data.
 
 In a production deployment, off-chain identity payloads, credentials, and other sensitive holder material should be moved to a proper vault or secure custody system so that only the agent, the human owner/operator, or another explicitly authorized principal can access them.
-
-In this repository, the owner witness secret is stored in browser-backed Midnight private state for local development and can be exported only inside an encrypted Owner Vault backup. In production, recovery and custody should move to a proper secure vault or custody system.
 
 ## Midnight-Centered Credential Direction
 
@@ -277,13 +274,28 @@ See:
 - Midnight getting started / toolchain install: https://docs.midnight.network/getting-started
 - Midnight JS SDK repository: https://github.com/midnightntwrk/midnight-js
 
+## Release Notes
+
+### v0.7.0
+
+- **DID Registry v2 contract** — complete rewrite from `issuerSecret()` witness model to `ownPublicKey()` / `ZswapCoinPublicKey` controller model
+- **Self-registration** — any wallet can register a DID slot via `self_register_did(subject_nonce)` without a local secret
+- **On-chain role system** — ADMIN, ISSUER, USER, AGENT roles stored in `role_by_key` map; admin bootstrap via `register_initial_admin()`
+- **DID key derivation** — `hash("didmn:did:v1", registry_salt, ownPublicKey(), subject_nonce)` replaces agent-key-based derivation
+- **Removed** — `issuerSecret()` witness, owner vault backup, `OwnerVaultBackupPayload`, `ensureOwnerPrivateState`, `status_by_agent`, `organization_labels`, `organization_disclosures`, `request_commitments` ledger fields
+- **vitest config** — added `vitest.config.ts` with `setupFiles` window shim and proper test exclusions; 162 tests pass
+
+### v0.6.5 and earlier
+
+See git log for prior release notes.
+
 ## Tested Versions
 
-- Application version: `VITE_APP_VERSION` from env, currently `0.2.2`
-- Contract version: `VITE_CONTRACT_VERSION` from env, currently `0.2.2`
-- Midnight JS SDK family used by this repo: `4.0.2`
+- Application version: `0.7.0`
+- Compact compiler: `v0.31.0` (`pragma language_version >= 0.23`)
+- Midnight JS SDK family: `4.0.2`
 - Midnight DApp connector API: `4.0.1`
-- Midnight ledger / proof stack used by this repo: `8.0.3`
+- Midnight ledger / proof stack: `8.0.3`
 - 1AM Wallet: Beta channel from the official installer at `https://1am.xyz/install-beta`
 
 For the Midnight SDK, the main package set currently pinned in this repository is:
@@ -342,37 +354,31 @@ behind a shared token. Set `DID_API_AUTH_TOKEN` (server) and a matching
 needs the matching frontend token to load both the backend and MCP log streams.
 This token is a coarse local-development gate, not production access control.
 
-## Owner Authorization Vault
+## Controller Model (v2)
 
-The registry contract no longer authorizes `issue/update/revoke` by comparing a public issuer argument. It now uses Midnight's documented Compact `witness` pattern instead.
-
-What it is:
-
-- a stable 32-byte secret generated at registry deployment time
-- used locally to derive the deploy-time public authorization key and later authorize `issue/update/revoke`
-- not stored on-chain
-- not stored in Postgres
-- stored in local Midnight private state and exported only inside encrypted Owner Vault backups
+As of v0.7, the registry contract uses Midnight's `ownPublicKey()` built-in for authorization. There is no owner secret, no witness, and no local vault backup required.
 
 How it works:
 
-- at deploy time, the DApp generates a random owner secret and sends only the derived public authorization key to the constructor
-- the owner secret is stored in Midnight private state for that contract instance
-- at `issue/update/revoke` time, the DApp loads the local owner secret and supplies it via `witness issuerSecret()`
-- the contract verifies that the derived public key matches the owner key stored on-chain
+- the connected wallet's `ZswapCoinPublicKey` is the controller for any DID it registers
+- `self_register_did(subject_nonce)` derives the DID key on-chain from `hash("didmn:did:v1", registry_salt, ownPublicKey(), subject_nonce)`
+- the same wallet can call `register_initial_admin()` once to claim the ADMIN role
+- `issue_did`, `grant_role`, `revoke_role`, `revoke_did` check `ownPublicKey()` against the stored role map at circuit execution time
+- no local secret is generated, stored, or needed for recovery
 
-How to recover it:
+Deploying a registry with the v2 contract:
 
-1. Export an encrypted owner vault backup after deployment.
-2. If the local private state is lost, reconnect the admin wallet.
-3. Open the `Owner Vault` panel and restore the encrypted backup for the target registry.
-4. Use a backup password with at least 10 characters.
+1. Connect the admin wallet.
+2. Start the frontend and API.
+3. Open the app as Admin.
+4. Go to `Deploy DID Registry`.
+5. Deploy the contract (no owner secret generated — wallet key is the authority).
+6. Call `Register as Initial Admin` from the same wallet to claim the ADMIN role.
 
-Test-only warning:
+Subject nonce:
 
-- browser-backed private state is for development and experiments only
-- do not rely on that for production custody
-- in production, replace it with a proper vault/HSM/custody mechanism
+- the default subject nonce is `SHA-256("didmn:default-slot:v1")` = `ba3649522b461286f41043ca6548f1d5dcd2c3e74e1d59fa74102fc1eb1ce531`
+- custom nonces can be supplied to create multiple DID slots per wallet
 
 ## Development
 
@@ -409,21 +415,20 @@ This command:
 
 You need the official Midnight Compact compiler installed as `compact` or `compactc`.
 
-Deploying a registry with the current contract model:
+Deploying a registry with the v2 contract model:
 
 1. Connect the admin wallet.
 2. Start the frontend and API.
 3. Open the app as Admin.
 4. Go to `Deploy DID Registry`.
 5. Deploy the contract.
-6. Open `Owner Vault` and export an encrypted backup immediately.
+6. Call `Register as Initial Admin` from the same wallet to claim the ADMIN role.
 
 Important:
 
-- the contract is initialized in its constructor
-- there is no separate `initialize` step anymore
-- `issue/update/revoke` are authorized by the stable owner witness secret in local Midnight private state
-- if browser-backed private state is lost, restore the encrypted owner vault backup before attempting issuer actions
+- the contract is initialized in its constructor; there is no separate `initialize` step
+- authorization for `issue/update/revoke` is resolved on-chain from `ownPublicKey()` — no local secret or vault backup required
+- if you need a second admin, use `grant_role` while connected as the current admin
 
 Validate local Preprod prerequisites:
 
