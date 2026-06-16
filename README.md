@@ -58,23 +58,28 @@ flowchart TD
 
     DS["🗄️ DID Service + Postgres\n─────────────────────────────\n• accounts and MCP keys\n• request persistence\n• approvals and DID records\n• VC issuance and resolution"]
 
-    WP["🔐 1AM Wallet + Proof Server\n─────────────────────────────\n• ownPublicKey() controller binding\n• signatures and proof flow\n• transaction submission"]
+    WL["🔐 1AM Wallet\n─────────────────────────────\n• ownPublicKey() controller binding\n• transaction signing and submission\n• built-in wallet prover (optional)"]
+
+    PS["⚙️ Local Proof Server\n─────────────────────────────\n• Midnight proof generation\n• runs at 127.0.0.1:6300\n• optional — wallet prover can replace it"]
 
     CC["⛓️ Midnight Compact Contract\n─────────────────────────────\n• DID registry of record\n• commitments and party_status\n• role_by_key · ADMIN · ISSUER\n• controller binding via ownPublicKey()"]
 
-    MN["🌐 Midnight Preprod + Indexer\n─────────────────────────────\n• canonical public registry\n• ledger state and event stream"]
+    MN["🌐 Midnight Network + Indexer\n─────────────────────────────\n• Preprod · Preview · Mainnet\n• canonical public registry\n• ledger state and event stream"]
 
     HU --> FE
     FE --> DS
-    FE --> WP
+    FE --> WL
+    WL -.->|if not using wallet prover| PS
     DS --> CC
-    WP --> CC
+    WL --> CC
+    PS --> CC
     CC --> MN
 
     style HU fill:#4B5563,stroke:#9CA3AF,color:#F9FAFB
     style FE fill:#1D4ED8,stroke:#93C5FD,color:#F9FAFB
     style DS fill:#065F46,stroke:#6EE7B7,color:#F9FAFB
-    style WP fill:#6B21A8,stroke:#C4B5FD,color:#F9FAFB
+    style WL fill:#6B21A8,stroke:#C4B5FD,color:#F9FAFB
+    style PS fill:#3B1F6E,stroke:#C4B5FD,color:#F9FAFB
     style CC fill:#92400E,stroke:#FCD34D,color:#F9FAFB
     style MN fill:#1E3A5F,stroke:#7DD3FC,color:#F9FAFB
 ```
