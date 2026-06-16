@@ -1,79 +1,50 @@
 import type * as __compactRuntime from '@midnight-ntwrk/compact-runtime';
 
 export type Witnesses<PS> = {
-  issuerSecret(context: __compactRuntime.WitnessContext<Ledger, PS>): [PS, Uint8Array];
 }
 
 export type ImpureCircuits<PS> = {
-  request_did(context: __compactRuntime.CircuitContext<PS>,
-              agent_key_0: Uint8Array,
-              request_commitment_0: Uint8Array,
-              proof_commitment_0: Uint8Array,
-              organization_label_0: Uint8Array,
-              organization_disclosure_0: bigint): __compactRuntime.CircuitResults<PS, []>;
+  register_initial_admin(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, []>;
+  self_register_did(context: __compactRuntime.CircuitContext<PS>,
+                    subject_nonce_0: Uint8Array): __compactRuntime.CircuitResults<PS, Uint8Array>;
+  request_update_did(context: __compactRuntime.CircuitContext<PS>,
+                     subject_nonce_0: Uint8Array,
+                     doc_commitment_0: Uint8Array,
+                     cap_commitment_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
   issue_did(context: __compactRuntime.CircuitContext<PS>,
-            agent_key_0: Uint8Array,
+            did_key_0: Uint8Array,
             did_commitment_0: Uint8Array,
-            document_commitment_0: Uint8Array,
-            proof_commitment_0: Uint8Array,
-            organization_label_0: Uint8Array,
-            organization_disclosure_0: bigint): __compactRuntime.CircuitResults<PS, []>;
-  request_update(context: __compactRuntime.CircuitContext<PS>,
-                 agent_key_0: Uint8Array,
-                 update_request_commitment_0: Uint8Array,
-                 proof_commitment_0: Uint8Array,
-                 organization_label_0: Uint8Array,
-                 organization_disclosure_0: bigint): __compactRuntime.CircuitResults<PS, []>;
-  update_did(context: __compactRuntime.CircuitContext<PS>,
-             agent_key_0: Uint8Array,
-             did_commitment_0: Uint8Array,
-             document_commitment_0: Uint8Array,
-             proof_commitment_0: Uint8Array,
-             organization_label_0: Uint8Array,
-             organization_disclosure_0: bigint): __compactRuntime.CircuitResults<PS, []>;
-  request_revoke(context: __compactRuntime.CircuitContext<PS>,
-                 agent_key_0: Uint8Array,
-                 revocation_request_commitment_0: Uint8Array,
-                 proof_commitment_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
-  revoke_did(context: __compactRuntime.CircuitContext<PS>,
-             agent_key_0: Uint8Array,
-             revocation_commitment_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
+            doc_commitment_0: Uint8Array,
+            proof_commitment_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
+  grant_role(context: __compactRuntime.CircuitContext<PS>,
+             did_key_0: Uint8Array,
+             role_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
+  revoke_role(context: __compactRuntime.CircuitContext<PS>,
+              did_key_0: Uint8Array,
+              role_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
+  revoke_did(context: __compactRuntime.CircuitContext<PS>, did_key_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
 }
 
 export type ProvableCircuits<PS> = {
-  request_did(context: __compactRuntime.CircuitContext<PS>,
-              agent_key_0: Uint8Array,
-              request_commitment_0: Uint8Array,
-              proof_commitment_0: Uint8Array,
-              organization_label_0: Uint8Array,
-              organization_disclosure_0: bigint): __compactRuntime.CircuitResults<PS, []>;
+  register_initial_admin(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, []>;
+  self_register_did(context: __compactRuntime.CircuitContext<PS>,
+                    subject_nonce_0: Uint8Array): __compactRuntime.CircuitResults<PS, Uint8Array>;
+  request_update_did(context: __compactRuntime.CircuitContext<PS>,
+                     subject_nonce_0: Uint8Array,
+                     doc_commitment_0: Uint8Array,
+                     cap_commitment_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
   issue_did(context: __compactRuntime.CircuitContext<PS>,
-            agent_key_0: Uint8Array,
+            did_key_0: Uint8Array,
             did_commitment_0: Uint8Array,
-            document_commitment_0: Uint8Array,
-            proof_commitment_0: Uint8Array,
-            organization_label_0: Uint8Array,
-            organization_disclosure_0: bigint): __compactRuntime.CircuitResults<PS, []>;
-  request_update(context: __compactRuntime.CircuitContext<PS>,
-                 agent_key_0: Uint8Array,
-                 update_request_commitment_0: Uint8Array,
-                 proof_commitment_0: Uint8Array,
-                 organization_label_0: Uint8Array,
-                 organization_disclosure_0: bigint): __compactRuntime.CircuitResults<PS, []>;
-  update_did(context: __compactRuntime.CircuitContext<PS>,
-             agent_key_0: Uint8Array,
-             did_commitment_0: Uint8Array,
-             document_commitment_0: Uint8Array,
-             proof_commitment_0: Uint8Array,
-             organization_label_0: Uint8Array,
-             organization_disclosure_0: bigint): __compactRuntime.CircuitResults<PS, []>;
-  request_revoke(context: __compactRuntime.CircuitContext<PS>,
-                 agent_key_0: Uint8Array,
-                 revocation_request_commitment_0: Uint8Array,
-                 proof_commitment_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
-  revoke_did(context: __compactRuntime.CircuitContext<PS>,
-             agent_key_0: Uint8Array,
-             revocation_commitment_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
+            doc_commitment_0: Uint8Array,
+            proof_commitment_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
+  grant_role(context: __compactRuntime.CircuitContext<PS>,
+             did_key_0: Uint8Array,
+             role_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
+  revoke_role(context: __compactRuntime.CircuitContext<PS>,
+              did_key_0: Uint8Array,
+              role_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
+  revoke_did(context: __compactRuntime.CircuitContext<PS>, did_key_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
 }
 
 export type PureCircuits = {
@@ -81,75 +52,52 @@ export type PureCircuits = {
 }
 
 export type Circuits<PS> = {
-  contract_version(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, Uint8Array>;
-  request_did(context: __compactRuntime.CircuitContext<PS>,
-              agent_key_0: Uint8Array,
-              request_commitment_0: Uint8Array,
-              proof_commitment_0: Uint8Array,
-              organization_label_0: Uint8Array,
-              organization_disclosure_0: bigint): __compactRuntime.CircuitResults<PS, []>;
+  register_initial_admin(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, []>;
+  self_register_did(context: __compactRuntime.CircuitContext<PS>,
+                    subject_nonce_0: Uint8Array): __compactRuntime.CircuitResults<PS, Uint8Array>;
+  request_update_did(context: __compactRuntime.CircuitContext<PS>,
+                     subject_nonce_0: Uint8Array,
+                     doc_commitment_0: Uint8Array,
+                     cap_commitment_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
   issue_did(context: __compactRuntime.CircuitContext<PS>,
-            agent_key_0: Uint8Array,
+            did_key_0: Uint8Array,
             did_commitment_0: Uint8Array,
-            document_commitment_0: Uint8Array,
-            proof_commitment_0: Uint8Array,
-            organization_label_0: Uint8Array,
-            organization_disclosure_0: bigint): __compactRuntime.CircuitResults<PS, []>;
-  request_update(context: __compactRuntime.CircuitContext<PS>,
-                 agent_key_0: Uint8Array,
-                 update_request_commitment_0: Uint8Array,
-                 proof_commitment_0: Uint8Array,
-                 organization_label_0: Uint8Array,
-                 organization_disclosure_0: bigint): __compactRuntime.CircuitResults<PS, []>;
-  update_did(context: __compactRuntime.CircuitContext<PS>,
-             agent_key_0: Uint8Array,
-             did_commitment_0: Uint8Array,
-             document_commitment_0: Uint8Array,
-             proof_commitment_0: Uint8Array,
-             organization_label_0: Uint8Array,
-             organization_disclosure_0: bigint): __compactRuntime.CircuitResults<PS, []>;
-  request_revoke(context: __compactRuntime.CircuitContext<PS>,
-                 agent_key_0: Uint8Array,
-                 revocation_request_commitment_0: Uint8Array,
-                 proof_commitment_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
-  revoke_did(context: __compactRuntime.CircuitContext<PS>,
-             agent_key_0: Uint8Array,
-             revocation_commitment_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
+            doc_commitment_0: Uint8Array,
+            proof_commitment_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
+  grant_role(context: __compactRuntime.CircuitContext<PS>,
+             did_key_0: Uint8Array,
+             role_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
+  revoke_role(context: __compactRuntime.CircuitContext<PS>,
+              did_key_0: Uint8Array,
+              role_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
+  revoke_did(context: __compactRuntime.CircuitContext<PS>, did_key_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
+  contract_version(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, Uint8Array>;
 }
 
 export type Ledger = {
-  readonly initialized: boolean;
-  readonly registry_admin: Uint8Array;
-  readonly issuer_service: Uint8Array;
-  readonly total_requests: bigint;
-  readonly total_active_dids: bigint;
-  status_by_agent: {
+  readonly registry_salt: Uint8Array;
+  readonly admin_registered: boolean;
+  readonly initial_admin: { bytes: Uint8Array };
+  did_controller: {
+    isEmpty(): boolean;
+    size(): bigint;
+    member(key_0: Uint8Array): boolean;
+    lookup(key_0: Uint8Array): { bytes: Uint8Array };
+    [Symbol.iterator](): Iterator<[Uint8Array, { bytes: Uint8Array }]>
+  };
+  role_by_key: {
+    isEmpty(): boolean;
+    size(): bigint;
+    member(key_0: Uint8Array): boolean;
+    lookup(key_0: Uint8Array): boolean;
+    [Symbol.iterator](): Iterator<[Uint8Array, boolean]>
+  };
+  party_status: {
     isEmpty(): boolean;
     size(): bigint;
     member(key_0: Uint8Array): boolean;
     lookup(key_0: Uint8Array): bigint;
     [Symbol.iterator](): Iterator<[Uint8Array, bigint]>
-  };
-  request_commitments: {
-    isEmpty(): boolean;
-    size(): bigint;
-    member(key_0: Uint8Array): boolean;
-    lookup(key_0: Uint8Array): Uint8Array;
-    [Symbol.iterator](): Iterator<[Uint8Array, Uint8Array]>
-  };
-  update_request_commitments: {
-    isEmpty(): boolean;
-    size(): bigint;
-    member(key_0: Uint8Array): boolean;
-    lookup(key_0: Uint8Array): Uint8Array;
-    [Symbol.iterator](): Iterator<[Uint8Array, Uint8Array]>
-  };
-  revocation_request_commitments: {
-    isEmpty(): boolean;
-    size(): bigint;
-    member(key_0: Uint8Array): boolean;
-    lookup(key_0: Uint8Array): Uint8Array;
-    [Symbol.iterator](): Iterator<[Uint8Array, Uint8Array]>
   };
   did_commitments: {
     isEmpty(): boolean;
@@ -172,19 +120,12 @@ export type Ledger = {
     lookup(key_0: Uint8Array): Uint8Array;
     [Symbol.iterator](): Iterator<[Uint8Array, Uint8Array]>
   };
-  organization_labels: {
+  capability_commitments: {
     isEmpty(): boolean;
     size(): bigint;
     member(key_0: Uint8Array): boolean;
     lookup(key_0: Uint8Array): Uint8Array;
     [Symbol.iterator](): Iterator<[Uint8Array, Uint8Array]>
-  };
-  organization_disclosures: {
-    isEmpty(): boolean;
-    size(): bigint;
-    member(key_0: Uint8Array): boolean;
-    lookup(key_0: Uint8Array): bigint;
-    [Symbol.iterator](): Iterator<[Uint8Array, bigint]>
   };
   revocation_commitments: {
     isEmpty(): boolean;
@@ -193,8 +134,8 @@ export type Ledger = {
     lookup(key_0: Uint8Array): Uint8Array;
     [Symbol.iterator](): Iterator<[Uint8Array, Uint8Array]>
   };
+  readonly total_active_dids: bigint;
   readonly registry_nonce: bigint;
-  readonly issuer_nonce: bigint;
 }
 
 export type ContractReferenceLocations = any;
@@ -208,7 +149,7 @@ export declare class Contract<PS = any, W extends Witnesses<PS> = Witnesses<PS>>
   provableCircuits: ProvableCircuits<PS>;
   constructor(witnesses: W);
   initialState(context: __compactRuntime.ConstructorContext<PS>,
-               owner_public_key_0: Uint8Array): __compactRuntime.ConstructorResult<PS>;
+               salt_0: Uint8Array): __compactRuntime.ConstructorResult<PS>;
 }
 
 export declare function ledger(state: __compactRuntime.StateValue | __compactRuntime.ChargedState): Ledger;

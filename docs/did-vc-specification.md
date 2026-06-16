@@ -23,14 +23,14 @@ The product direction is Agent MultiPass: a privacy-preserving pass for AI agent
 The repository emits DIDs in this form:
 
 ```text
-did:midnight:<network-id>:<contract-address>:<agent-key>
+did:midnight:<network-id>:<contract-address>:<did-key>
 ```
 
 Where:
 
 - `network-id` is the Midnight network segment used by the app
 - `contract-address` is the deployed DID registry Compact contract address
-- `agent-key` is the subject identifier bound to the DID within that registry
+- `did-key` is the subject identifier bound to the DID within that registry. In the target design it is derived from registry salt, the registering caller's `ZswapCoinPublicKey`, and a subject nonce.
 
 ### DID Field Table
 
@@ -39,9 +39,10 @@ Where:
 | `method` | DID string | string | Always `midnight` in this implementation. |
 | `network-id` | DID string | string | Midnight network identifier such as `preprod`. |
 | `contract-address` | DID string | string | Registry Compact contract address anchoring the DID. |
-| `agent-key` | DID string | hex string | Subject key segment used to identify the DID within the registry. |
+| `did-key` | DID string | hex string | Subject key segment used to identify the DID within the registry. |
 | `agent_id` | Off-chain request / DB | string | Internal unique subject identifier used by the application schema. |
 | `subject_wallet_address` | Off-chain request / DB / VC claim | string | Holder-controlled wallet associated with the DID subject. |
+| `controller_public_key` | On-chain registry | `ZswapCoinPublicKey` | Wallet public key stored as the DID controller. Self-service mutations must come from this controller. |
 
 ### DID State
 
@@ -69,7 +70,7 @@ The canonical public status of an issued DID is anchored by the Midnight registr
 
 A resolver for this implementation must:
 
-1. Parse the DID into method, network, contract address, and agent key.
+1. Parse the DID into method, network, contract address, and DID key.
 2. Resolve the DID record associated with that identifier.
 3. Return a DID Resolution result containing:
    - DID document metadata
@@ -111,10 +112,11 @@ The DID document should remain a discovery and service document, not the place w
 In the direct user flow:
 
 1. The holder selects or creates an agent in the UI.
-2. The holder submits a DID request.
-3. The request is registered on-chain.
-4. Admin issues the DID.
-5. The resulting DID becomes resolvable and active.
+2. The holder self-registers or selects a DID key controlled by the connected wallet.
+3. The holder submits a DID request.
+4. The request is registered on-chain with `did_controller[did_key] = ownPublicKey()`.
+5. Admin or issuer issues the DID.
+6. The resulting DID becomes resolvable and active.
 
 ### Agent Flow
 
@@ -123,8 +125,8 @@ In the MCP or API flow:
 1. An agent calls the service using an MCP key.
 2. The request is stored as `pending_human_approval`.
 3. The holder approves the request.
-4. The holder-side approval registers the request on-chain.
-5. Admin issues the DID.
+4. The holder-side approval registers or references a controller-bound DID on-chain.
+5. Admin or issuer issues the DID.
 6. The DID becomes active and available for resolution and VC issuance.
 
 ### DID Request Field Table
@@ -172,8 +174,9 @@ The holder wallet remains important because it is used for:
 | Field | Role | Why It Exists |
 | --- | --- | --- |
 | `agent_id` | Internal subject identity | Distinguishes multiple agents under the same holder wallet. |
-| `agent-key` | DID segment / registry identity | Identifies the DID inside a specific contract registry. |
-| `subject_wallet_address` | Control / ownership link | Connects the DID subject to the controlling wallet. |
+| `did-key` | DID segment / registry identity | Identifies the DID inside a specific contract registry. |
+| `controller_public_key` | On-chain controller | `ZswapCoinPublicKey` returned by `ownPublicKey()` and stored as the DID controller. |
+| `subject_wallet_address` | Account / wallet link | Connects the DID subject to a wallet visible in application flows; not the primary Compact authorization primitive. |
 | `customer_wallet` | Account ownership link | Connects the application account to the human holder. |
 
 ## Agent MultiPass Model

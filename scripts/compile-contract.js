@@ -30,11 +30,12 @@ const compiledMetaPath = resolve(compiledMetaDir, "did_registry.compiled.json");
 const CONTRACT_METADATA_VERSION = "0.2.0";
 const CIRCUITS = [
   "contract_version",
-  "request_did",
+  "register_initial_admin",
+  "self_register_did",
+  "request_update_did",
   "issue_did",
-  "request_update",
-  "update_did",
-  "request_revoke",
+  "grant_role",
+  "revoke_role",
   "revoke_did",
 ];
 
@@ -45,6 +46,7 @@ function renderContractSource() {
 }
 
 function runCompiler(binary) {
+  rmSync(managedDir, { force: true, recursive: true });
   return spawnSync(binary, ["compile", contractPath, managedDir], {
     stdio: "inherit",
   });
@@ -118,23 +120,19 @@ function writeMetadata() {
             ...CIRCUITS,
           ],
           ledgerVariables: [
-            "initialized",
-            "registry_admin",
-            "issuer_service",
-            "total_requests",
-            "total_active_dids",
-            "status_by_agent",
-            "request_commitments",
-            "update_request_commitments",
-            "revocation_request_commitments",
+            "registry_salt",
+            "admin_registered",
+            "initial_admin",
+            "did_controller",
+            "role_by_key",
+            "party_status",
             "did_commitments",
             "document_commitments",
             "proof_commitments",
-            "organization_labels",
-            "organization_disclosures",
+            "capability_commitments",
             "revocation_commitments",
+            "total_active_dids",
             "registry_nonce",
-            "issuer_nonce",
           ],
           targetNetwork: process.env.VITE_NETWORK_ID || "preprod",
           deploymentReady: true,

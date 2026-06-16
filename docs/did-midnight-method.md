@@ -15,7 +15,7 @@ This document defines how `did:midnight` identifiers are constructed, resolved, 
 The method-specific identifier is:
 
 ```text
-did:midnight:<network-id>:<contract-address>:<agent-key>
+did:midnight:<network-id>:<contract-address>:<did-key>
 ```
 
 Example:
@@ -28,16 +28,17 @@ Components:
 
 - `network-id`: Midnight network identifier such as `preprod`
 - `contract-address`: deployed Midnight DID registry contract address
-- `agent-key`: 32-byte hex identifier derived from the wallet address bound to the DID subject
+- `did-key`: 32-byte hex identifier derived by the registry from the registry salt, the registering caller's `ZswapCoinPublicKey`, and a subject nonce
 
 ## Method Operations
 
 ### Create
 
-Creation is a two-step registry lifecycle:
+Creation is a self-registration plus issuance lifecycle:
 
-1. The subject wallet requests a DID on the registry contract.
-2. The issuer service approves and issues the DID on-chain.
+1. The subject wallet calls the registry from the wallet that will control the DID.
+2. The registry derives the DID key from `ownPublicKey()` and stores `did_controller[did_key] = ownPublicKey()`.
+3. The issuer or admin approves and issues the DID on-chain when certification is required.
 
 The DID exists for resolution once the registry record reaches `active`.
 
@@ -45,15 +46,16 @@ The DID exists for resolution once the registry record reaches `active`.
 
 Updates are also two-step:
 
-1. The subject wallet requests an update on-chain.
-2. The issuer approves and applies the update on-chain.
+1. The DID controller wallet requests an update on-chain.
+2. The registry recomputes the DID key from `ownPublicKey()` and checks that the stored controller matches the caller.
+3. Self-attested updates can be recorded directly as commitments; issuer-certified updates require issuer or admin approval.
 
 ### Deactivate / Revoke
 
 Revocation is two-step:
 
-1. The subject wallet requests revocation on-chain.
-2. The issuer approves revocation on-chain.
+1. The DID controller wallet requests revocation on-chain, or an admin or issuer performs a role-authorized revocation.
+2. The registry records the revocation status and revocation commitment.
 
 When revoked, the DID resolves with `didDocument: null` semantics for strict resolvers, or with registry metadata indicating deactivation for this implementation.
 
@@ -61,7 +63,9 @@ When revoked, the DID resolves with `didDocument: null` semantics for strict res
 
 Canonical state is stored on the Midnight registry contract:
 
-- subject binding via `agent_key`
+- subject binding via `did_key`
+- controller binding via `did_controller[did_key] = ZswapCoinPublicKey`
+- role membership for admin, issuer, user, and agent authorities
 - issuance / update / revocation status
 - DID commitment
 - DID document commitment
@@ -78,7 +82,7 @@ Mandates, limits, capabilities, authorization levels, and detailed Agent MultiPa
 
 Resolution is performed by:
 
-1. Parsing the DID into `network-id`, `contract-address`, and `agent-key`
+1. Parsing the DID into `network-id`, `contract-address`, and `did-key`
 2. Looking up the DID record associated with the DID in the registry index
 3. Returning a DID Resolution result with:
    - `didDocument`
@@ -109,10 +113,12 @@ If organization disclosure is enabled, the resolved document may also expose the
 
 ## Control and Authorization
 
-Control is modeled through the wallet bound to the DID subject and the issuer authority:
+Control is modeled through the controller public key stored by the registry and role-gated issuer/admin authority:
 
-- the subject wallet can request issuance, updates, and revocation
-- the issuer authority performs final issuance, update approval, and revocation approval
+- the subject controller can request self-service updates and controller-owned revocation flows
+- the registry checks subject control by comparing `did_controller[did_key]` with `ownPublicKey()`
+- admins can grant and revoke roles, issue DIDs, revoke DIDs, and grant additional admins
+- issuers can perform configured issuance and certification actions
 
 This implementation treats registry issuance authority as part of the method rules.
 

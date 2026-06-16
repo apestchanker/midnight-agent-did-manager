@@ -22,6 +22,7 @@ const stripGeneratedSourcemaps = {
 };
 
 export default defineConfig({
+  base: process.env.GITHUB_PAGES ? "./" : "/",
   plugins: [stripGeneratedSourcemaps, react(), wasm(), nodePolyfills({ include: ["crypto", "buffer", "stream", "util"] })],
   define: {
     __APP_VERSION__: JSON.stringify(appVersion),

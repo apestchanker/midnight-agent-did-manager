@@ -1,0 +1,63 @@
+pragma language_version >= 0.21;
+
+import CompactStandardLibrary;
+
+export ledger admin_registered: Boolean;
+export ledger initial_admin: ZswapCoinPublicKey;
+export ledger did_controller: Map<Bytes<32>, ZswapCoinPublicKey>;
+export ledger did_status: Map<Bytes<32>, Uint<8>>;
+export ledger role_by_key: Map<Bytes<32>, Boolean>;
+export ledger update_commitments: Map<Bytes<32>, Bytes<32>>;
+
+pure circuit roleKey(controller: ZswapCoinPublicKey, role: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([controller.bytes, role]);
+}
+
+pure circuit adminRole(): Bytes<32> {
+  return pad(32, "ADMIN");
+}
+
+circuit assertAdmin(): [] {
+  const caller = ownPublicKey();
+  const key = roleKey(caller, adminRole());
+  assert(role_by_key.member(key), "Caller is not admin");
+  assert(role_by_key.lookup(key), "Caller is not admin");
+}
+
+export circuit register_initial_admin(): [] {
+  assert(!admin_registered, "Admin already registered");
+  const caller = ownPublicKey();
+  initial_admin = caller;
+  role_by_key.insert(roleKey(caller, adminRole()), true);
+  admin_registered = true;
+}
+
+export circuit register_did(did_key: Bytes<32>): [] {
+  const public_did_key = disclose(did_key);
+  assert(!did_controller.member(public_did_key), "DID already registered");
+  did_controller.insert(public_did_key, ownPublicKey());
+  did_status.insert(public_did_key, 1 as Uint<8>);
+}
+
+export circuit request_update_did(did_key: Bytes<32>, update_commitment: Bytes<32>): [] {
+  const public_did_key = disclose(did_key);
+  assert(did_controller.member(public_did_key), "DID not registered");
+  assert(did_controller.lookup(public_did_key) == ownPublicKey(), "Caller is not DID controller");
+  update_commitments.insert(public_did_key, disclose(update_commitment));
+  did_status.insert(public_did_key, 4 as Uint<8>);
+}
+
+export circuit grant_admin(did_key: Bytes<32>): [] {
+  assertAdmin();
+  const public_did_key = disclose(did_key);
+  assert(did_controller.member(public_did_key), "DID not registered");
+  const target = did_controller.lookup(public_did_key);
+  role_by_key.insert(roleKey(target, adminRole()), true);
+}
+
+export circuit issue_did(did_key: Bytes<32>): [] {
+  assertAdmin();
+  const public_did_key = disclose(did_key);
+  assert(did_controller.member(public_did_key), "DID not registered");
+  did_status.insert(public_did_key, 2 as Uint<8>);
+}

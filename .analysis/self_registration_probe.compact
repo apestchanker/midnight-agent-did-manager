@@ -1,0 +1,51 @@
+pragma language_version >= 0.21;
+
+import CompactStandardLibrary;
+
+export ledger registry_salt: Bytes<32>;
+export ledger did_controller: Map<Bytes<32>, ZswapCoinPublicKey>;
+export ledger did_status: Map<Bytes<32>, Uint<8>>;
+export ledger update_commitments: Map<Bytes<32>, Bytes<32>>;
+
+constructor(registry_salt_arg: Bytes<32>) {
+  registry_salt = disclose(registry_salt_arg);
+}
+
+circuit deriveDidKey(controller: ZswapCoinPublicKey, user_nonce: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>(
+    [
+      pad(32, "didmn:did:v1"),
+      registry_salt,
+      controller.bytes,
+      user_nonce
+    ]
+  );
+}
+
+export circuit self_register_did(user_nonce: Bytes<32>): Bytes<32> {
+  const controller = ownPublicKey();
+  const public_user_nonce = disclose(user_nonce);
+  const did_key = disclose(deriveDidKey(controller, public_user_nonce));
+
+  assert(!did_controller.member(did_key), "DID already registered");
+
+  did_controller.insert(did_key, controller);
+  did_status.insert(did_key, 1 as Uint<8>);
+
+  return did_key;
+}
+
+export circuit request_update_did(
+  user_nonce: Bytes<32>,
+  update_commitment: Bytes<32>
+): [] {
+  const controller = ownPublicKey();
+  const public_user_nonce = disclose(user_nonce);
+  const did_key = disclose(deriveDidKey(controller, public_user_nonce));
+
+  assert(did_controller.member(did_key), "DID not registered");
+  assert(did_controller.lookup(did_key) == controller, "Caller is not DID controller");
+
+  update_commitments.insert(did_key, disclose(update_commitment));
+  did_status.insert(did_key, 4 as Uint<8>);
+}

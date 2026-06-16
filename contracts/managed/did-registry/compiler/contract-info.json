@@ -4,54 +4,59 @@
   "runtime-version": "0.16.0",
   "circuits": [
     {
-      "name": "contract_version",
-      "pure": true,
-      "proof": false,
+      "name": "register_initial_admin",
+      "pure": false,
+      "proof": true,
       "arguments": [
       ],
       "result-type": {
-        "type-name": "Bytes",
-        "length": 16
+        "type-name": "Tuple",
+        "types": [
+        ]
       }
     },
     {
-      "name": "request_did",
+      "name": "self_register_did",
       "pure": false,
       "proof": true,
       "arguments": [
         {
-          "name": "agent_key",
+          "name": "subject_nonce",
+          "type": {
+            "type-name": "Bytes",
+            "length": 32
+          }
+        }
+      ],
+      "result-type": {
+        "type-name": "Bytes",
+        "length": 32
+      }
+    },
+    {
+      "name": "request_update_did",
+      "pure": false,
+      "proof": true,
+      "arguments": [
+        {
+          "name": "subject_nonce",
           "type": {
             "type-name": "Bytes",
             "length": 32
           }
         },
         {
-          "name": "request_commitment",
+          "name": "doc_commitment",
           "type": {
             "type-name": "Bytes",
             "length": 32
           }
         },
         {
-          "name": "proof_commitment",
+          "name": "cap_commitment",
           "type": {
             "type-name": "Bytes",
             "length": 32
-          }
-        },
-        {
-          "name": "organization_label",
-          "type": {
-            "type-name": "Bytes",
-            "length": 64
-          }
-        },
-        {
-          "name": "organization_disclosure",
-          "type": {
-            "type-name": "Uint",
-            "maxval": 255
           }
         }
       ],
@@ -67,7 +72,7 @@
       "proof": true,
       "arguments": [
         {
-          "name": "agent_key",
+          "name": "did_key",
           "type": {
             "type-name": "Bytes",
             "length": 32
@@ -81,7 +86,7 @@
           }
         },
         {
-          "name": "document_commitment",
+          "name": "doc_commitment",
           "type": {
             "type-name": "Bytes",
             "length": 32
@@ -92,20 +97,6 @@
           "type": {
             "type-name": "Bytes",
             "length": 32
-          }
-        },
-        {
-          "name": "organization_label",
-          "type": {
-            "type-name": "Bytes",
-            "length": 64
-          }
-        },
-        {
-          "name": "organization_disclosure",
-          "type": {
-            "type-name": "Uint",
-            "maxval": 255
           }
         }
       ],
@@ -116,43 +107,22 @@
       }
     },
     {
-      "name": "request_update",
+      "name": "grant_role",
       "pure": false,
       "proof": true,
       "arguments": [
         {
-          "name": "agent_key",
+          "name": "did_key",
           "type": {
             "type-name": "Bytes",
             "length": 32
           }
         },
         {
-          "name": "update_request_commitment",
+          "name": "role",
           "type": {
             "type-name": "Bytes",
             "length": 32
-          }
-        },
-        {
-          "name": "proof_commitment",
-          "type": {
-            "type-name": "Bytes",
-            "length": 32
-          }
-        },
-        {
-          "name": "organization_label",
-          "type": {
-            "type-name": "Bytes",
-            "length": 64
-          }
-        },
-        {
-          "name": "organization_disclosure",
-          "type": {
-            "type-name": "Uint",
-            "maxval": 255
           }
         }
       ],
@@ -163,80 +133,19 @@
       }
     },
     {
-      "name": "update_did",
+      "name": "revoke_role",
       "pure": false,
       "proof": true,
       "arguments": [
         {
-          "name": "agent_key",
+          "name": "did_key",
           "type": {
             "type-name": "Bytes",
             "length": 32
           }
         },
         {
-          "name": "did_commitment",
-          "type": {
-            "type-name": "Bytes",
-            "length": 32
-          }
-        },
-        {
-          "name": "document_commitment",
-          "type": {
-            "type-name": "Bytes",
-            "length": 32
-          }
-        },
-        {
-          "name": "proof_commitment",
-          "type": {
-            "type-name": "Bytes",
-            "length": 32
-          }
-        },
-        {
-          "name": "organization_label",
-          "type": {
-            "type-name": "Bytes",
-            "length": 64
-          }
-        },
-        {
-          "name": "organization_disclosure",
-          "type": {
-            "type-name": "Uint",
-            "maxval": 255
-          }
-        }
-      ],
-      "result-type": {
-        "type-name": "Tuple",
-        "types": [
-        ]
-      }
-    },
-    {
-      "name": "request_revoke",
-      "pure": false,
-      "proof": true,
-      "arguments": [
-        {
-          "name": "agent_key",
-          "type": {
-            "type-name": "Bytes",
-            "length": 32
-          }
-        },
-        {
-          "name": "revocation_request_commitment",
-          "type": {
-            "type-name": "Bytes",
-            "length": 32
-          }
-        },
-        {
-          "name": "proof_commitment",
+          "name": "role",
           "type": {
             "type-name": "Bytes",
             "length": 32
@@ -255,14 +164,7 @@
       "proof": true,
       "arguments": [
         {
-          "name": "agent_key",
-          "type": {
-            "type-name": "Bytes",
-            "length": 32
-          }
-        },
-        {
-          "name": "revocation_commitment",
+          "name": "did_key",
           "type": {
             "type-name": "Bytes",
             "length": 32
@@ -274,28 +176,37 @@
         "types": [
         ]
       }
-    }
-  ],
-  "witnesses": [
+    },
     {
-      "name": "issuerSecret",
+      "name": "contract_version",
+      "pure": true,
+      "proof": false,
       "arguments": [
       ],
-      "result type": {
+      "result-type": {
         "type-name": "Bytes",
         "length": 32
       }
     }
   ],
+  "witnesses": [
+  ],
   "contracts": [
   ],
   "ledger": [
     {
-      "name": "initialized",
-      "index": [
-        0,
-        0
-      ],
+      "name": "registry_salt",
+      "index": 0,
+      "exported": true,
+      "storage": "Cell",
+      "type": {
+        "type-name": "Bytes",
+        "length": 32
+      }
+    },
+    {
+      "name": "admin_registered",
+      "index": 1,
       "exported": true,
       "storage": "Cell",
       "type": {
@@ -303,63 +214,63 @@
       }
     },
     {
-      "name": "registry_admin",
-      "index": [
-        0,
-        1
-      ],
+      "name": "initial_admin",
+      "index": 2,
       "exported": true,
       "storage": "Cell",
       "type": {
+        "type-name": "Struct",
+        "name": "ZswapCoinPublicKey",
+        "elements": [
+          {
+            "name": "bytes",
+            "type": {
+              "type-name": "Bytes",
+              "length": 32
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "did_controller",
+      "index": 3,
+      "exported": true,
+      "storage": "Map",
+      "key": {
         "type-name": "Bytes",
         "length": 32
+      },
+      "value": {
+        "type-name": "Struct",
+        "name": "ZswapCoinPublicKey",
+        "elements": [
+          {
+            "name": "bytes",
+            "type": {
+              "type-name": "Bytes",
+              "length": 32
+            }
+          }
+        ]
       }
     },
     {
-      "name": "issuer_service",
-      "index": [
-        1,
-        0
-      ],
+      "name": "role_by_key",
+      "index": 4,
       "exported": true,
-      "storage": "Cell",
-      "type": {
+      "storage": "Map",
+      "key": {
         "type-name": "Bytes",
         "length": 32
+      },
+      "value": {
+        "type-name": "Boolean"
       }
     },
     {
-      "name": "total_requests",
-      "index": [
-        1,
-        1
-      ],
-      "exported": true,
-      "storage": "Cell",
-      "type": {
-        "type-name": "Uint",
-        "maxval": 18446744073709551615
-      }
-    },
-    {
-      "name": "total_active_dids",
-      "index": [
-        1,
-        2
-      ],
-      "exported": true,
-      "storage": "Cell",
-      "type": {
-        "type-name": "Uint",
-        "maxval": 18446744073709551615
-      }
-    },
-    {
-      "name": "status_by_agent",
-      "index": [
-        1,
-        3
-      ],
+      "name": "party_status",
+      "index": 5,
       "exported": true,
       "storage": "Map",
       "key": {
@@ -372,62 +283,8 @@
       }
     },
     {
-      "name": "request_commitments",
-      "index": [
-        1,
-        4
-      ],
-      "exported": true,
-      "storage": "Map",
-      "key": {
-        "type-name": "Bytes",
-        "length": 32
-      },
-      "value": {
-        "type-name": "Bytes",
-        "length": 32
-      }
-    },
-    {
-      "name": "update_request_commitments",
-      "index": [
-        1,
-        5
-      ],
-      "exported": true,
-      "storage": "Map",
-      "key": {
-        "type-name": "Bytes",
-        "length": 32
-      },
-      "value": {
-        "type-name": "Bytes",
-        "length": 32
-      }
-    },
-    {
-      "name": "revocation_request_commitments",
-      "index": [
-        1,
-        6
-      ],
-      "exported": true,
-      "storage": "Map",
-      "key": {
-        "type-name": "Bytes",
-        "length": 32
-      },
-      "value": {
-        "type-name": "Bytes",
-        "length": 32
-      }
-    },
-    {
       "name": "did_commitments",
-      "index": [
-        1,
-        7
-      ],
+      "index": 6,
       "exported": true,
       "storage": "Map",
       "key": {
@@ -441,10 +298,7 @@
     },
     {
       "name": "document_commitments",
-      "index": [
-        1,
-        8
-      ],
+      "index": 7,
       "exported": true,
       "storage": "Map",
       "key": {
@@ -458,10 +312,7 @@
     },
     {
       "name": "proof_commitments",
-      "index": [
-        1,
-        9
-      ],
+      "index": 8,
       "exported": true,
       "storage": "Map",
       "key": {
@@ -474,11 +325,8 @@
       }
     },
     {
-      "name": "organization_labels",
-      "index": [
-        1,
-        10
-      ],
+      "name": "capability_commitments",
+      "index": 9,
       "exported": true,
       "storage": "Map",
       "key": {
@@ -487,32 +335,12 @@
       },
       "value": {
         "type-name": "Bytes",
-        "length": 64
-      }
-    },
-    {
-      "name": "organization_disclosures",
-      "index": [
-        1,
-        11
-      ],
-      "exported": true,
-      "storage": "Map",
-      "key": {
-        "type-name": "Bytes",
         "length": 32
-      },
-      "value": {
-        "type-name": "Uint",
-        "maxval": 255
       }
     },
     {
       "name": "revocation_commitments",
-      "index": [
-        1,
-        12
-      ],
+      "index": 10,
       "exported": true,
       "storage": "Map",
       "key": {
@@ -525,20 +353,18 @@
       }
     },
     {
-      "name": "registry_nonce",
-      "index": [
-        1,
-        13
-      ],
+      "name": "total_active_dids",
+      "index": 11,
       "exported": true,
-      "storage": "Counter"
+      "storage": "Cell",
+      "type": {
+        "type-name": "Uint",
+        "maxval": 18446744073709551615
+      }
     },
     {
-      "name": "issuer_nonce",
-      "index": [
-        1,
-        14
-      ],
+      "name": "registry_nonce",
+      "index": 12,
       "exported": true,
       "storage": "Counter"
     }

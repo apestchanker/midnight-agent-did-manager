@@ -28,12 +28,18 @@ This separation means the issuer is only in the critical path at issuance time, 
 
 The Compact DID registry remains the source of truth for:
 
-- subject binding to a wallet-derived agent key
+- subject binding to a self-registered DID key
+- DID controller binding to the registering wallet's `ZswapCoinPublicKey`
+- role grants and revocations for admin, issuer, user, and agent operations
 - DID issuance status
 - revocation status
 - commitments and counters
 
 The registry is the public identity and status anchor. It is not intended to store the full Agent MultiPass payload. Detailed mandates, limits, capabilities, authorization levels, and profile claims remain off-chain and are disclosed through credentials, presentations, and proof material.
+
+The target registry authority model avoids a separate browser-local owner secret. Self-service subject operations are authorized by `ownPublicKey()` in Compact: the DID key is derived from the registry salt, the caller's `ZswapCoinPublicKey`, and a subject nonce, then the contract stores `did_controller[did_key] = ownPublicKey()`. Later self-service updates recompute the DID key from the current caller and assert the stored controller equals `ownPublicKey()`.
+
+Admin and issuer operations are authorized by roles attached to `ZswapCoinPublicKey` controllers. Initial admin registration is a one-time bootstrap operation, and any active admin can grant or revoke `ADMIN`, `ISSUER`, `USER`, or `AGENT` roles for registered controllers. The platform validates the canonical registry by comparing the first registered admin controller against the expected platform admin wallet public key before allowing user registration against that registry.
 
 ### Off-chain orchestration
 
@@ -54,7 +60,9 @@ The MCP/API service handles:
 
 - Human customer: owns the account, links the wallet, buys DID quota, approves requests
 - Agent: calls the MCP/API with an MCP key to request a DID
-- Issuer admin: validates business rules and executes issuance
+- Registered DID controller: wallet public key bound on-chain to one or more DID keys
+- Admin: a registered controller with the `ADMIN` role; can issue, revoke, grant roles, and revoke roles
+- Issuer: a registered controller with the `ISSUER` role; can perform configured issuance or certification actions
 - Registry verifier: anyone resolving or validating an issued DID
 - Hosted platform / certification operator: possible future managed role that issues, validates, monitors, and revokes Agent MultiPass credentials for teams that do not operate the stack themselves
 
@@ -100,8 +108,9 @@ Current implementation note:
 
 Keep only:
 
-- DID binding
-- subject wallet-derived key
+- DID key
+- controller `ZswapCoinPublicKey`
+- role membership keyed by controller and role
 - DID status
 - commitments
 - optional organization disclosure flag / commitment
@@ -121,20 +130,23 @@ Store in Postgres:
 
 ## Workflow
 
-1. Human creates an account and links a wallet.
-2. Human buys a DID plan or DID bundle.
-3. System issues an MCP key for that customer.
-4. Agent calls `POST /api/agent/did-requests` with the MCP key.
-5. Request appears in the human dashboard as pending approval.
-6. Human approves the request with the linked wallet.
-7. Admin validates:
+1. Platform deploys a registry and immediately completes one-time admin bootstrap.
+2. Platform marks the registry canonical only if the first admin controller matches the expected admin wallet public key.
+3. Human creates an account and links a wallet.
+4. Human self-registers a DID on-chain from the linked wallet. The contract derives `did_key = hash(domain, registry_salt, ownPublicKey().bytes, user_nonce)` and stores `did_controller[did_key] = ownPublicKey()`.
+5. Human buys a DID plan or DID bundle.
+6. System issues scoped MCP/API credentials for that customer.
+7. Agent calls `POST /api/agent/did-requests` with the scoped credential.
+8. Request appears in the human dashboard as pending approval.
+9. Human approves the request with the linked wallet or controller DID.
+10. Admin validates:
    - customer account active
    - DID quota remaining
    - valid MCP key used
    - subject wallet and request consistency
-8. Admin issues the DID on Midnight and records the tx references.
-9. Agent polls for request status or DID resolution.
-10. Future updates and revocations follow the same human-request + admin-approval pattern.
+11. Admin or issuer issues the DID on Midnight and records the tx references.
+12. Agent polls for request status or DID resolution.
+13. Future self-attested updates are requested by the DID controller; issuer-certified updates and revocations follow role-gated admin or issuer rules.
 
 ## Partial Disclosure Model
 

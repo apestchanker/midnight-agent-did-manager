@@ -1,5 +1,5 @@
 import type { RegistryAccess, RegistrySummary } from "../../types/did";
-import { createAgentKey } from "./commitments";
+import { fromHex } from "../../../lib/wallet-bridge";
 
 export function toRecordHex(
   value: unknown,
@@ -19,6 +19,23 @@ export function toRecordHex(
   }
 
   return undefined;
+}
+
+export function toRecordHexZswapKey(
+  value: unknown,
+  toHex: (value: Uint8Array) => string,
+): string | undefined {
+  if (value == null) return undefined;
+  if (value instanceof Uint8Array) return toHex(value);
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "bytes" in value &&
+    (value as { bytes: unknown }).bytes instanceof Uint8Array
+  ) {
+    return toHex((value as { bytes: Uint8Array }).bytes);
+  }
+  return toRecordHex(value, toHex);
 }
 
 function bytesEqualHex(
@@ -87,8 +104,6 @@ export function statusCodeToDidStatus(statusCode: number) {
       return "revoked" as const;
     case 4:
       return "pending_update" as const;
-    case 5:
-      return "pending_revocation" as const;
     default:
       return "pending_issuance" as const;
   }
@@ -121,33 +136,44 @@ export function deriveRegistrySummary(
     contractAddress,
     networkId,
     mode: "onchain",
-    totalRequests: bigintishToNumber(ledgerState.total_requests),
     totalActiveDids: bigintishToNumber(ledgerState.total_active_dids),
-    totalRevokedDids: countStatuses(ledgerState.status_by_agent, 3),
+    totalRevokedDids: countStatuses(ledgerState.party_status, 3),
     lastUpdatedAt: new Date().toISOString(),
-  };
+  } as RegistrySummary;
 }
+
+const ADMIN_ROLE_TAG = new Uint8Array(32);
+new TextEncoder().encode("ADMIN").forEach((byte, index) => {
+  ADMIN_ROLE_TAG[index] = byte;
+});
 
 export async function deriveRegistryAccess(
   ledgerState: Record<string, unknown>,
   contractAddress: string,
-  walletAddress: string,
+  walletPublicKeyHex: string,
   toHex: (value: Uint8Array) => string,
 ): Promise<RegistryAccess> {
-  const walletKeyHex = toHex(await createAgentKey(walletAddress));
-  const registryAdminKeyHex = toRecordHex(ledgerState.registry_admin, toHex);
-  const issuerServiceKeyHex = toRecordHex(ledgerState.issuer_service, toHex);
+  const { persistentHash, CompactTypeVector, Bytes32Descriptor } = await import(
+    "@midnight-ntwrk/compact-runtime"
+  );
+  const roleKeyBytes = persistentHash(
+    new CompactTypeVector(2, Bytes32Descriptor),
+    [fromHex(walletPublicKeyHex), ADMIN_ROLE_TAG],
+  );
+  const adminRoleValue = mapLookupByHexKey(
+    ledgerState.role_by_key,
+    toHex(roleKeyBytes),
+    fromHex,
+    toHex,
+  );
+  const isAdmin = adminRoleValue === true || adminRoleValue === 1n || adminRoleValue === 1;
+  const registryAdminKeyHex = toRecordHexZswapKey(ledgerState.initial_admin, toHex);
 
   return {
     contractAddress,
-    isRegistryAdmin:
-      !!registryAdminKeyHex &&
-      registryAdminKeyHex.toLowerCase() === walletKeyHex.toLowerCase(),
-    isIssuer:
-      !!issuerServiceKeyHex &&
-      issuerServiceKeyHex.toLowerCase() === walletKeyHex.toLowerCase(),
+    isRegistryAdmin: isAdmin,
+    isIssuer: false,
     registryAdminKeyHex,
-    issuerServiceKeyHex,
+    issuerServiceKeyHex: undefined,
   };
 }
-
