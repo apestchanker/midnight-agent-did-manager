@@ -52,36 +52,36 @@ The author and contributors disclaim responsibility and liability, to the maximu
 
 ```mermaid
 flowchart TD
-    HU(["👤 Human User / Agent Operator\n─────────────────────────────\nhuman-managed account\nor agent with wallet-controlled key"])
+    HU(["👤 Human User / Agent Operator\n─────────────────────────────\nhuman-managed account\nor AI agent with wallet-controlled key"])
 
-    FE["🖥️ React Frontend — DApp\n─────────────────────────────\n• connect 1AM wallet\n• self-register DID · issue · update · revoke\n• user · admin · registry views"]
+    FE["🖥️ React Frontend — DApp\n─────────────────────────────\n• connect Midnight wallet\n• self-register · issue · update · revoke DID\n• user · admin · registry views\n• private state in browser localStorage"]
 
-    DS["🗄️ DID Service + Postgres\n─────────────────────────────\n• accounts and MCP keys\n• request persistence\n• approvals and DID records\n• VC issuance and resolution"]
+    WL["🔐 Midnight Wallet\n─────────────────────────────\n• 1AM · Lace (via window.midnight API)\n• ownPublicKey() controller binding\n• transaction signing and submission\n• built-in wallet prover or local proof server"]
 
-    WL["🔐 1AM Wallet · Lace\n─────────────────────────────\n• ownPublicKey() controller binding\n• transaction signing and submission\n• built-in wallet prover (optional)"]
+    DS["🗄️ DID REST API — :8787\n─────────────────────────────\n• customer accounts and MCP keys\n• DID request persistence and approvals\n• VC issuance · resolution · verification\n• registry deployment records\n• Midnight proof material\n• backed by PostgreSQL"]
 
-    PS["⚙️ Local Proof Server\n─────────────────────────────\n• Midnight proof generation\n• runs at 127.0.0.1:6300\n• optional — wallet prover can replace it"]
+    MCP["🤖 MCP Server — :8788\n─────────────────────────────\n• AI agent interface (stdio · HTTP)\n• DID requests and proof flows\n• agent authentication via MCP keys"]
 
-    CC["⛓️ Midnight Compact Contract\n─────────────────────────────\n• DID registry of record\n• commitments and party_status\n• role_by_key · ADMIN · ISSUER\n• controller binding via ownPublicKey()"]
+    CC["⛓️ Midnight Compact Contract\n─────────────────────────────\n• DID registry of record\n• party_status · role_by_key · did_controller\n• ADMIN · ISSUER · USER · AGENT roles\n• controller binding via ownPublicKey()"]
 
-    MN["🌐 Midnight Network + Indexer\n─────────────────────────────\n• Preprod · Preview · Mainnet\n• canonical public registry\n• ledger state and event stream"]
+    IDX["🌐 Midnight Network + Indexer\n─────────────────────────────\n• Preprod · Preview · Mainnet\n• contract state via indexer GraphQL/WS\n• transaction submission via node RPC"]
 
     HU --> FE
-    FE --> DS
+    HU --> MCP
     FE --> WL
-    WL -.->|if not using wallet prover| PS
-    DS --> CC
+    FE --> DS
+    MCP --> DS
     WL --> CC
-    PS --> CC
-    CC --> MN
+    DS --> CC
+    CC --> IDX
 
     style HU fill:#4B5563,stroke:#9CA3AF,color:#F9FAFB
     style FE fill:#1D4ED8,stroke:#93C5FD,color:#F9FAFB
-    style DS fill:#065F46,stroke:#6EE7B7,color:#F9FAFB
     style WL fill:#6B21A8,stroke:#C4B5FD,color:#F9FAFB
-    style PS fill:#3B1F6E,stroke:#C4B5FD,color:#F9FAFB
+    style DS fill:#065F46,stroke:#6EE7B7,color:#F9FAFB
+    style MCP fill:#0F4C5C,stroke:#67E8F9,color:#F9FAFB
     style CC fill:#92400E,stroke:#FCD34D,color:#F9FAFB
-    style MN fill:#1E3A5F,stroke:#7DD3FC,color:#F9FAFB
+    style IDX fill:#1E3A5F,stroke:#7DD3FC,color:#F9FAFB
 ```
 
 ## Reference Architecture
