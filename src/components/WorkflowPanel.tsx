@@ -57,6 +57,7 @@ interface WorkflowPanelProps {
   mode: "user" | "admin";
   onIssueOnChain: (payload: {
     requestId?: string;
+    contractAddress?: string;
     agentId: string;
     subjectWalletAddress?: string;
     didDocument: string;
@@ -101,7 +102,6 @@ export function WorkflowPanel({
   providers,
   connectedApi,
   walletAddress,
-  contractAddress,
   mode,
   onIssueOnChain,
   onApproveOnChain,
@@ -333,6 +333,7 @@ export function WorkflowPanel({
       };
       await onIssueOnChain({
         requestId: request.id,
+        contractAddress: request.contract_address,
         agentId: request.agent_id || "",
         subjectWalletAddress: request.subject_wallet_address,
         didDocument: JSON.stringify(didDocument, null, 2),
@@ -781,13 +782,15 @@ export function WorkflowPanel({
       <div className="space-y-2">
         <div>Subject wallet: {request.subject_wallet_address}</div>
         <div>Agent ID: {request.agent_id || "n/a"}</div>
+        <div>Contract: <span className="font-mono break-all">{request.contract_address}</span></div>
+        <div>Request tx: <span className="font-mono break-all">{request.onchain_request_tx_id || "n/a"}</span></div>
         <div>Requested DID: {request.requested_did}</div>
         <div>Agent Name: {requestAgentName(request) || "n/a"}</div>
         <div>Org disclosure: {request.organization_disclosure}</div>
         <Button
           type="button"
           onClick={() => handleIssueRequest(request)}
-          disabled={busyAction !== "" || !contractAddress.trim()}
+          disabled={busyAction !== "" || !request.contract_address.trim()}
           className="bg-purple-700 hover:bg-purple-600 text-white"
         >
           {busyAction === `issue:${request.id}` ? "Issuing..." : "Issue On-Chain as Admin"}

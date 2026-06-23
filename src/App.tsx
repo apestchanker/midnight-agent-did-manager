@@ -31,6 +31,7 @@ import {
   revokeDidWithSync,
   updateDidWithSync,
 } from "./lib/did/app-api";
+import { deriveSubjectNonceFromSeed } from "./lib/did/private-state";
 import {
   createWalletDidRequest,
   fetchBackendLogs,
@@ -54,6 +55,24 @@ const SECTION_IDS = {
   credentials: "credentials",
   workflow: "workflow",
 } as const;
+
+function registryJoinErrorMessage(error: unknown, contractAddress: string): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const isVerifierKeyMismatch =
+    message.includes("mismatched verifier keys") ||
+    message.includes("undefined or have mismatched verifier keys");
+  const isStateLayoutMismatch = message.includes("invalid alignment supplied");
+
+  if (isVerifierKeyMismatch || isStateLayoutMismatch) {
+    return [
+      `Cannot use contract ${contractAddress} with this app build.`,
+      "The deployed registry was compiled with a different DID contract artifact, so the app cannot join it or build an admin issue transaction.",
+      "Create and approve a new DID request against the latest registry deployment, or use the matching legacy app build for this contract.",
+    ].join(" ");
+  }
+
+  return message;
+}
 
 export default function App() {
   function createSystemAgentId() {
@@ -164,6 +183,7 @@ export default function App() {
   );
   const [registryDids, setRegistryDids] = useState<RegistryDidRow[]>([]);
   const [registryApi, setRegistryApi] = useState<DidRegistryAPI | null>(null);
+  const [registryApiError, setRegistryApiError] = useState("");
   const [registryProofPackageJson, setRegistryProofPackageJson] = useState("");
   const [registryProofVerification, setRegistryProofVerification] =
     useState<MidnightProofVerificationResult | null>(null);
@@ -464,6 +484,7 @@ export default function App() {
       setSelectedAdminRequestId(adminDids[0].id);
       setSelectedAgentId(adminDids[0].agent_id || "");
       setSelectedAgentAddress(adminDids[0].subject_wallet_address);
+      setContractAddress(adminDids[0].contract_address);
     }
   }, [adminDids, selectedAdminRequestId, viewMode]);
 
@@ -503,17 +524,24 @@ export default function App() {
   useEffect(() => {
     if (!providers || !contractAddress.trim()) {
       setRegistryApi(null);
+      setRegistryApiError("");
       return;
     }
 
     let cancelled = false;
     DidRegistryAPI.join(providers, contractAddress)
       .then((api) => {
-        if (!cancelled) setRegistryApi(api);
+        if (!cancelled) {
+          setRegistryApi(api);
+          setRegistryApiError("");
+        }
       })
       .catch((error) => {
         console.error("[App] Failed to join registry API:", error);
-        if (!cancelled) setRegistryApi(null);
+        if (!cancelled) {
+          setRegistryApi(null);
+          setRegistryApiError(registryJoinErrorMessage(error, contractAddress));
+        }
       });
 
     return () => {
@@ -648,11 +676,16 @@ export default function App() {
     return record;
   }
 
-  async function refreshAgentRecord(agentId: string, subjectWalletAddress?: string) {
-    if (!registryApi) throw new Error("Wallet providers not ready");
+  async function refreshAgentRecord(
+    agentId: string,
+    subjectWalletAddress?: string,
+    apiOverride?: DidRegistryAPI,
+  ) {
+    const activeRegistryApi = apiOverride || registryApi;
+    if (!activeRegistryApi) throw new Error("Wallet providers not ready");
     const [record, summary] = await Promise.all([
-      registryApi.fetchDidRecord(agentId, subjectWalletAddress),
-      registryApi.fetchRegistrySummary(),
+      activeRegistryApi.fetchDidRecord(agentId, subjectWalletAddress),
+      activeRegistryApi.fetchRegistrySummary(),
     ]);
     setDidRecord(record);
     setRegistrySummary(summary);
@@ -674,12 +707,18 @@ export default function App() {
 
   async function handleIssueDid(payload: {
     requestId?: string;
+    contractAddress?: string;
     agentId: string;
     subjectWalletAddress?: string;
     didDocument: string;
   }) {
-    if (!registryApi) throw new Error("Wallet providers not ready");
-    if (!contractAddress.trim())
+    if (!providers) throw new Error("Wallet providers not ready");
+    const targetContractAddress = (
+      payload.contractAddress ||
+      selectedAdminDid?.contract_address ||
+      contractAddress
+    ).trim();
+    if (!targetContractAddress)
       throw new Error("Contract address is required");
     const request =
       (payload.requestId
@@ -693,11 +732,32 @@ export default function App() {
       );
     }
 
-    const issuedRecord = await registryApi.issueDid({
-      contractAddress: registryApi.contractAddress,
+    let activeRegistryApi: DidRegistryAPI;
+    try {
+      activeRegistryApi =
+        registryApi?.contractAddress === targetContractAddress
+          ? registryApi
+          : await DidRegistryAPI.join(providers, targetContractAddress);
+      setRegistryApiError("");
+    } catch (error) {
+      const message = registryJoinErrorMessage(error, targetContractAddress);
+      setRegistryApiError(message);
+      throw new Error(message);
+    }
+    if (activeRegistryApi !== registryApi) {
+      setRegistryApi(activeRegistryApi);
+    }
+    if (contractAddress !== targetContractAddress) {
+      setContractAddress(targetContractAddress);
+    }
+
+    const didKeyHex = request?.requested_did?.split(":").pop();
+    const issuedRecord = await activeRegistryApi.issueDid({
+      contractAddress: activeRegistryApi.contractAddress,
       agentId: payload.agentId,
       subjectWalletAddress: payload.subjectWalletAddress,
       didDocument: payload.didDocument,
+      didKeyHex,
     });
 
     setDidRecord(issuedRecord);
@@ -712,7 +772,11 @@ export default function App() {
     }
 
     try {
-      return await refreshAgentRecord(payload.agentId, payload.subjectWalletAddress);
+      return await refreshAgentRecord(
+        payload.agentId,
+        payload.subjectWalletAddress,
+        activeRegistryApi,
+      );
     } catch (error) {
       console.warn("[App] Falling back to locally issued DID state while indexer catches up:", error);
       await refreshRequestCollections();
@@ -734,6 +798,16 @@ export default function App() {
     if (!walletAddress) throw new Error("Connect wallet first");
     if (!contractAddress.trim()) throw new Error("Contract address is required");
 
+    const subjectNonce = await deriveSubjectNonceFromSeed(
+      [
+        "didmn:mcp-request-slot:v1",
+        contractAddress.trim(),
+        payload.requestId,
+        payload.agentId,
+        payload.subjectWalletAddress,
+      ].join(":"),
+    );
+
     const record = await registryApi.requestDid({
       requesterWalletAddress: payload.requesterWalletAddress || walletAddress,
       agentId: payload.agentId,
@@ -742,6 +816,7 @@ export default function App() {
       organization: payload.organization,
       organizationDisclosure: payload.organizationDisclosure,
       didDocument: payload.didDocument,
+      subjectNonce,
     });
 
     setDidRecord(record);
@@ -1361,6 +1436,7 @@ export default function App() {
                                     setSelectedAdminRequestId(request.id);
                                     setSelectedAgentId(request.agent_id || "");
                                     setSelectedAgentAddress(request.subject_wallet_address);
+                                    setContractAddress(request.contract_address);
                                     setActiveMainSection(SECTION_IDS.issuer);
                                   }}
                                   className={`w-full shrink-0 snap-start rounded-lg border px-3 py-2 text-left text-xs transition ${
@@ -1973,6 +2049,11 @@ export default function App() {
                     onRevoke={handleRevokeDid}
                   />
                 )}
+                {registryApiError && (
+                  <div className="rounded-lg border border-amber-800 bg-amber-950/30 p-4 text-sm text-amber-200">
+                    {registryApiError}
+                  </div>
+                )}
               </section>
             )}
 
@@ -2033,6 +2114,11 @@ export default function App() {
                     </p>
                   </div>
                 </div>
+                {registryApiError && (
+                  <div className="rounded-lg border border-amber-800 bg-amber-950/30 p-4 text-sm text-amber-200">
+                    {registryApiError}
+                  </div>
+                )}
                 <WorkflowPanel
                   providers={providers}
                   connectedApi={providers?.connectedAPI ?? api}

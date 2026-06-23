@@ -6,6 +6,12 @@ export async function getDefaultSubjectNonce(): Promise<Uint8Array> {
   return new Uint8Array(hash);
 }
 
+export async function deriveSubjectNonceFromSeed(seed: string): Promise<Uint8Array> {
+  const bytes = new TextEncoder().encode(seed);
+  const hash = await crypto.subtle.digest("SHA-256", bytes);
+  return new Uint8Array(hash);
+}
+
 export function createDidSlotPrivateState(params: {
   networkId: string;
   contractAddress: string;

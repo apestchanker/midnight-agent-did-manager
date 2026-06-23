@@ -97,6 +97,95 @@ function deserializeAppLocalValue<T>(value: unknown): T {
   ) as T;
 }
 
+function submittedTransactionId(value: unknown): string | undefined {
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  for (const key of ["txId", "transactionId", "id", "hash", "txHash"]) {
+    const candidate = (value as Record<string, unknown>)[key];
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return undefined;
+}
+
+function transactionIdentifier(tx: { identifiers?: () => unknown }): string | undefined {
+  if (typeof tx.identifiers !== "function") {
+    return undefined;
+  }
+
+  let identifiers: unknown;
+  try {
+    identifiers = tx.identifiers();
+  } catch {
+    return undefined;
+  }
+  if (Array.isArray(identifiers)) {
+    const [identifier] = identifiers;
+    return typeof identifier === "string" && identifier.trim()
+      ? identifier.trim()
+      : undefined;
+  }
+  if (
+    identifiers &&
+    typeof identifiers === "object" &&
+    Symbol.iterator in identifiers
+  ) {
+    const iterator = (identifiers as Iterable<unknown>)[Symbol.iterator]();
+    const first = iterator.next();
+    return typeof first.value === "string" && first.value.trim()
+      ? first.value.trim()
+      : undefined;
+  }
+
+  return undefined;
+}
+
+async function resolveTransactionIdentifierFromHash(
+  indexerUri: string,
+  txHash: string | undefined,
+): Promise<string | undefined> {
+  if (!txHash || !/^[0-9a-fA-F]{64}$/.test(txHash)) {
+    return undefined;
+  }
+
+  const response = await fetch(indexerUri, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query:
+        "query TX_ID_QUERY($offset: TransactionOffset!) { transactions(offset: $offset) { ... on RegularTransaction { identifiers } } }",
+      variables: { offset: { hash: txHash } },
+    }),
+  });
+  if (!response.ok) {
+    return undefined;
+  }
+
+  const payload = (await response.json()) as {
+    data?: {
+      transactions?: Array<{
+        identifiers?: unknown;
+      }>;
+    };
+  };
+  const identifiers = payload.data?.transactions?.[0]?.identifiers;
+  if (Array.isArray(identifiers)) {
+    const [identifier] = identifiers;
+    return typeof identifier === "string" && identifier.trim()
+      ? identifier.trim()
+      : undefined;
+  }
+
+  return undefined;
+}
+
 function getAppLocalStorage(): Storage {
   if (typeof window === "undefined") {
     throw new Error("App local private storage is only available in the browser.");
@@ -509,10 +598,19 @@ export async function buildProviders(
 
   const midnightProvider: MidnightProvider = {
     async submitTx(tx) {
-      await withWalletRetry(async (connectedApi) => {
-        await connectedApi.submitTransaction(toHex(tx.serialize()));
+      const submittedId = await withWalletRetry(async (connectedApi) => {
+        const submitted = await connectedApi.submitTransaction(toHex(tx.serialize()));
+        return submittedTransactionId(submitted);
       });
-      const [identifier] = tx.identifiers();
+      const identifier =
+        transactionIdentifier(tx) ||
+        (await resolveTransactionIdentifierFromHash(config.indexerUri, submittedId)) ||
+        submittedId;
+      if (!identifier) {
+        throw new Error(
+          "Transaction submitted, but no transaction identifier was returned by the wallet connector.",
+        );
+      }
       return identifier;
     },
   };

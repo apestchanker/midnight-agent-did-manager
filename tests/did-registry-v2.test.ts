@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { toHex } from "../lib/wallet-bridge";
 import {
+  deriveSubjectNonceFromSeed,
   getDefaultSubjectNonce,
   createDidSlotPrivateState,
   isValidDidSlotState,
@@ -32,6 +33,16 @@ describe("REQ-01 default subject nonce", () => {
 
   it("DID_SUBJECT_NONCE_PREFIX is the expected string", () => {
     expect(DID_SUBJECT_NONCE_PREFIX).toBe("didmn:default-slot:v1");
+  });
+
+  it("deriveSubjectNonceFromSeed creates stable distinct nonces", async () => {
+    const first = await deriveSubjectNonceFromSeed("request:one");
+    const firstAgain = await deriveSubjectNonceFromSeed("request:one");
+    const second = await deriveSubjectNonceFromSeed("request:two");
+
+    expect(first).toHaveLength(32);
+    expect(toHex(first)).toBe(toHex(firstAgain));
+    expect(toHex(first)).not.toBe(toHex(second));
   });
 });
 

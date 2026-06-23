@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Platform Demo Teleprompter</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #050505;
+        --fg: #f8fafc;
+        --muted: #94a3b8;
+        --accent: #34d399;
+        --cue: #fbbf24;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      main {
+        width: min(1180px, 100%);
+        margin: 0 auto;
+        padding: 48px 56px 70vh;
+      }
+
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        margin: -48px -56px 40px;
+        padding: 24px 56px 18px;
+        background: linear-gradient(180deg, #050505 72%, rgba(5, 5, 5, 0));
+        border-bottom: 1px solid rgba(148, 163, 184, 0.22);
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+        line-height: 1.15;
+        color: var(--accent);
+      }
+
+      .hint {
+        margin: 0;
+        color: var(--muted);
+        font-size: 18px;
+        line-height: 1.4;
+      }
+
+      section {
+        margin: 0 0 64px;
+      }
+
+      h2 {
+        margin: 0 0 20px;
+        color: var(--accent);
+        font-size: 26px;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+      }
+
+      .cue {
+        margin: 0 0 22px;
+        padding: 14px 18px;
+        border-left: 5px solid var(--cue);
+        background: rgba(251, 191, 36, 0.08);
+        color: var(--cue);
+        font-size: 24px;
+        line-height: 1.35;
+      }
+
+      .voice {
+        margin: 0;
+        font-size: clamp(36px, 4.2vw, 62px);
+        line-height: 1.32;
+        letter-spacing: 0;
+        font-weight: 520;
+      }
+
+      .voice p {
+        margin: 0 0 1.05em;
+      }
+
+      code {
+        color: #bfdbfe;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", monospace;
+        font-size: 0.9em;
+      }
+
+      .pause {
+        display: block;
+        margin: 24px 0;
+        color: var(--muted);
+        font-size: 28px;
+        font-weight: 600;
+      }
+
+      @media (max-width: 720px) {
+        main {
+          padding: 28px 22px 70vh;
+        }
+
+        header {
+          margin: -28px -22px 28px;
+          padding: 18px 22px 14px;
+        }
+
+        .voice {
+          font-size: 34px;
+        }
+
+        .cue {
+          font-size: 20px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Agent Platform Flow Demo</h1>
+        <p class="hint">
+          Large-text teleprompter. Read the white text. Use the yellow blocks as
+          screen cues, but do not read them aloud.
+        </p>
+      </header>
+
+      <section>
+        <h2>0:00-0:20 — Opening</h2>
+        <p class="cue">Screen: Start on the main app dashboard with the sidebar visible.</p>
+        <div class="voice">
+          <p>
+            This is the Midnight Agent DID Manager. What I want to show in this
+            short demo is the full control flow for giving an AI agent a
+            verifiable identity.
+          </p>
+          <p>
+            The core problem is that agents are starting to act across APIs,
+            tools, and external systems, but most integrations still rely on
+            private logs, plain API keys, or internal accounts to explain who
+            the agent is and who approved it.
+          </p>
+          <p>
+            This project takes a different approach. It gives the agent a
+            DID-based identity anchored on Midnight, and then layers credentials
+            and proof material on top of that identity.
+          </p>
+          <p>
+            The result is an Agent MultiPass-style flow: a human can approve an
+            agent, the registry can track whether that DID is active or revoked,
+            and an external verifier can check the status and selected claims
+            without needing to trust the platform's private database.
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <h2>0:20-0:45 — Human Operator And Wallet Control</h2>
+        <p class="cue">Screen: Go to User. Show the connected wallet and the agent area.</p>
+        <div class="voice">
+          <p>
+            The flow starts with the human operator. In this view, the human
+            connects a Midnight wallet and manages one or more agents.
+          </p>
+          <p>
+            This distinction matters because the wallet is not just a login
+            convenience. In the current registry model, the wallet public key is
+            the controller that Midnight sees on-chain.
+          </p>
+          <p>
+            So when this app registers or updates DID state, the authority is
+            not coming from a browser-local secret or from a backend admin flag.
+            It is bound to the wallet identity that signs the transaction.
+          </p>
+          <p>
+            That gives us a cleaner separation: the app coordinates the
+            workflow, but the registry authorization is enforced by the
+            Midnight contract.
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <h2>0:45-1:10 — MCP Key Creation</h2>
+        <p class="cue">Screen: Open Human + MCP. Show customer summary and the MCP key section.</p>
+        <div class="voice">
+          <p>
+            For an agent-driven workflow, the human creates an MCP key. This key
+            is the agent's off-chain credential for calling the local DID
+            service.
+          </p>
+          <p>
+            It is generated by the human account, it is shown in plaintext only
+            once, and the service stores only a hashed version in Postgres.
+          </p>
+          <p>
+            The important point is that this key is not the agent's on-chain
+            identity. It is an interface credential.
+          </p>
+          <p>
+            It lets the agent talk to the platform through MCP or through the
+            REST API, and the key scopes determine which tools the agent is
+            allowed to discover and call.
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <h2>1:10-1:35 — Agent Request</h2>
+        <p class="cue">Screen: Show MCP/API activity, the request form, or the pending request queue.</p>
+        <div class="voice">
+          <p>
+            Now the agent can use that MCP key to submit a DID request. In a
+            real integration, this could come from an MCP client, an agent
+            runtime, or an API caller.
+          </p>
+          <p>
+            The agent is effectively saying: I need a verifiable identity for
+            this registry, with this DID document, this wallet context, and
+            these disclosed claims.
+          </p>
+          <p>
+            But the request does not automatically become an issued DID. It
+            lands in the platform as pending human approval.
+          </p>
+          <p>
+            That is the human-in-the-loop control point: the agent can request
+            identity, but the human holder has to review and approve before
+            anything moves toward issuance.
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <h2>1:35-2:00 — Human Approval And Controller Binding</h2>
+        <p class="cue">Screen: Show the human approval queue. Approve the request or point to an already-approved request.</p>
+        <div class="voice">
+          <p>
+            When the human approves the request, the app registers or references
+            a controller-bound DID slot.
+          </p>
+          <p>
+            On Midnight, the Compact contract derives the DID key from the
+            registry salt, the connected wallet's public key, and a subject
+            nonce.
+          </p>
+          <p>
+            Then it stores the controller binding in the registry. That means
+            the DID is not just a random identifier in a database. It is tied to
+            the wallet that controls it.
+          </p>
+          <p>
+            Future controller actions have to come from the same wallet
+            identity, because the contract checks the caller through
+            <code>ownPublicKey()</code>.
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <h2>2:00-2:25 — Admin Issuance</h2>
+        <p class="cue">Screen: Switch to Admin. Show the admin review queue and the issue action.</p>
+        <div class="voice">
+          <p>
+            After human approval, the request moves to the admin or issuer side.
+            This is where the registry authority reviews the approved request
+            and issues the DID on-chain.
+          </p>
+          <p>
+            In this demo setup, the same wallet may be acting as the initial
+            admin, but the model still separates the holder approval step from
+            the issuer and admin issuance step.
+          </p>
+          <p>
+            The Compact registry is the source of truth for lifecycle state. It
+            records whether the DID is pending, active, revoked, or pending
+            update.
+          </p>
+          <p>
+            It also stores the role bindings that allow admin and issuer
+            operations. The backend persists workflow data and credentials, but
+            the authoritative lifecycle anchor is the Midnight registry.
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <h2>2:25-2:45 — Resolvable DID And Credentials</h2>
+        <p class="cue">Screen: Show Registry, the issued DID details, and credentials/proof material.</p>
+        <div class="voice">
+          <p>
+            Once the admin issuance transaction is confirmed, the DID becomes
+            active and resolvable.
+          </p>
+          <p>
+            The app can now expose a DID document, issuer-signed JWT verifiable
+            credentials, and Midnight-oriented proof material for selected
+            disclosure scopes.
+          </p>
+          <p>
+            The current MVP focuses on the identity and proof foundation:
+            ownership, profile name, organization, active status, and proof
+            material.
+          </p>
+          <p>
+            The broader Agent MultiPass direction extends the same pattern to
+            mandates, limits, capabilities, and authorization levels.
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <h2>2:45-3:10 — Verification And Closing</h2>
+        <p class="cue">Screen: End on proof verification, registry DID details, or the sequence architecture diagram.</p>
+        <div class="voice">
+          <p>
+            The final step is what makes the flow useful outside this app. An
+            agent can present its DID and selected credentials to an external
+            verifier.
+          </p>
+          <p>
+            The verifier does not need to trust a screenshot or a private
+            platform log. It can check the DID status against Midnight, verify
+            the issuer signature on the credentials, and inspect only the
+            disclosed claims needed for that interaction.
+          </p>
+          <p>
+            So the complete platform flow is: the human creates the agent
+            interface, the agent requests identity through MCP or API, the human
+            approves, the admin issues on Midnight, and external systems can
+            verify the agent's identity, status, and selected credentials with a
+            privacy-preserving trust anchor.
+          </p>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

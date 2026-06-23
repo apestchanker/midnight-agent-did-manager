@@ -24,9 +24,8 @@ export async function getContractRuntime(managedContractBasePath: string) {
   if (!runtimePromise) {
     runtimePromise = (async () => {
       const module = await loadManagedContractModule();
-      const contractDefinition = CompactCompiledContract.make(
-        "did-registry",
-        module.Contract as never,
+      const contractDefinition = CompactCompiledContract.withVacantWitnesses(
+        CompactCompiledContract.make("did-registry", module.Contract as never),
       ) as never;
       const compiledContract = CompactCompiledContract.withCompiledFileAssets(
         contractDefinition,
