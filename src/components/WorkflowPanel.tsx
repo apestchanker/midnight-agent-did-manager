@@ -40,6 +40,7 @@ import {
 } from "../lib/proof-request";
 import { createNativeOwnershipProofPackage } from "../lib/native-ownership-proof";
 import { createLocalPreviewProofSubmission } from "../../lib/midnight-proof-envelope.js";
+import { buildDidDocumentForRequest } from "../lib/did/request-document.js";
 
 const MCP_SCOPE_OPTIONS = [
   "did.request",
@@ -180,6 +181,7 @@ export function WorkflowPanel({
         walletAddress,
         displayName: "Wallet Customer",
         didQuotaTotal: 5,
+        networkId: providers.networkId,
       });
       setLatestBootstrap(result);
       setMessage(`Customer bootstrapped. MCP key created: ${result.mcpKey.plainTextKey}`);
@@ -199,6 +201,7 @@ export function WorkflowPanel({
       const key = await createMcpKey({
         customerId: customerContext.customer.id,
         label: mcpLabel,
+        networkId: providers.networkId,
       });
       setMessage(`New MCP key created: ${key.plainTextKey}`);
       await refreshDashboard();
@@ -263,30 +266,7 @@ export function WorkflowPanel({
     setBusyAction(`approve:${request.id}`);
     setMessage("");
     try {
-      const rawDidDocument = request.request_payload?.didDocument;
-      const didDocument =
-        typeof rawDidDocument === "string"
-          ? rawDidDocument
-          : JSON.stringify(
-              {
-                id: request.requested_did || "",
-                controller: request.subject_wallet_address,
-                agentName: requestAgentName(request) || "Agent",
-                organization:
-                  request.organization_disclosure === "disclosed"
-                    ? request.organization_name
-                    : "undisclosed",
-                service: [
-                  {
-                    id: "#agent-endpoint",
-                    type: "AgentEndpoint",
-                    serviceEndpoint: "https://agent.example.com",
-                  },
-                ],
-              },
-              null,
-              2,
-            );
+      const didDocument = JSON.stringify(buildDidDocumentForRequest(request), null, 2);
       const onchainRequest = await onApproveOnChain({
         requestId: request.id,
         agentId: request.agent_id || "",
@@ -315,22 +295,7 @@ export function WorkflowPanel({
     setBusyAction(`issue:${request.id}`);
     setMessage("");
     try {
-      const didDocument = {
-        id: request.requested_did,
-        controller: request.subject_wallet_address,
-        agentName: requestAgentName(request) || "Agent",
-        organization:
-          request.organization_disclosure === "disclosed"
-            ? request.organization_name
-            : "undisclosed",
-        service: [
-          {
-            id: "#agent-endpoint",
-            type: "AgentEndpoint",
-            serviceEndpoint: "https://agent.example.com",
-          },
-        ],
-      };
+      const didDocument = buildDidDocumentForRequest(request);
       await onIssueOnChain({
         requestId: request.id,
         contractAddress: request.contract_address,
@@ -956,6 +921,8 @@ export function WorkflowPanel({
           <div><span className="text-zinc-500">Label:</span> {key.label}</div>
           <div><span className="text-zinc-500">Key ID:</span> <span className="font-mono break-all">{key.key_id}</span></div>
           <div><span className="text-zinc-500">Status:</span> {key.status}</div>
+          <div><span className="text-zinc-500">Network:</span> {key.network_id || "unbound legacy key"}</div>
+          <div><span className="text-zinc-500">Registry:</span> <span className="font-mono break-all">{key.contract_address || "unbound legacy key"}</span></div>
           <div><span className="text-zinc-500">Scopes:</span> {Array.isArray(key.scopes) ? key.scopes.join(", ") : "n/a"}</div>
           <div><span className="text-zinc-500">Created:</span> {new Date(key.created_at).toLocaleString()}</div>
           {key.last_used_at && (

@@ -539,6 +539,9 @@ export class DidRegistryAPI {
     }
     const persistedRequest = persisted?.request || null;
     const persistedRecord = persisted?.record || null;
+    const legacyRequestPayload = persistedRequest?.request_payload as
+      | Record<string, unknown>
+      | undefined;
     const did = didCommitmentHex
       ? await createDidIdentifier(this.providers.networkId, this.contractAddress, didKeyHex)
       : undefined;
@@ -558,8 +561,8 @@ export class DidRegistryAPI {
       didDocument:
         (persistedRecord?.did_document
           ? JSON.stringify(persistedRecord.did_document, null, 2)
-          : typeof persistedRequest?.request_payload?.didDocument === "string"
-            ? persistedRequest.request_payload.didDocument
+          : typeof legacyRequestPayload?.didDocument === "string"
+            ? legacyRequestPayload.didDocument
             : undefined) || cached?.didDocument,
       didKeyHex,
       agentKeyHex: didKeyHex,

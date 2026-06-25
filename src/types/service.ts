@@ -23,6 +23,8 @@ export interface McpKey {
   customer_id: string;
   label: string;
   key_id: string;
+  contract_address?: string | null;
+  network_id?: string | null;
   status: string;
   scopes: string[];
   created_at: string;
@@ -35,6 +37,17 @@ export interface CustomerContext {
   customer: Customer;
   subscriptions: Subscription[];
   mcpKeys: McpKey[];
+}
+
+export interface ProposedDidService {
+  type: string;
+  serviceEndpoint: string;
+}
+
+export interface DidRequestPayload {
+  agentName: string;
+  description?: string;
+  proposedServices?: ProposedDidService[];
 }
 
 export interface DidRequestRow {
@@ -50,7 +63,7 @@ export interface DidRequestRow {
   request_status: string;
   organization_name?: string | null;
   organization_disclosure: "disclosed" | "undisclosed";
-  request_payload: Record<string, unknown>;
+  request_payload: DidRequestPayload;
   selective_disclosure_template: Record<string, unknown>;
   requested_did?: string | null;
   onchain_request_tx_id?: string | null;

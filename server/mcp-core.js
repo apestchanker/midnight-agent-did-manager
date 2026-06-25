@@ -61,25 +61,52 @@ function buildToolDefinitions(auth) {
       inputSchema: {
         type: "object",
         properties: {
-          contractAddress: { type: "string" },
-          networkId: { type: "string" },
           agentId: { type: "string" },
-          requesterWalletAddress: { type: "string" },
-          subjectWalletAddress: { type: "string" },
           organizationName: { type: "string" },
           organizationDisclosure: {
             type: "string",
             enum: ["disclosed", "undisclosed"],
           },
-          requestPayload: { type: "object" },
+          requestPayload: {
+            type: "object",
+            properties: {
+              agentName: {
+                type: "string",
+                minLength: 1,
+                maxLength: 120,
+              },
+              description: {
+                type: "string",
+                maxLength: 1000,
+              },
+              proposedServices: {
+                type: "array",
+                maxItems: 10,
+                items: {
+                  type: "object",
+                  properties: {
+                    type: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 120,
+                    },
+                    serviceEndpoint: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 512,
+                    },
+                  },
+                  required: ["type", "serviceEndpoint"],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ["agentName"],
+            additionalProperties: false,
+          },
           selectiveDisclosureTemplate: { type: "object" },
-          onchainRequestTxId: { type: "string" },
-          onchainRequestTxHash: { type: "string" },
         },
         required: [
-          "contractAddress",
-          "networkId",
-          "requesterWalletAddress",
           "organizationDisclosure",
           "requestPayload",
         ],
@@ -456,8 +483,8 @@ function buildPrompts() {
         "Explain how an agent should authenticate and discover the server's available DID tools.",
       arguments: [
         {
-          name: "agentWalletAddress",
-          description: "Optional wallet address the agent plans to use as requester or subject.",
+          name: "agentLabel",
+          description: "Optional label or name for the agent using the MCP key.",
           required: false,
         },
       ],
@@ -466,18 +493,7 @@ function buildPrompts() {
       name: "request_did_workflow",
       description:
         "Guide an agent through the proper sequence for submitting and checking a DID request.",
-      arguments: [
-        {
-          name: "contractAddress",
-          description: "Registry contract address.",
-          required: true,
-        },
-        {
-          name: "networkId",
-          description: "Midnight network identifier.",
-          required: true,
-        },
-      ],
+      arguments: [],
     },
   ];
 }
@@ -542,72 +558,68 @@ function getPublicGuideResource(uri, auth) {
     return {
       tool: "did_request_create",
       requiredFields: [
-        "contractAddress",
-        "networkId",
-        "requesterWalletAddress",
         "organizationDisclosure",
         "requestPayload",
       ],
       optionalFields: [
-        "subjectWalletAddress",
+        "agentId",
         "organizationName",
         "selectiveDisclosureTemplate",
-        "onchainRequestTxId",
-        "onchainRequestTxHash",
       ],
       fieldNotes: {
-        contractAddress:
-          "Midnight DID registry contract address that will own the DID lifecycle.",
-        networkId: "Midnight network identifier such as preprod.",
+        registryBinding:
+          "Not agent-supplied. The MCP key is bound to the registry contract and network selected by the platform when the key was issued.",
         agentId:
           "Optional internal agent identifier. If omitted, the server will generate one automatically and use it as the DID subject key.",
-        requesterWalletAddress:
-          "Wallet address acting as requester under the authenticated customer account.",
-        subjectWalletAddress:
-          "Wallet address that the DID will bind to. If omitted, the server will use requesterWalletAddress. Multiple agents may share this wallet.",
+        holderWallet:
+          "Not agent-supplied. The server derives the holder wallet from the authenticated MCP key's customer account.",
         organizationDisclosure:
           "Use disclosed if organizationName may be published or included in credentials; otherwise use undisclosed.",
         organizationName:
           "Only include when organizationDisclosure is disclosed.",
         requestPayload:
-          "Arbitrary JSON supplied by the agent. At minimum, include agentName and a didDocument draft.",
+          "Bounded proposal supplied by the agent. It accepts agentName, optional description, and optional proposedServices only. The platform generates authoritative DID fields. Maximum serialized UTF-8 size is 8192 bytes.",
         selectiveDisclosureTemplate:
-          "Optional template describing which claims may be disclosed later.",
+          "Optional boolean-only template with allowNameDisclosure, allowOrganizationDisclosure, and allowOwnershipProofOnly. Maximum serialized size is 1024 bytes.",
       },
       recommendedRequestPayload: {
         agentName: "Agent Smith",
-        didDocument: {
-          id: "",
-          controller: "mn_addr_preprod1...",
-          service: [
-            {
-              id: "#agent-endpoint",
-              type: "AgentEndpoint",
-              serviceEndpoint: "https://agent.example.com",
-            },
-          ],
-        },
+        description: "Customer support agent",
+        proposedServices: [
+          {
+            type: "AgentEndpoint",
+            serviceEndpoint: "https://agent.example.com",
+          },
+        ],
       },
+      requestPayloadLimits: {
+        serializedUtf8Bytes: 8192,
+        agentNameCharacters: 120,
+        descriptionCharacters: 1000,
+        proposedServiceEntries: 10,
+        serviceTypeCharacters: 120,
+        serviceEndpointCharacters: 512,
+        rationale:
+          "The 8192-byte ceiling is an application safety bound, not a W3C DID or Midnight protocol limit and not a fixed attribute allocation.",
+      },
+      platformGeneratedDidFields: [
+        "id",
+        "controller",
+        "organization",
+        "service[].id",
+      ],
       example: {
-        contractAddress: "YOUR_CONTRACT_ADDRESS",
-        networkId: "preprod",
-        requesterWalletAddress: "mn_addr_preprod1requester...",
-        subjectWalletAddress: "mn_addr_preprod1subject...",
         organizationName: "Matrix Labs",
         organizationDisclosure: "disclosed",
         requestPayload: {
           agentName: "Agent Smith",
-          didDocument: {
-            id: "",
-            controller: "mn_addr_preprod1subject...",
-            service: [
-              {
-                id: "#agent-endpoint",
-                type: "AgentEndpoint",
-                serviceEndpoint: "https://agent.example.com",
-              },
-            ],
-          },
+          description: "Customer support agent",
+          proposedServices: [
+            {
+              type: "AgentEndpoint",
+              serviceEndpoint: "https://agent.example.com",
+            },
+          ],
         },
         selectiveDisclosureTemplate: {
           allowNameDisclosure: true,
@@ -626,7 +638,7 @@ function getPublicGuideResource(uri, auth) {
     return {
       didRequestWorkflow: [
         "Authenticate with a human-issued MCP key.",
-        "Call did_request_create with registry and requester information.",
+        "Call did_request_create with DID request metadata. Do not supply registry, network, or wallet routing fields.",
         "Wait for the human approval and admin issuance workflow.",
         "Poll did_request_get or did_request_list until request_status becomes issued.",
         "Resolve the DID with did_resolve and validate it with did_validate.",
@@ -909,9 +921,9 @@ export function createMcpServer(deps) {
 
   function getPrompt(name, args) {
     if (name === "agent_onboarding") {
-      const agentWalletAddress = args?.agentWalletAddress
-        ? `Agent wallet hint: ${args.agentWalletAddress}.`
-        : "No agent wallet hint was supplied.";
+      const agentLabel = args?.agentLabel
+        ? `Agent label: ${args.agentLabel}.`
+        : "No agent label was supplied.";
       return {
         description: "How to onboard an agent against this DID MCP server.",
         messages: [
@@ -929,7 +941,7 @@ export function createMcpServer(deps) {
                 `6. If did_request_create fails due to quota, the authenticated customer needs an active subscription with remaining DID quota.\n` +
                 `7. After issuance, use did_resolve and did_validate.\n` +
                 `8. If your key includes did.credentials, read didmn://guide/midnight-proofs and call credential_midnight_proof_get for holder-side Midnight proof inputs.\n` +
-                `${agentWalletAddress}`,
+                `${agentLabel}`,
             },
           },
         ],
@@ -945,9 +957,11 @@ export function createMcpServer(deps) {
             content: {
               type: "text",
               text:
-                `Prepare a DID request for contract ${args?.contractAddress} on ${args?.networkId}.\n` +
-                `Include requesterWalletAddress, optional subjectWalletAddress, organizationDisclosure, and a requestPayload object.\n` +
-                `The requestPayload should at minimum include agentName and a didDocument draft.\n` +
+                `Prepare a DID request using the registry and network bound to the authenticated MCP key.\n` +
+                `Include organizationDisclosure and a requestPayload object. Do not supply registry, network, or wallet routing fields; the server derives those from the authenticated MCP key.\n` +
+                `The requestPayload must include agentName and may include description and proposedServices. Do not send id, controller, service IDs, a didDocument, or arbitrary metadata.\n` +
+                `Each proposedServices entry contains only type and serviceEndpoint; the platform generates the final DID document and service fragment IDs.\n` +
+                `selectiveDisclosureTemplate is optional and only supports boolean allowNameDisclosure, allowOrganizationDisclosure, and allowOwnershipProofOnly fields.\n` +
                 `The server will generate the unique agentId automatically if you do not supply one.\n` +
                 `Read didmn://guide/request-payload for the exact payload shape and example.\n` +
                 `Then call did_request_create. Poll did_request_get or did_request_list for approval and issuance progress.\n` +

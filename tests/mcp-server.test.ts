@@ -187,12 +187,16 @@ describe("MCP server core", () => {
         params: {
           name: "did_request_create",
           arguments: {
-            contractAddress: "contract-1",
-            networkId: "preprod",
-            requesterWalletAddress: "wallet-1",
             organizationDisclosure: "undisclosed",
             requestPayload: {
               agentName: "Agent One",
+              description: "Customer support agent",
+              proposedServices: [
+                {
+                  type: "AgentEndpoint",
+                  serviceEndpoint: "https://agent.example.com",
+                },
+              ],
             },
           },
         },
@@ -208,7 +212,15 @@ describe("MCP server core", () => {
     expect(deps.createDidRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         mcpKey: "mcp_valid",
-        contractAddress: "contract-1",
+        organizationDisclosure: "undisclosed",
+      }),
+    );
+    expect(deps.createDidRequest).toHaveBeenCalledWith(
+      expect.not.objectContaining({
+        contractAddress: expect.anything(),
+        networkId: expect.anything(),
+        requesterWalletAddress: expect.anything(),
+        subjectWalletAddress: expect.anything(),
       }),
     );
     expect(response?.result.structuredContent.id).toBe("request-1");
@@ -245,7 +257,27 @@ describe("MCP server core", () => {
 
     const guide = JSON.parse(readResponse?.result.contents[0].text || "{}");
     expect(guide.requiredFields).not.toContain("agentId");
+    expect(guide.requiredFields).not.toContain("contractAddress");
+    expect(guide.requiredFields).not.toContain("networkId");
+    expect(guide.requiredFields).not.toContain("requesterWalletAddress");
+    expect(guide.optionalFields).not.toContain("subjectWalletAddress");
     expect(guide.fieldNotes.agentId).toContain("server will generate");
+    expect(guide.fieldNotes.holderWallet).toContain("server derives");
+    expect(guide.fieldNotes.registryBinding).toContain("MCP key is bound");
+    expect(guide.recommendedRequestPayload).toEqual({
+      agentName: "Agent Smith",
+      description: "Customer support agent",
+      proposedServices: [
+        {
+          type: "AgentEndpoint",
+          serviceEndpoint: "https://agent.example.com",
+        },
+      ],
+    });
+    expect(guide.platformGeneratedDidFields).toContain("controller");
+    expect(guide.requestPayloadLimits.rationale).toContain(
+      "not a W3C DID or Midnight protocol limit",
+    );
   });
 
   it("includes agentId guidance in the request workflow prompt", async () => {
@@ -257,16 +289,17 @@ describe("MCP server core", () => {
         method: "prompts/get",
         params: {
           name: "request_did_workflow",
-          arguments: {
-            contractAddress: "contract-1",
-            networkId: "preprod",
-          },
+          arguments: {},
         },
       },
       { transport: "http", headers: {} },
     );
 
     expect(response?.result.messages[0].content.text).toContain("The server will generate the unique agentId automatically");
+    expect(response?.result.messages[0].content.text).toContain("Do not supply registry, network, or wallet routing fields");
+    expect(response?.result.messages[0].content.text).toContain(
+      "Do not send id, controller, service IDs, a didDocument, or arbitrary metadata",
+    );
     expect(response?.result.messages[0].content.text).toContain(
       "didmn://guide/request-payload",
     );

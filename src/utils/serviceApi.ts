@@ -3,6 +3,7 @@ import type {
   BootstrapResponse,
   CredentialBundle,
   CustomerContext,
+  DidRequestPayload,
   DidRequestRow,
   LogEntry,
   McpKey,
@@ -101,6 +102,7 @@ export function bootstrapCustomer(payload: {
   email?: string;
   displayName?: string;
   didQuotaTotal?: number;
+  networkId?: string;
 }): Promise<BootstrapResponse> {
   return requestJson("/api/demo/bootstrap", {
     method: "POST",
@@ -114,6 +116,7 @@ export function bootstrapCustomer(payload: {
 export function createMcpKey(payload: {
   customerId: string;
   label: string;
+  networkId?: string;
 }): Promise<McpKey> {
   return requestJson(`/api/customers/${payload.customerId}/mcp-keys`, {
     method: "POST",
@@ -122,6 +125,7 @@ export function createMcpKey(payload: {
     },
     body: JSON.stringify({
       label: payload.label,
+      networkId: payload.networkId,
     }),
   });
 }
@@ -177,14 +181,10 @@ export function createSubscription(payload: {
 
 export function createAgentDidRequest(payload: {
   mcpKey: string;
-  contractAddress: string;
-  networkId: string;
   agentId?: string;
-  requesterWalletAddress: string;
-  subjectWalletAddress: string;
   organizationName?: string;
   organizationDisclosure: "disclosed" | "undisclosed";
-  requestPayload: Record<string, unknown>;
+  requestPayload: DidRequestPayload;
 }): Promise<DidRequestRow> {
   return requestJson("/api/agent/did-requests", {
     method: "POST",

@@ -707,28 +707,22 @@ curl -X POST http://localhost:8787/api/agent/did-requests \
   -H "Content-Type: application/json" \
   -H "X-MCP-Key: mcp_your_plaintext_key" \
   -d '{
-    "contractAddress": "YOUR_CONTRACT_ADDRESS",
-    "networkId": "preprod",
-    "requesterWalletAddress": "mn_addr_preprod1...",
-    "subjectWalletAddress": "mn_addr_preprod1...",
     "organizationName": "Matrix Labs",
     "organizationDisclosure": "disclosed",
     "requestPayload": {
       "agentName": "Agent Smith",
-      "didDocument": {
-        "id": "",
-        "controller": "mn_addr_preprod1...",
-        "service": [
-          {
-            "id": "#agent-endpoint",
-            "type": "AgentEndpoint",
-            "serviceEndpoint": "https://agent.example.com"
-          }
-        ]
-      }
+      "description": "Customer support agent",
+      "proposedServices": [
+        {
+          "type": "AgentEndpoint",
+          "serviceEndpoint": "https://agent.example.com"
+        }
+      ]
     }
   }'
 ```
+
+The MCP key supplies the customer, registry, network, and approved holder-wallet routing. The agent payload is a bounded proposal and cannot set authoritative DID fields. See [MCP DID request format](docs/mcp-did-request-format.md) or read `didmn://guide/request-payload` from the MCP server.
 
 ### End-to-end local usage
 

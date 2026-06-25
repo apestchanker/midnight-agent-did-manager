@@ -37,6 +37,8 @@ create table if not exists mcp_keys (
   label text not null,
   key_id text not null unique,
   key_hash text not null unique,
+  contract_address text,
+  network_id text,
   status text not null default 'active' check (status in ('active', 'revoked', 'expired')),
   scopes jsonb not null default '[]'::jsonb,
   created_at timestamptz not null default now(),
@@ -116,6 +118,8 @@ create table if not exists did_records (
 
 alter table if exists did_requests add column if not exists agent_id text;
 alter table if exists did_records add column if not exists agent_id text;
+alter table if exists mcp_keys add column if not exists contract_address text;
+alter table if exists mcp_keys add column if not exists network_id text;
 update did_requests
 set agent_id = lower(coalesce(agent_id, subject_wallet_address))
 where agent_id is null;

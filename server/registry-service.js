@@ -1,5 +1,6 @@
 import { query, withTransaction } from "./db.js";
 import { issueAtomicCredentials } from "./vc-service.js";
+import { buildDidDocumentForRequest } from "../src/lib/did/request-document.js";
 import {
   buildDid,
   createMcpKey,
@@ -23,6 +24,19 @@ const ALLOWED_MCP_SCOPES = new Set([
   "did.credentials",
 ]);
 
+const MAX_REQUEST_PAYLOAD_BYTES = 8192;
+const MAX_AGENT_NAME_LENGTH = 120;
+const MAX_REQUEST_DESCRIPTION_LENGTH = 1000;
+const MAX_PROPOSED_SERVICES = 10;
+const MAX_SERVICE_TYPE_LENGTH = 120;
+const MAX_SERVICE_ENDPOINT_LENGTH = 512;
+const MAX_SELECTIVE_DISCLOSURE_TEMPLATE_BYTES = 1024;
+const ALLOWED_SELECTIVE_DISCLOSURE_TEMPLATE_FIELDS = new Set([
+  "allowNameDisclosure",
+  "allowOrganizationDisclosure",
+  "allowOwnershipProofOnly",
+]);
+
 function normalizeMcpScopes(scopes) {
   const normalized = Array.isArray(scopes)
     ? scopes
@@ -30,6 +44,126 @@ function normalizeMcpScopes(scopes) {
         .filter((scope) => ALLOWED_MCP_SCOPES.has(scope))
     : [];
   return Array.from(new Set(normalized));
+}
+
+function assertPlainObject(value, fieldName) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${fieldName} must be a JSON object.`);
+  }
+}
+
+function jsonByteLength(value) {
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
+
+function assertMaxJsonBytes(value, fieldName, maxBytes) {
+  const bytes = jsonByteLength(value);
+  if (bytes > maxBytes) {
+    throw new Error(`${fieldName} must be ${maxBytes} bytes or smaller.`);
+  }
+}
+
+function normalizeProposedServices(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value) || value.length > MAX_PROPOSED_SERVICES) {
+    throw new Error(
+      `requestPayload.proposedServices must be an array with at most ${MAX_PROPOSED_SERVICES} entries.`,
+    );
+  }
+
+  return value.map((service, index) => {
+    const fieldName = `requestPayload.proposedServices[${index}]`;
+    assertPlainObject(service, fieldName);
+    const unsupportedFields = Object.keys(service).filter(
+      (key) => key !== "type" && key !== "serviceEndpoint",
+    );
+    if (unsupportedFields.length) {
+      throw new Error(`${fieldName}.${unsupportedFields[0]} is not supported.`);
+    }
+    if (typeof service.type !== "string" || service.type.trim().length === 0) {
+      throw new Error(`${fieldName}.type is required.`);
+    }
+    if (service.type.length > MAX_SERVICE_TYPE_LENGTH) {
+      throw new Error(
+        `${fieldName}.type must be ${MAX_SERVICE_TYPE_LENGTH} characters or fewer.`,
+      );
+    }
+    if (
+      typeof service.serviceEndpoint !== "string" ||
+      service.serviceEndpoint.trim().length === 0
+    ) {
+      throw new Error(`${fieldName}.serviceEndpoint is required.`);
+    }
+    if (service.serviceEndpoint.length > MAX_SERVICE_ENDPOINT_LENGTH) {
+      throw new Error(
+        `${fieldName}.serviceEndpoint must be ${MAX_SERVICE_ENDPOINT_LENGTH} characters or fewer.`,
+      );
+    }
+    return {
+      type: service.type.trim(),
+      serviceEndpoint: service.serviceEndpoint.trim(),
+    };
+  });
+}
+
+function normalizeRequestPayload(value) {
+  const payload = value || {};
+  assertPlainObject(payload, "requestPayload");
+  assertMaxJsonBytes(payload, "requestPayload", MAX_REQUEST_PAYLOAD_BYTES);
+  const unsupportedFields = Object.keys(payload).filter(
+    (key) => !["agentName", "description", "proposedServices"].includes(key),
+  );
+  if (unsupportedFields.length) {
+    throw new Error(`requestPayload.${unsupportedFields[0]} is not supported.`);
+  }
+
+  if (typeof payload.agentName !== "string" || payload.agentName.trim().length === 0) {
+    throw new Error("requestPayload.agentName is required.");
+  }
+  if (payload.agentName.length > MAX_AGENT_NAME_LENGTH) {
+    throw new Error(
+      `requestPayload.agentName must be ${MAX_AGENT_NAME_LENGTH} characters or fewer.`,
+    );
+  }
+  if (
+    payload.description != null &&
+    (typeof payload.description !== "string" ||
+      payload.description.length > MAX_REQUEST_DESCRIPTION_LENGTH)
+  ) {
+    throw new Error(
+      `requestPayload.description must be a string of ${MAX_REQUEST_DESCRIPTION_LENGTH} characters or fewer.`,
+    );
+  }
+  return {
+    agentName: payload.agentName.trim(),
+    ...(typeof payload.description === "string" && payload.description.trim()
+      ? { description: payload.description.trim() }
+      : {}),
+    ...(payload.proposedServices != null
+      ? { proposedServices: normalizeProposedServices(payload.proposedServices) }
+      : {}),
+  };
+}
+
+function normalizeSelectiveDisclosureTemplate(value) {
+  if (value == null) return undefined;
+  assertPlainObject(value, "selectiveDisclosureTemplate");
+  assertMaxJsonBytes(
+    value,
+    "selectiveDisclosureTemplate",
+    MAX_SELECTIVE_DISCLOSURE_TEMPLATE_BYTES,
+  );
+
+  for (const [key, fieldValue] of Object.entries(value)) {
+    if (!ALLOWED_SELECTIVE_DISCLOSURE_TEMPLATE_FIELDS.has(key)) {
+      throw new Error(`selectiveDisclosureTemplate.${key} is not supported.`);
+    }
+    if (typeof fieldValue !== "boolean") {
+      throw new Error(`selectiveDisclosureTemplate.${key} must be a boolean.`);
+    }
+  }
+
+  return value;
 }
 
 async function audit(client, input) {
@@ -81,7 +215,7 @@ export async function getCustomerByWallet(walletAddress) {
       [customer.id],
     ),
     query(
-      `select id, customer_id, label, key_id, status, scopes, created_at, last_used_at, expires_at
+      `select id, customer_id, label, key_id, contract_address, network_id, status, scopes, created_at, last_used_at, expires_at
        from mcp_keys
        where customer_id = $1
        order by created_at desc`,
@@ -116,7 +250,7 @@ export async function getCustomerContextById(customerId) {
       [customer.id],
     ),
     query(
-      `select id, customer_id, label, key_id, status, scopes, created_at, last_used_at, expires_at
+      `select id, customer_id, label, key_id, contract_address, network_id, status, scopes, created_at, last_used_at, expires_at
        from mcp_keys
        where customer_id = $1
        order by created_at desc`,
@@ -231,6 +365,33 @@ export async function getLatestAdminRegistryDeployment(input = {}) {
   return rows[0] || null;
 }
 
+async function getCurrentRegistryDeploymentForMcpKey(client, input = {}) {
+  const where = [];
+  const params = [];
+
+  if (input.networkId) {
+    params.push(input.networkId);
+    where.push(`network_id = $${params.length}`);
+  }
+
+  const deployment = (
+    await client.query(
+      `select *
+       from admin_registry_deployments
+       ${where.length ? `where ${where.join(" and ")}` : ""}
+       order by updated_at desc, created_at desc
+       limit 1`,
+      params,
+    )
+  ).rows[0];
+
+  if (!deployment?.contract_address || !deployment?.network_id) {
+    throw new Error("Create or select a deployed registry before issuing an MCP key.");
+  }
+
+  return deployment;
+}
+
 async function ensureCustomerForWallet(client, walletAddress) {
   const normalizedWallet = normalizeWallet(walletAddress);
   let customer = (
@@ -263,6 +424,28 @@ async function ensureCustomerForWallet(client, walletAddress) {
   }
 
   return customer;
+}
+
+async function getPrimaryWalletForCustomer(client, customerId) {
+  const row = (
+    await client.query(
+      `select wallet_address
+       from customer_wallets
+       where customer_id = $1
+         and approved_at is not null
+       order by is_primary desc, approved_at desc, created_at desc
+       limit 1`,
+      [customerId],
+    )
+  ).rows[0];
+
+  if (!row?.wallet_address) {
+    throw new Error(
+      "The authenticated MCP key is not linked to an approved customer wallet.",
+    );
+  }
+
+  return normalizeWallet(row.wallet_address);
 }
 
 export async function linkWallet(input) {
@@ -314,15 +497,30 @@ async function createCustomerMcpKeyInTransaction(client, input) {
   const material = createMcpKey();
   const scopes = normalizeMcpScopes(input.scopes);
   const effectiveScopes = scopes.length ? scopes : DEFAULT_MCP_SCOPES;
+  const deployment = await getCurrentRegistryDeploymentForMcpKey(client, {
+    networkId: input.networkId,
+  });
   const result = await client.query(
-    `insert into mcp_keys (customer_id, label, key_id, key_hash, status, scopes, expires_at)
-     values ($1, $2, $3, $4, 'active', $5::jsonb, $6)
-     returning id, customer_id, label, key_id, status, scopes, created_at, expires_at`,
+    `insert into mcp_keys (
+       customer_id,
+       label,
+       key_id,
+       key_hash,
+       contract_address,
+       network_id,
+       status,
+       scopes,
+       expires_at
+     )
+     values ($1, $2, $3, $4, $5, $6, 'active', $7::jsonb, $8)
+     returning id, customer_id, label, key_id, contract_address, network_id, status, scopes, created_at, expires_at`,
     [
       input.customerId,
       input.label,
       material.keyId,
       material.keyHash,
+      deployment.contract_address,
+      deployment.network_id,
       JSON.stringify(effectiveScopes),
       input.expiresAt || null,
     ],
@@ -333,7 +531,12 @@ async function createCustomerMcpKeyInTransaction(client, input) {
     eventType: "mcp_key_created",
     entityType: "mcp_key",
     entityId: result.rows[0].id,
-    eventData: { label: input.label, scopes: effectiveScopes },
+    eventData: {
+      label: input.label,
+      scopes: effectiveScopes,
+      contractAddress: deployment.contract_address,
+      networkId: deployment.network_id,
+    },
   });
   return {
     ...result.rows[0],
@@ -352,7 +555,7 @@ export async function updateCustomerMcpKeyScopes(input) {
        set scopes = $3::jsonb
        where id = $1
          and customer_id = $2
-       returning id, customer_id, label, key_id, status, scopes, created_at, last_used_at, expires_at`,
+       returning id, customer_id, label, key_id, contract_address, network_id, status, scopes, created_at, last_used_at, expires_at`,
       [input.keyId, input.customerId, JSON.stringify(scopes)],
     );
     const row = result.rows[0];
@@ -379,7 +582,7 @@ export async function revokeCustomerMcpKey(input) {
        where id = $1
          and customer_id = $2
          and status = 'active'
-       returning id, customer_id, label, key_id, status, scopes, created_at, last_used_at, expires_at`,
+       returning id, customer_id, label, key_id, contract_address, network_id, status, scopes, created_at, last_used_at, expires_at`,
       [input.keyId, input.customerId],
     );
     const row = result.rows[0];
@@ -458,6 +661,7 @@ export async function bootstrapDemoCustomer(input) {
       customerId: customer.id,
       label: input.mcpLabel || "demo-agent-key",
       scopes: ["did.request", "did.status", "did.resolve", "did.validate"],
+      networkId: input.networkId,
     });
 
     await audit(client, {
@@ -780,30 +984,40 @@ export async function createDidRequest(input) {
     if (!mcp) {
       throw new Error("Invalid or expired MCP key.");
     }
+    if (!mcp.contract_address || !mcp.network_id) {
+      throw new Error("MCP key is not bound to a registry contract. Reissue the MCP key from the platform.");
+    }
 
     const subscription = await getActiveSubscriptionForCustomer(client, mcp.customer_id);
     if (!subscription) {
       throw new Error("No active DID subscription with remaining quota for this customer.");
     }
+    const holderWallet = await getPrimaryWalletForCustomer(client, mcp.customer_id);
+    const requestPayload = normalizeRequestPayload(input.requestPayload);
+    const selectiveDisclosureTemplate = normalizeSelectiveDisclosureTemplate(
+      input.selectiveDisclosureTemplate,
+    );
 
     const { row, subjectWallet, requestedDid } =
       await createOrUpdateDidRequestRecord(client, {
         customerId: mcp.customer_id,
         subscriptionId: subscription.id,
         mcpKeyId: mcp.id,
-        contractAddress: input.contractAddress,
-        networkId: input.networkId,
-        requesterWalletAddress: input.requesterWalletAddress,
+        contractAddress: mcp.contract_address,
+        networkId: mcp.network_id,
+        requesterWalletAddress: holderWallet,
         agentId: input.agentId,
-        subjectWalletAddress: input.subjectWalletAddress,
+        // Today the subject wallet is the MCP owner's approved wallet. Later the
+        // human approval step can expose this as an editable owned-address choice.
+        subjectWalletAddress: holderWallet,
         requestStatus: "pending_human_approval",
         organizationName: input.organizationName,
         organizationDisclosure: input.organizationDisclosure,
-        requestPayload: input.requestPayload,
-        selectiveDisclosureTemplate: input.selectiveDisclosureTemplate,
-        requestedDid: input.onchainRequestTxId ? undefined : undefined,
-        onchainRequestTxId: input.onchainRequestTxId,
-        onchainRequestTxHash: input.onchainRequestTxHash,
+        requestPayload,
+        selectiveDisclosureTemplate,
+        requestedDid: null,
+        onchainRequestTxId: null,
+        onchainRequestTxHash: null,
         updateExistingPending: false,
       });
 
@@ -1008,7 +1222,18 @@ export async function issueApprovedDidRequest(input) {
         contractAddress: request.contract_address,
         agentId,
       });
-    const didDocument = input.didDocument || {};
+    const didDocument = buildDidDocumentForRequest({
+      ...request,
+      requested_did: requestedDid,
+    });
+    if (
+      input.didDocument &&
+      JSON.stringify(input.didDocument) !== JSON.stringify(didDocument)
+    ) {
+      throw new Error(
+        "Issued DID document does not match the platform-generated document for this request.",
+      );
+    }
     const didCommitment = sha256Hex(JSON.stringify({ did: requestedDid, subjectWallet }));
     const documentCommitment = sha256Hex(JSON.stringify(didDocument));
     const proofCommitment = sha256Hex(

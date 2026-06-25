@@ -276,6 +276,7 @@ const server = createServer(async (req, res) => {
           label: body.label || "default-agent-key",
           scopes: body.scopes,
           expiresAt: body.expiresAt,
+          networkId: body.networkId,
         }),
       );
       return;
