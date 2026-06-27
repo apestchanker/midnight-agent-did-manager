@@ -16,6 +16,14 @@ data/
 .env.*
 !env.example
 
+# Compact build outputs are generated per local instance.
+# Run `npm run compile-all` after cloning or before deploying.
+contracts/managed/
+contracts/compiled/
+public/contracts/managed/*
+!public/contracts/managed/.gitkeep
+src/generated/
+
 # Local-only working files
 sdd/
 local/

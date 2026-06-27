@@ -574,12 +574,15 @@ npm run compile-ownership-proof  # only native_ownership_proof.compact
 
 You need the official Midnight Compact compiler installed as `compact` or `compactc`.
 
+Generated outputs are local build products and are intentionally ignored by Git. Each cloned or deployed instance must run the compile step and use its own generated artifacts.
+
 Outputs:
 
 - `contracts/managed/token-gating/` — token gating managed artifacts (keys, zkir, contract)
 - `public/contracts/managed/token-gating/` — browser-served token gating assets
 - `src/generated/tokenGatingContract.runtime.js` — token gating runtime JS
 - `contracts/managed/did-registry/` and `public/contracts/managed/did-registry/` — DID registry artifacts (unchanged location)
+- `contracts/compiled/did_registry.compiled.json` — local metadata snapshot
 
 Deploying from the admin panel (3-step flow):
 
@@ -901,19 +904,18 @@ This repository intentionally excludes local-only working notes, generated local
 
 ## Contract Directory Notes
 
-The `contracts/` tree intentionally contains both source and generated artifacts used by the DApp:
+The repository tracks Compact source files, not generated Compact build outputs. Generated managed runtimes, proving/verifier keys, ZKIR assets, and metadata snapshots are local products of `npm run compile-all` and are ignored by Git.
 
 - [contracts/token_gating.compact](/Users/alex/Documents/Developer/didMN/contracts/token_gating.compact)
   Compact source for the shielded token gating contract (new in v0.8)
 - [contracts/did_registry.compact](/Users/alex/Documents/Developer/didMN/contracts/did_registry.compact)
   Compact source for the DID registry
-- [contracts/managed/token-gating](/Users/alex/Documents/Developer/didMN/contracts/managed/token-gating)
-  generated managed runtime, proving/verifier keys, and ZKIR assets for the token gating contract
-- [contracts/managed/did-registry](/Users/alex/Documents/Developer/didMN/contracts/managed/did-registry)
-  generated managed runtime, proving/verifier keys, and ZKIR assets for the DID registry
-- [contracts/compiled/did_registry.compiled.json](/Users/alex/Documents/Developer/didMN/contracts/compiled/did_registry.compiled.json)
-  generated metadata snapshot of the current DID registry contract
 
-Inside `contracts/managed/did-registry`, both plain circuit filenames and `did-registry#...` aliases are kept intentionally. The aliased files are needed for the current Vite/browser asset lookup flow.
+Local compile outputs:
 
-There should be no personal environment data, wallet secrets, or machine-specific local notes under `contracts/`. The files present there are generated build artifacts required by this repository, not temporary user-only state.
+- `contracts/managed/**`
+- `public/contracts/managed/**`
+- `src/generated/**`
+- `contracts/compiled/**`
+
+Those paths should not be committed. If they are missing, run `npm run compile-all`.

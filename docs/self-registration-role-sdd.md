@@ -11,7 +11,7 @@ Feasibility was verified with the local Compact compiler using probe contracts u
 - `.analysis/controller_binding_probe.compact`
 - `.analysis/self_registration_probe.compact`
 
-The original probes compiled successfully and generated prover/verifier artifacts under `/tmp`. The production implementation now lives in `contracts/did_registry.compact` and `contracts/token_gating.compact`, with generated browser assets under `public/contracts/managed/`.
+The original probes compiled successfully and generated prover/verifier artifacts under `/tmp`. The production implementation now lives in `contracts/did_registry.compact` and `contracts/token_gating.compact`. Runtime and browser assets are generated locally with `npm run compile-all`.
 
 ## Problem
 
@@ -484,7 +484,7 @@ The DApp must:
 
 ## Implementation Status
 
-The controller-bound registry and token-gating contracts are implemented in `contracts/did_registry.compact` and `contracts/token_gating.compact`. Generated runtime and ZK assets are committed under `src/generated/`, `contracts/managed/`, and `public/contracts/managed/`.
+The controller-bound registry and token-gating contracts are implemented in `contracts/did_registry.compact` and `contracts/token_gating.compact`. Generated runtime and ZK assets are local build outputs under `src/generated/`, `contracts/managed/`, `public/contracts/managed/`, and `contracts/compiled/`; they are intentionally ignored by Git.
 
 The old `issuerSecret()` authority path is legacy context only and is not the production authorization model for the current registry.
 

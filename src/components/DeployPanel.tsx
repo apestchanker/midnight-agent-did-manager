@@ -68,10 +68,10 @@ export function DeployPanel({ providers, onDeployed }: DeployPanelProps) {
       <CardContent className="space-y-4">
         <div className="rounded-md bg-blue-950/30 border border-blue-800 p-3">
           <p className="text-xs text-blue-300">
-            Requires compiled Compact artifacts under{" "}
-            <code>public/contracts/managed/did-registry</code> and{" "}
-            <code>src/generated/token-gating</code>. Run{" "}
-            <code>npm run compile-contract</code> if missing.
+            Requires locally compiled Compact artifacts under{" "}
+            <code>public/contracts/managed</code> and{" "}
+            <code>src/generated</code>. Run{" "}
+            <code>npm run compile-all</code> if missing.
           </p>
         </div>
 
