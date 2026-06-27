@@ -36,12 +36,12 @@ export async function compileDidRegistry(
     throw new Error("DID Registry artifact not found. Run npm run compile-contract.");
   }
 
-  // Verify the token-gating compiled artifact is also present before marking step 1 complete.
+  // Verify the token-gating managed runtime is also present before marking step 1 complete.
   try {
-    await import("../../generated/token-gating/contract/index.js");
+    await import("../../generated/tokenGatingContract.runtime.js");
   } catch {
     throw new Error(
-      "Token gating artifact not found. Run npm run compile-contract.",
+      "Token gating artifact not found. Run npm run compile-token-gating.",
     );
   }
 

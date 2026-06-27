@@ -7,11 +7,11 @@ const TOKEN_GATING_CONTRACT_BASE_PATH = "/contracts/managed/token-gating";
 
 async function loadTokenGatingModule() {
   try {
-    return await import("../../generated/token-gating/contract/index.js");
+    return await import("../../generated/tokenGatingContract.runtime.js");
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown import failure";
     throw new Error(
-      `Token gating contract runtime is missing under src/generated/token-gating/contract/index.js or could not be bundled by Vite. Run \`npm run compile-contract\`. Details: ${message}`,
+      `Token gating contract runtime is missing. Run \`npm run compile-token-gating\` first. Details: ${message}`,
     );
   }
 }
