@@ -31,9 +31,8 @@ function makeCoin(value: bigint, tag: string = 'a'): ShieldedCoin {
 
 function makeMintRecord(): TokenMintRecord {
   return {
-    didKey: new Uint8Array(32),
-    registrySalt: new Uint8Array(32),
-    nonceAtMint: 1n,
+    subscriptionKey: new Uint8Array(32),
+    recipientBytes: new Uint8Array(32),
     contractAddress: 'contract-0x1234',
     mintedAt: new Date().toISOString(),
   };

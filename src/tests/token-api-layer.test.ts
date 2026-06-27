@@ -14,7 +14,7 @@ import {
   type TokenProviders,
 } from '../lib/token/token-witness.js';
 import { TokenStateManager } from '../lib/token/token-state.js';
-import type { ShieldedCoin, CapabilityProof } from '../lib/token/token-types.js';
+import type { ShieldedCoin } from '../lib/token/token-types.js';
 import { padTo32 } from '../lib/token/token-types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -45,7 +45,7 @@ function makeProviders(overrides: {
   const mocks = makeMocks(overrides);
   const store = new Map<string, unknown>();
   const stateManager = new TokenStateManager(
-    { get: (k) => store.get(k) as ReturnType<TokenStateManager['getActiveCoins']>[0] | undefined, set: (k, v) => { store.set(k, v); } },
+    { get: (k) => store.get(k) as import('../lib/token/token-types.js').TokenCapabilityPrivateState | undefined, set: (k, v) => { store.set(k, v as import('../lib/token/token-types.js').TokenCapabilityPrivateState); } },
     'token-contract-addr',
   );
   const providers: TokenProviders = {

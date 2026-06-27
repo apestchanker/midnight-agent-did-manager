@@ -77,12 +77,21 @@ export class DidRegistryAPI {
   readonly ledgerState$: Observable<Record<string, unknown>>;
   readonly registrySummary$: Observable<RegistrySummary>;
 
-  static async deploy(providers: AppProviders): Promise<DidRegistryAPI> {
+  static async deploy(
+    providers: AppProviders,
+    opts: { tokenContractAddress: string },
+  ): Promise<DidRegistryAPI> {
+    if (!/^[0-9a-fA-F]{64}$/.test(opts.tokenContractAddress)) {
+      throw new Error(
+        `tokenContractAddress must be a 64-character hex string, got: "${opts.tokenContractAddress}"`,
+      );
+    }
+
     await primeWalletSession(providers);
     const { module, compiledContract } = await getContractRuntime(MANAGED_CONTRACT_BASE_PATH);
     const deployed = await deployContract(providers as never, {
       compiledContract: compiledContract as never,
-      args: [randomBytes(32)],
+      args: [randomBytes(32), { bytes: fromHex(opts.tokenContractAddress) }],
       privateStateId: SLOT_PRIVATE_STATE_ID,
       initialPrivateState: await createDeploymentPrivateState(providers),
     });

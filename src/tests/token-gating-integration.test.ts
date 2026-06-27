@@ -37,9 +37,9 @@ const TOKEN_CONTRACT_BYTES = rt.encodeContractAddress(rt.dummyContractAddress())
 const TOKEN_CONTRACT_KEY = { bytes: TOKEN_CONTRACT_BYTES };
 
 // Type descriptors for persistentHash
-const bytes32T = new rt.CompactTypeBytes(32n);
-const vec4T = new rt.CompactTypeVector(4n, bytes32T);
-const vec5T = new rt.CompactTypeVector(5n, bytes32T);
+const bytes32T = new rt.CompactTypeBytes(32);
+const vec4T = new rt.CompactTypeVector(4, bytes32T);
+const vec5T = new rt.CompactTypeVector(5, bytes32T);
 
 function nonce(seed: number): Uint8Array {
   const b = new Uint8Array(32);
@@ -117,7 +117,7 @@ function makeDidCtx(state: rt.ChargedState | rt.StateValue = postAdminState): rt
 /**
  * Mint tokens and return the minted coin + post-mint state.
  */
-function mintTokens(amount: bigint, didKey: Uint8Array, coinNonce: Uint8Array, baseState?: rt.ChargedState | rt.StateValue) {
+function mintTokens(amount: bigint, _didKey: Uint8Array, coinNonce: Uint8Array, baseState?: rt.ChargedState | rt.StateValue) {
   const ctx = makeTokenCtx(baseState);
   // subscription_key derives the color; recipient is the user's shielded address.
   const result = tokenContract.impureCircuits.mint_capability_tokens(ctx, nonce(99), COIN_PK, coinNonce, amount);
@@ -175,7 +175,7 @@ describe('REQ-04: full two-TX flow (mint → consume → self_register_did)', ()
     // --- TX1: MINT then CONSUME capability token ---
     const { mintedCoin, postMintState } = mintTokens(3n, did_key, nonce(60));
     const actionType = pad32('self_register_did');
-    const { nullifier, commitment, postConsumeState } = consumeToken(mintedCoin, actionType, did_key, postMintState);
+    const { commitment } = consumeToken(mintedCoin, actionType, did_key, postMintState);
 
     // The commitment must match our pre-computation (now includes color + nullifier_proxy)
     const expectedCommitment = computeCommitment(actionType, TOKEN_CONTRACT_BYTES, did_key, mintedCoin.color, mintedCoin.nonce);
@@ -208,7 +208,7 @@ describe('REQ-04: full two-TX flow (mint → consume → self_register_did)', ()
     expect(mintedCoin.value).toBe(6n); // amount + 1 anchor
 
     const actionType = pad32('self_register_did');
-    const { result: consumeResult, nullifier, commitment } = consumeToken(mintedCoin, actionType, did_key, postMintState);
+    const { result: consumeResult, commitment } = consumeToken(mintedCoin, actionType, did_key, postMintState);
 
     // Change coin value = 6 - 1 = 5
     const changeOutputs = consumeResult.context.currentZswapLocalState.outputs;
@@ -229,7 +229,7 @@ describe('REQ-06: anti-replay — same nullifier rejected on second use', () => 
     const did_key = computeDidKey(REGISTRY_SALT, COIN_PK.bytes, subjectNonce);
     const { mintedCoin, postMintState } = mintTokens(3n, did_key, nonce(80));
     const actionType = pad32('self_register_did');
-    const { nullifier, commitment } = consumeToken(mintedCoin, actionType, did_key, postMintState);
+    const { commitment } = consumeToken(mintedCoin, actionType, did_key, postMintState);
 
     // --- TX2: first use of the proof — must succeed ---
     const ctx1 = makeDidCtx();
@@ -252,14 +252,14 @@ describe('REQ-06: anti-replay — same nullifier rejected on second use', () => 
     const did_key_A = computeDidKey(REGISTRY_SALT, COIN_PK.bytes, subjectNonceA);
     const { mintedCoin: coinA, postMintState: mintStateA } = mintTokens(2n, did_key_A, nonce(90));
     const actionTypeA = pad32('self_register_did');
-    const { nullifier: nullA, commitment: commitA } = consumeToken(coinA, actionTypeA, did_key_A, mintStateA);
+    const { commitment: commitA } = consumeToken(coinA, actionTypeA, did_key_A, mintStateA);
 
     // Proof B for subjectNonce=73
     const subjectNonceB = nonce(73);
     const did_key_B = computeDidKey(REGISTRY_SALT, COIN_PK.bytes, subjectNonceB);
     const { mintedCoin: coinB, postMintState: mintStateB } = mintTokens(2n, did_key_B, nonce(91));
     const actionTypeB = pad32('self_register_did');
-    const { nullifier: nullB, commitment: commitB } = consumeToken(coinB, actionTypeB, did_key_B, mintStateB);
+    const { commitment: commitB } = consumeToken(coinB, actionTypeB, did_key_B, mintStateB);
 
     // Use proof A (raw coin nonce)
     const ctx1 = makeDidCtx();

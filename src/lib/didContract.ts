@@ -12,6 +12,7 @@ import { DidRegistryAPI } from "./did/api";
 import {
   compileDidRegistry,
   deployDidRegistry,
+  deployTokenGating,
   issueDidWithSync,
   requestDidWithSync,
   revokeDidWithSync,
@@ -21,6 +22,8 @@ import {
   getSavedCompileArtifact,
   getSavedContractAddress,
   getSavedDeployment,
+  getSavedTokenDeployment,
+  clearTokenDeployment,
 } from "./did/cache";
 import {
   exportOwnerVaultBackup,
@@ -39,11 +42,14 @@ export { DidRegistryAPI };
 export {
   compileDidRegistry,
   deployDidRegistry,
+  deployTokenGating,
   exportOwnerVaultBackup,
   getOwnerVaultStatus,
   getSavedCompileArtifact,
   getSavedContractAddress,
   getSavedDeployment,
+  getSavedTokenDeployment,
+  clearTokenDeployment,
   restoreOwnerVaultBackup,
 };
 export type { OwnerVaultStatus } from "../types/did";

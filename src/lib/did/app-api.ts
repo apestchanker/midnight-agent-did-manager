@@ -21,14 +21,29 @@ import {
   mergeDidMetadata,
   saveCompileArtifact,
   saveDeployment,
+  saveTokenDeployment,
 } from "./cache";
-import { MANAGED_CONTRACT_BASE_PATH, type CompileResult } from "./types";
+import { MANAGED_CONTRACT_BASE_PATH, type CompileResult, type TokenDeployResult } from "./types";
 import { loadManagedContractModule } from "./runtime";
+import { TokenGatingAPI } from "../token/token-gating-api";
 
 export async function compileDidRegistry(
   providers: AppProviders,
 ): Promise<CompileResult> {
-  await loadManagedContractModule();
+  try {
+    await loadManagedContractModule();
+  } catch {
+    throw new Error("DID Registry artifact not found. Run npm run compile-contract.");
+  }
+
+  // Verify the token-gating compiled artifact is also present before marking step 1 complete.
+  try {
+    await import("../../generated/token-gating/contract/index.js");
+  } catch {
+    throw new Error(
+      "Token gating artifact not found. Run npm run compile-contract.",
+    );
+  }
 
   saveCompileArtifact({
     managedPath: MANAGED_CONTRACT_BASE_PATH,
@@ -42,9 +57,37 @@ export async function compileDidRegistry(
   };
 }
 
+export async function deployTokenGating(
+  providers: AppProviders,
+): Promise<TokenDeployResult> {
+  const api = await TokenGatingAPI.deploy(providers);
+  const now = new Date().toISOString();
+  const result: TokenDeployResult = {
+    contractAddress: api.contractAddress,
+    txHash: "",
+    networkId: providers.networkId,
+    deployedAt: now,
+    message: "Token gating contract deployed. Use this address as the token_contract argument when deploying the DID registry.",
+  };
+
+  saveTokenDeployment({
+    contractAddress: result.contractAddress,
+    txHash: result.txHash,
+    networkId: result.networkId,
+    deployedAt: result.deployedAt,
+  });
+
+  return result;
+}
+
 export async function deployDidRegistry(
   providers: AppProviders,
+  tokenContractAddress: string,
 ): Promise<DeployResult> {
+  if (!tokenContractAddress) {
+    throw new Error("Token gating contract must be deployed first (Step 2)");
+  }
+
   const compileData = getSavedCompileArtifact();
   if (!compileData) {
     throw new Error(
@@ -52,7 +95,7 @@ export async function deployDidRegistry(
     );
   }
 
-  const api = await DidRegistryAPI.deploy(providers);
+  const api = await DidRegistryAPI.deploy(providers, { tokenContractAddress });
   const deployed = api.getDeployMetadata();
   const initializeTx = await api.registerInitialAdmin();
   const result: DeployResult = {

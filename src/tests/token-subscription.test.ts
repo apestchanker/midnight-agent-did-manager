@@ -44,7 +44,7 @@ function makeCoin(opts: Partial<ShieldedCoin> = {}): ShieldedCoin {
 function makeStateManager(): TokenStateManager {
   const store = new Map<string, unknown>();
   return new TokenStateManager(
-    { get: (k) => store.get(k) as Parameters<TokenStateManager['onCoinMinted']>[0] | undefined, set: (k, v) => { store.set(k, v); } },
+    { get: (k) => store.get(k) as import('../lib/token/token-types.js').TokenCapabilityPrivateState | undefined, set: (k, v) => { store.set(k, v as import('../lib/token/token-types.js').TokenCapabilityPrivateState); } },
     'token-addr',
   );
 }

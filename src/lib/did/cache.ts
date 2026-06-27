@@ -1,5 +1,5 @@
-import type { CachedDidMetadata, SavedCompileArtifact, SavedDeployment } from "./types";
-import { COMPILE_KEY, DEPLOY_KEY, DID_CACHE_PREFIX } from "./types";
+import type { CachedDidMetadata, SavedCompileArtifact, SavedDeployment, SavedTokenDeployment } from "./types";
+import { COMPILE_KEY, DEPLOY_KEY, DID_CACHE_PREFIX, TOKEN_GATING_DEPLOY_KEY } from "./types";
 
 function cacheKey(contractAddress: string, agentId: string): string {
   return `${DID_CACHE_PREFIX}:${contractAddress}:${agentId.toLowerCase()}`;
@@ -77,4 +77,18 @@ export function getSavedDeployment(): SavedDeployment | null {
 
 export function getSavedCompileArtifact(): SavedCompileArtifact | null {
   return readSavedJson<SavedCompileArtifact>(COMPILE_KEY);
+}
+
+export function saveTokenDeployment(result: SavedTokenDeployment): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(TOKEN_GATING_DEPLOY_KEY, JSON.stringify(result));
+}
+
+export function getSavedTokenDeployment(): SavedTokenDeployment | null {
+  return readSavedJson<SavedTokenDeployment>(TOKEN_GATING_DEPLOY_KEY);
+}
+
+export function clearTokenDeployment(): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(TOKEN_GATING_DEPLOY_KEY);
 }

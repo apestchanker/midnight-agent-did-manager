@@ -34,9 +34,9 @@ function nonce(seed: number): Uint8Array {
 }
 
 // Type descriptors for persistentHash (used to pre-compute did_key / commitments off-chain).
-const bytes32T = new rt.CompactTypeBytes(32n);
-const vec4T = new rt.CompactTypeVector(4n, bytes32T);
-const vec5T = new rt.CompactTypeVector(5n, bytes32T);
+const bytes32T = new rt.CompactTypeBytes(32);
+const vec4T = new rt.CompactTypeVector(4, bytes32T);
+const vec5T = new rt.CompactTypeVector(5, bytes32T);
 
 /** Mirrors deriveDidKey in did_registry.compact. */
 function computeDidKey(registrySalt: Uint8Array, controllerBytes: Uint8Array, subjectNonce: Uint8Array): Uint8Array {

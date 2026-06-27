@@ -7,6 +7,8 @@ export const MANAGED_CONTRACT_BASE_PATH =
   (import.meta.env.VITE_MANAGED_CONTRACT_PATH || "").trim() ||
   "/contracts/managed/did-registry";
 
+export const TOKEN_GATING_DEPLOY_KEY = "didmn:token_gating:v1";
+
 export const DID_SUBJECT_NONCE_PREFIX = "didmn:default-slot:v1";
 export const DEFAULT_SUBJECT_NONCE = "ba3649522b461286f41043ca6548f1d5dcd2c3e74e1d59fa74102fc1eb1ce531";
 export const SLOT_PRIVATE_STATE_ID = "did-slot-state:v2";
@@ -69,3 +71,20 @@ export interface CompileResult {
   success: boolean;
   message: string;
 }
+
+export type SavedTokenDeployment = {
+  contractAddress: string;
+  txHash: string;
+  txId?: string;
+  networkId: string;
+  deployedAt: string;
+};
+
+export type TokenDeployResult = {
+  contractAddress: string;
+  txHash: string;
+  txId?: string;
+  networkId: string;
+  deployedAt: string;
+  message?: string;
+};
