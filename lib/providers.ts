@@ -28,6 +28,7 @@ const MANAGED_CONTRACT_PATH =
 const NATIVE_OWNERSHIP_MANAGED_CONTRACT_PATH =
   (import.meta.env.VITE_NATIVE_OWNERSHIP_MANAGED_CONTRACT_PATH || "").trim() ||
   "/contracts/managed/native-ownership-proof";
+const TOKEN_GATING_MANAGED_CONTRACT_PATH = "/contracts/managed/token-gating";
 const CONFIGURED_PROVER_SERVER_URL = (import.meta.env.VITE_PROVER_SERVER_URI || "").trim();
 
 const PRIVATE_STATE_PASSWORD_ENV = (import.meta.env.VITE_PRIVATE_STATE_PASSWORD || "").trim();
@@ -450,10 +451,17 @@ export async function buildProviders(
     NATIVE_OWNERSHIP_MANAGED_CONTRACT_PATH,
   );
 
+  const tokenGatingManagedContractUrl = getManagedContractUrl(TOKEN_GATING_MANAGED_CONTRACT_PATH);
+  const TOKEN_GATING_CIRCUITS = new Set(["mint_capability_tokens", "consume_token_for_action"]);
+
   const zkConfigProvider = new CompositeFetchZkConfigProvider([
     {
       match: (circuitId) => normalizeCircuitId(circuitId) === "prove_ownership",
       provider: new NormalizedFetchZkConfigProvider(nativeOwnershipManagedContractUrl),
+    },
+    {
+      match: (circuitId) => TOKEN_GATING_CIRCUITS.has(normalizeCircuitId(circuitId)),
+      provider: new NormalizedFetchZkConfigProvider(tokenGatingManagedContractUrl),
     },
     {
       match: () => true,
