@@ -1,6 +1,6 @@
 # Midnight Agent DID Manager
 
-Midnight Agent DID Manager is a React + Vite application plus a local Node/Postgres service for managing a Compact DID registry on Midnight Network (Preprod or Preview).
+Midnight Agent DID Manager is a React + Vite application plus a local Node/Postgres service for managing a Compact DID registry on Midnight Network (Preprod or Preview), with shielded ZK token gating for privileged registry operations.
 
 This repository is an open-source research project focused on Agentic-DIDs: privacy-preserving identity and mandate flows for AI agents. The product direction is an Agent MultiPass: a verifiable agent pass that combines stable agent identity, human or organizational control, valid mandates, limits, capabilities, authorization levels, status, and selective disclosure credentials. Midnight is used as the privacy-first blockchain substrate for DID lifecycle state, commitments, and proof-oriented workflows.
 
@@ -201,7 +201,18 @@ Admin proof review and verification package management view:
 
 ### On-chain
 
-The Compact contract (v2, `ownPublicKey()` controller model) is the registry of record. It stores:
+Two Compact contracts form the on-chain layer (v0.8+):
+
+**`token_gating.compact`** — manages shielded token allocation and spend:
+
+- admin mints tokens per user via `grantSubscription` / `renewSubscription`
+- users spend tokens via `consume_token_for_action`, producing a ZK proof
+- tokens are shielded: balances and spend history are private
+- `did_token_color` map binds a DID key to its token contract color
+- anchor token (value=1) cannot be spent; it is the permanent ownership anchor
+- anti-replay: commitment includes `nullifier_proxy = persistentHash(coin.nonce)`
+
+**`did_registry.compact`** (v2, `ownPublicKey()` controller model) — the DID registry of record. Constructor takes `token_contract: ZswapCoinPublicKey`. It stores:
 
 - controller binding through `ZswapCoinPublicKey` — the connected wallet's public key is the sole authority, no local secret
 - DID key derived on-chain from `hash(domain, registry_salt, controller_public_key, subject_nonce)`
@@ -212,12 +223,15 @@ The Compact contract (v2, `ownPublicKey()` controller model) is the registry of 
 
 The registry is intentionally not the full Agent MultiPass payload. Mandates, limits, capabilities, authorization levels, detailed profile claims, and credential JWTs are represented off-chain and selectively disclosed through credentials, presentations, and proof material.
 
-Authorization model (v2):
+Authorization model (v2, v0.8+):
 
-- `self_register_did(subject_nonce)` — any wallet can register a DID slot; the wallet's `ownPublicKey()` is the controller; no local secret required
-- `register_initial_admin()` — first caller claims the ADMIN role; only callable once
-- `issue_did`, `grant_role`, `revoke_role`, `revoke_did` — ADMIN or ISSUER authorized via `ownPublicKey()` check in Compact
+- `self_register_did(subject_nonce)` — any wallet with a valid token can register a DID slot; the wallet's `ownPublicKey()` is the controller; requires TX1 token spend
+- `register_initial_admin()` — first caller claims the ADMIN role; only callable once; no token required
+- `grant_role`, `revoke_role`, `revoke_did` — ADMIN or ISSUER authorized via `ownPublicKey()` check; require TX1 token spend
+- `issue_did` — ADMIN or ISSUER authorized via `ownPublicKey()`; no token required
 - no `issuerSecret` witness; no local private state needed for authorization
+
+Privileged operations follow a two-TX sequence: TX1 calls `consume_token_for_action` on the token gating contract; TX2 calls the registry operation.
 
 It does not store:
 
@@ -344,6 +358,7 @@ See:
 - Midnight Compact compiler installed as `compact`
 - a funded 1AM wallet on Midnight Preprod
 - wallet prover access through 1AM, or a local Midnight proof server if you explicitly choose that setup
+- both Compact contracts compiled (`npm run compile-all`) before deploying — this produces the ZK proving/verifier keys required by the admin deploy panel
 
 ## Official Resources
 
@@ -353,6 +368,21 @@ See:
 - Midnight JS SDK repository: https://github.com/midnightntwrk/midnight-js
 
 ## Release Notes
+
+### v0.8.1
+
+- **Token gating hardened** — anti-replay via `nullifier_proxy = persistentHash(coin.nonce)`; commitment is 5 elements binding each spend to a specific nullifier
+- **Anchor token** — the last token (value=1) is the permanent ownership anchor and cannot be spent
+- **DID-color binding** — token color stored in `did_token_color` map, linking each DID key to its token contract color
+- **Admin deploy panel** — 3-step flow (Load Artifact → Deploy Token Gating → Deploy DID Registry); steps are gated sequentially; re-deploy warning banner if a token gating contract address already exists in localStorage
+
+### v0.8.0
+
+- **Token gating contract** — new `contracts/token_gating.compact`; admin mints shielded tokens via `grantSubscription` / `renewSubscription`; users prove ownership without revealing balance
+- **Two-TX privileged flow** — `self_register_did`, `grant_role`, `revoke_role`, and `revoke_did` now require a prior TX1 (`consume_token_for_action`) before the registry TX2
+- **DID registry constructor updated** — `contracts/did_registry.compact` now takes a `token_contract: ZswapCoinPublicKey` constructor argument; deploy order matters (token gating first)
+- **`npm run compile-all`** — new unified compile script; runs `compile-token-gating` → `compile-contract` → `compile-ownership-proof` in order; recommended over individual scripts
+- **Token gating managed artifacts** — `contracts/managed/token-gating/` and `public/contracts/managed/token-gating/`; `src/generated/tokenGatingContract.runtime.js`
 
 ### v0.7.0
 
@@ -369,8 +399,8 @@ See git log for prior release notes.
 
 ## Tested Versions
 
-- Application version: `0.7.0`
-- Compact compiler: `v0.31.0` (`pragma language_version >= 0.23`)
+- Application version: `0.8.1`
+- Compact compiler: `v0.31.0` (`pragma language_version >= 0.23 && <= 0.23`)
 - Midnight JS SDK family: `4.0.2`
 - Midnight DApp connector API: `4.0.1`
 - Midnight ledger / proof stack: `8.0.3`
@@ -444,14 +474,48 @@ How it works:
 - `issue_did`, `grant_role`, `revoke_role`, `revoke_did` check `ownPublicKey()` against the stored role map at circuit execution time
 - no local secret is generated, stored, or needed for recovery
 
-Deploying a registry with the v2 contract:
+As of v0.8, privileged operations (`self_register_did`, `grant_role`, `revoke_role`, `revoke_did`) also require the caller to hold a valid shielded token from the token gating contract. See [Token Gating (v0.8)](#token-gating-v08) below.
 
-1. Connect the admin wallet.
-2. Start the frontend and API.
-3. Open the app as Admin.
-4. Go to `Deploy DID Registry`.
-5. Deploy the contract (no owner secret generated — wallet key is the authority).
-6. Call `Register as Initial Admin` from the same wallet to claim the ADMIN role.
+## Token Gating (v0.8)
+
+Starting in v0.8, access to privileged DID registry operations is gated by shielded tokens issued through a separate `token_gating.compact` contract. Tokens are private: the user proves possession without revealing their balance on-chain.
+
+### Why shielded tokens
+
+The `ownPublicKey()` check proves which wallet is calling. The token gating adds a credit layer on top: the admin controls who has access (by minting tokens) independently of wallet identity. Users can hold tokens, consume them privately, and the registry verifies a ZK proof of valid spend — without the indexer or any observer learning the token balance or history.
+
+### Two-TX flow
+
+Every privileged registry operation requires two transactions in sequence:
+
+1. **TX1 — `consume_token_for_action`** (token gating contract): spends one token unit, produces a ZK proof of valid spend with anti-replay nullifier. The commitment is a 5-element tuple that includes `nullifier_proxy = persistentHash(coin.nonce)`, binding the commitment to a specific spend.
+2. **TX2 — registry operation** (`self_register_did`, `grant_role`, `revoke_role`, or `revoke_did`): the DID registry verifies the proof from TX1 before executing the state change.
+
+### Admin: granting tokens
+
+The admin grants tokens to users via the admin panel:
+
+- `grantSubscription` — mints a new token allocation for a user
+- `renewSubscription` — adds credits to an existing allocation
+
+Each action on the registry consumes exactly 1 credit.
+
+### Anchor token
+
+The last token (when remaining value = 1) is the permanent ownership anchor. It cannot be spent. This ensures a user's wallet always retains a non-zero proof of their token allocation, which serves as the ownership binding for the DID.
+
+### DID-color binding
+
+When a user first interacts with the token gating contract, the token color (the contract's coin type identifier) is stored in the `did_token_color` map, keyed by the DID key. This binds the specific token contract deployment to that DID for its lifetime.
+
+### Operations that require a token
+
+- `self_register_did`
+- `grant_role`
+- `revoke_role`
+- `revoke_did`
+
+`register_initial_admin` and `issue_did` are not in this list (admin bootstrap and issuance remain role-gated only).
 
 Subject nonce:
 
@@ -477,30 +541,31 @@ Recommended startup order for a fresh local setup:
 7. Start the frontend.
 8. Start a local proof server only if you are not using the wallet prover.
 
-Compile the Compact contract and refresh managed assets:
+Compile all contracts and refresh managed assets:
 
 ```bash
-npm run compile-contract
+npm run compile-all        # recommended — compiles all contracts in order
+npm run compile-token-gating   # only token_gating.compact
+npm run compile-contract       # only did_registry.compact
+npm run compile-ownership-proof  # only native_ownership_proof.compact
 ```
 
-This command:
-
-- compiles [contracts/did_registry.compact](/Users/alex/Documents/Developer/didMN/contracts/did_registry.compact)
-- regenerates [contracts/managed/did-registry](/Users/alex/Documents/Developer/didMN/contracts/managed/did-registry)
-- refreshes the browser-served assets under `public/contracts/managed/did-registry`
-- refreshes generated runtime bindings under `src/generated`
-- updates [contracts/compiled/did_registry.compiled.json](/Users/alex/Documents/Developer/didMN/contracts/compiled/did_registry.compiled.json)
+`npm run compile-all` runs the three scripts in the correct order: token_gating → did_registry → ownership_proof. You must compile before deploying from the admin panel — the compile step generates the ZK proving/verifier keys (`.prover` and `.verifier` files). Full ZK compilation can take several minutes.
 
 You need the official Midnight Compact compiler installed as `compact` or `compactc`.
 
-Deploying a registry with the v2 contract model:
+Outputs:
 
-1. Connect the admin wallet.
-2. Start the frontend and API.
-3. Open the app as Admin.
-4. Go to `Deploy DID Registry`.
-5. Deploy the contract.
-6. Call `Register as Initial Admin` from the same wallet to claim the ADMIN role.
+- `contracts/managed/token-gating/` — token gating managed artifacts (keys, zkir, contract)
+- `public/contracts/managed/token-gating/` — browser-served token gating assets
+- `src/generated/tokenGatingContract.runtime.js` — token gating runtime JS
+- `contracts/managed/did-registry/` and `public/contracts/managed/did-registry/` — DID registry artifacts (unchanged location)
+
+Deploying from the admin panel (3-step flow):
+
+1. **Load Artifact** — validates compiled artifacts for both contracts.
+2. **Deploy Token Gating** — deploys `token_gating.compact`; displays and copies the contract address; persists it in localStorage. A warning banner appears if an address already exists (re-deploying invalidates existing DIDs).
+3. **Deploy DID Registry** — deploys `did_registry.compact`, passing the token gating address from step 2 as the constructor argument. Step 3 is gated — unavailable until step 2 is complete.
 
 Important:
 
@@ -818,12 +883,16 @@ This repository intentionally excludes local-only working notes, generated local
 
 The `contracts/` tree intentionally contains both source and generated artifacts used by the DApp:
 
+- [contracts/token_gating.compact](/Users/alex/Documents/Developer/didMN/contracts/token_gating.compact)
+  Compact source for the shielded token gating contract (new in v0.8)
 - [contracts/did_registry.compact](/Users/alex/Documents/Developer/didMN/contracts/did_registry.compact)
-  the Compact source of truth
+  Compact source for the DID registry
+- [contracts/managed/token-gating](/Users/alex/Documents/Developer/didMN/contracts/managed/token-gating)
+  generated managed runtime, proving/verifier keys, and ZKIR assets for the token gating contract
 - [contracts/managed/did-registry](/Users/alex/Documents/Developer/didMN/contracts/managed/did-registry)
-  generated managed runtime, proving/verifier keys, and ZKIR assets required by the app
+  generated managed runtime, proving/verifier keys, and ZKIR assets for the DID registry
 - [contracts/compiled/did_registry.compiled.json](/Users/alex/Documents/Developer/didMN/contracts/compiled/did_registry.compiled.json)
-  generated metadata snapshot of the current contract
+  generated metadata snapshot of the current DID registry contract
 
 Inside `contracts/managed/did-registry`, both plain circuit filenames and `did-registry#...` aliases are kept intentionally. The aliased files are needed for the current Vite/browser asset lookup flow.
 

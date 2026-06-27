@@ -1,6 +1,6 @@
 {
   "name": "midnight-agent-did-manager",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "contractVersion": "2.0.0",
   "type": "module",
   "scripts": {
@@ -16,6 +16,7 @@
     "test:watch": "vitest",
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives",
+    "compile-all": "node scripts/compile-all-contracts.js",
     "compile-contract": "node scripts/compile-contract.js",
     "compile-token-gating": "node scripts/compile-token-gating.js",
     "compile-ownership-proof": "node scripts/compile-ownership-proof.js",
