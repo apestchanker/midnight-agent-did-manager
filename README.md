@@ -144,8 +144,9 @@ sequenceDiagram
     DApp->>API: Approve request
     API->>DB: Mark holder-approved
 
-    DApp->>Wallet: Register or reference controller-bound DID
-    Wallet->>Contract: self_register_did(subject_nonce)
+    DApp->>Wallet: Spend action credit, then register controller-bound DID
+    Wallet->>TokenContract: consume_token_for_action(color, nullifier, commitment)
+    Wallet->>Contract: self_register_did(subject_nonce, color, nullifier, commitment)
     Contract->>Contract: did_controller[did_key] = ownPublicKey()
     Contract-->>Wallet: DID slot registered
 
@@ -205,7 +206,7 @@ Two Compact contracts form the on-chain layer (v0.8+):
 
 **`token_gating.compact`** — manages shielded token allocation and spend:
 
-- admin mints tokens per user via `grantSubscription` / `renewSubscription`
+- admin mints tokens per user from the Action Credits panel through `mint_capability_tokens`
 - users spend tokens via `consume_token_for_action`, producing a ZK proof
 - tokens are shielded: balances and spend history are private
 - `did_token_color` map binds a DID key to its token contract color
@@ -225,7 +226,7 @@ The registry is intentionally not the full Agent MultiPass payload. Mandates, li
 
 Authorization model (v2, v0.8+):
 
-- `self_register_did(subject_nonce)` — any wallet with a valid token can register a DID slot; the wallet's `ownPublicKey()` is the controller; requires TX1 token spend
+- `self_register_did(subject_nonce, token_color, nullifier, commitment)` — any wallet with a valid token can register a DID slot; the wallet's `ownPublicKey()` is the controller; requires TX1 token spend
 - `register_initial_admin()` — first caller claims the ADMIN role; only callable once; no token required
 - `grant_role`, `revoke_role`, `revoke_did` — ADMIN or ISSUER authorized via `ownPublicKey()` check; require TX1 token spend
 - `issue_did` — ADMIN or ISSUER authorized via `ownPublicKey()`; no token required
@@ -369,6 +370,12 @@ See:
 
 ## Release Notes
 
+### v0.8.2
+
+- **Wallet token metadata clarified** — 1AM `Kind: unknown` / `Verified: No` are wallet metadata labels, while didMN validates action-credit colors through the active token-gating contract.
+- **Action credit verification UI** — token balances are classified against token-gating `valid_colors`; raw balance includes the permanent anchor unit.
+- **Registry access fix** — admin access derives role lookup from the 32-byte shielded coin public key while leaving the SDK wallet provider's ledger coin key untouched.
+
 ### v0.8.1
 
 - **Token gating hardened** — anti-replay via `nullifier_proxy = persistentHash(coin.nonce)`; commitment is 5 elements binding each spend to a specific nullifier
@@ -378,7 +385,7 @@ See:
 
 ### v0.8.0
 
-- **Token gating contract** — new `contracts/token_gating.compact`; admin mints shielded tokens via `grantSubscription` / `renewSubscription`; users prove ownership without revealing balance
+- **Token gating contract** — new `contracts/token_gating.compact`; admin mints shielded action-credit tokens and users prove ownership without revealing balance
 - **Two-TX privileged flow** — `self_register_did`, `grant_role`, `revoke_role`, and `revoke_did` now require a prior TX1 (`consume_token_for_action`) before the registry TX2
 - **DID registry constructor updated** — `contracts/did_registry.compact` now takes a `token_contract: ZswapCoinPublicKey` constructor argument; deploy order matters (token gating first)
 - **`npm run compile-all`** — new unified compile script; runs `compile-token-gating` → `compile-contract` → `compile-ownership-proof` in order; recommended over individual scripts
@@ -387,7 +394,7 @@ See:
 ### v0.7.0
 
 - **DID Registry v2 contract** — complete rewrite from `issuerSecret()` witness model to `ownPublicKey()` / `ZswapCoinPublicKey` controller model
-- **Self-registration** — any wallet can register a DID slot via `self_register_did(subject_nonce)` without a local secret
+- **Self-registration** — any wallet can register a DID slot through the original v2 self-registration circuit without a local secret
 - **On-chain role system** — ADMIN, ISSUER, USER, AGENT roles stored in `role_by_key` map; admin bootstrap via `register_initial_admin()`
 - **DID key derivation** — `hash("didmn:did:v1", registry_salt, ownPublicKey(), subject_nonce)` replaces agent-key-based derivation
 - **Removed** — `issuerSecret()` witness, owner vault backup, `OwnerVaultBackupPayload`, `ensureOwnerPrivateState`, `status_by_agent`, `organization_labels`, `organization_disclosures`, `request_commitments` ledger fields
@@ -399,7 +406,7 @@ See git log for prior release notes.
 
 ## Tested Versions
 
-- Application version: `0.8.1`
+- Application version: `0.8.2`
 - Compact compiler: `v0.31.0` (`pragma language_version >= 0.23 && <= 0.23`)
 - Midnight JS SDK family: `4.0.2`
 - Midnight DApp connector API: `4.0.1`
@@ -469,7 +476,7 @@ As of v0.7, the registry contract uses Midnight's `ownPublicKey()` built-in for 
 How it works:
 
 - the connected wallet's `ZswapCoinPublicKey` is the controller for any DID it registers
-- `self_register_did(subject_nonce)` derives the DID key on-chain from `hash("didmn:did:v1", registry_salt, ownPublicKey(), subject_nonce)`
+- `self_register_did(subject_nonce, token_color, nullifier, commitment)` derives the DID key on-chain from `hash("didmn:did:v1", registry_salt, ownPublicKey(), subject_nonce)` after the token-gating contract records the matching TX1 spend
 - the same wallet can call `register_initial_admin()` once to claim the ADMIN role
 - `issue_did`, `grant_role`, `revoke_role`, `revoke_did` check `ownPublicKey()` against the stored role map at circuit execution time
 - no local secret is generated, stored, or needed for recovery
@@ -495,8 +502,8 @@ Every privileged registry operation requires two transactions in sequence:
 
 The admin grants tokens to users via the admin panel:
 
-- `grantSubscription` — mints a new token allocation for a user
-- `renewSubscription` — adds credits to an existing allocation
+- the admin Action Credits panel calls `mint_capability_tokens` to mint a new shielded allocation for a user
+- internal `grantSubscription` / `renewSubscription` helpers remain available for service-layer grant and top-up flows
 
 Each action on the registry consumes exactly 1 credit.
 
@@ -507,6 +514,19 @@ The last token (when remaining value = 1) is the permanent ownership anchor. It 
 ### DID-color binding
 
 When a user first interacts with the token gating contract, the token color (the contract's coin type identifier) is stored in the `did_token_color` map, keyed by the DID key. This binds the specific token contract deployment to that DID for its lifetime.
+
+### Wallet token metadata
+
+Wallets may display newly minted didMN action-credit tokens with generic metadata such as `Kind: unknown` and `Verified: No`. Those labels are wallet-local token metadata labels, not DID registry authorization results.
+
+didMN verifies action-credit tokens in the app and contracts:
+
+- the token-gating contract records every minted token color in `valid_colors`
+- `consume_token_for_action` rejects any shielded coin whose color is not in `valid_colors`
+- the app classifies wallet balances as `Action credit` / `Verified` when the color is recognized by the active token-gating contract
+- raw balance includes the permanent anchor unit; spendable credits are `rawBalance - 1` when `rawBalance > 1`
+
+For example, a raw balance of `6` means `5` spendable registry actions plus `1` permanent anchor.
 
 ### Operations that require a token
 

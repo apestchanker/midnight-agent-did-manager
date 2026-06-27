@@ -4,6 +4,9 @@ import CompactStandardLibrary;
 
 export ledger capability_commitments: Map<Bytes<32>, Bytes<32>>;
 
+// Tracks colors minted by this contract — consume_token_for_action rejects any other color.
+export ledger valid_colors: Map<Bytes<32>, Boolean>;
+
 export circuit mint_capability_tokens(
                  subscription_key: Bytes<32>,
                  recipient: ZswapCoinPublicKey,
@@ -20,56 +23,65 @@ export circuit mint_capability_tokens(
   // Color is unique per user, derived from the admin-chosen subscription_key.
   const domain_sep = persistentHash<Bytes<32>>(public_sub_key);
 
+  // Mint amount+1: 1 unit is the anchor (proves ongoing subscription), rest are actions.
   const total = (public_amount + (1 as Uint<64>)) as Uint<64>;
 
-  // Mint to the user's shielded address (not ownPublicKey()).
   mintShieldedToken(
     domain_sep,
     total,
     public_coin_nonce,
     left<ZswapCoinPublicKey, ContractAddress>(public_recipient)
     );
+
+  // Register the color so consume_token_for_action can verify it.
+  const minted_color = tokenType(domain_sep, kernel.self());
+  if (!valid_colors.member(minted_color)) {
+    valid_colors.insert(minted_color, true);
+  }
 }
 
+// The caller sends a ShieldedCoinInfo (nonce, color, value) as a circuit parameter.
+// The DApp TypeScript generates a fresh nonce; the wallet's balanceUnsealedTransaction
+// handles spending the user's actual wallet coin (with mt_index) internally — the DApp
+// and this circuit never need mt_index.
+//
+// Flow: contract receives the coin, verifies color and value, returns all-but-1 unit
+// to ownPublicKey() immediately in the same transaction (the 1 consumed unit is the
+// action fee). The coin's nonce becomes a one-time nullifier_proxy preventing replay.
 export circuit consume_token_for_action(
-                 coin: QualifiedShieldedCoinInfo,
+                 coin: ShieldedCoinInfo,
                  action_type: Bytes<32>,
                  did_key: Bytes<32>
                  ): [] {
-  // Anchor protection: value must be > 1 so the anchor unit remains
-  assert(coin.value > (1 as Uint<128>), "Anchor token: cannot spend last unit");
-
+  const public_nonce  = disclose(coin.nonce);
+  const public_color  = disclose(coin.color);
+  const public_value  = disclose(coin.value);
   const public_action = disclose(action_type);
-  const public_did = disclose(did_key);
+  const public_did    = disclose(did_key);
 
-  // Disclose all coin fields to satisfy the compiler's witness-value disclosure rules.
-  const public_nonce = disclose(coin.nonce);
-  const public_color = disclose(coin.color);
-  const public_value = disclose(coin.value);
-  const public_mt_idx = disclose(coin.mt_index);
+  // Only tokens minted by this contract are accepted.
+  assert(valid_colors.member(public_color), "Invalid token color");
 
-  // Spend coin and remint with value-1 atomically via sendShielded.
-  // The remaining value is coin.value - 1.
+  // Anchor protection: must retain >= 1 unit after consuming 1.
+  assert(public_value >= (2 as Uint<128>), "Anchor token: value must be >= 2");
+
+  // Replay protection: each coin nonce can only gate one action.
+  const nullifier_proxy = persistentHash<Bytes<32>>(public_nonce);
+  assert(!capability_commitments.member(nullifier_proxy), "Token already used");
+
+  // Contract takes custody of the coin (wallet balances the Zswap spend side).
+  receiveShielded(disclose(coin));
+
+  // Return all-but-1 unit back to the caller in the same transaction.
   const remaining = (public_value - (1 as Uint<128>)) as Uint<128>;
-
-  // Use createZswapInput on the coin to register the UTXO spend kernel-side,
-  // then mintShieldedToken to issue the change output (value-1) back to self.
-  createZswapInput(coin);
-  mintShieldedToken(
-    public_color,
-    remaining as Uint<64>,
-    public_nonce,
-    left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey())
+  sendImmediateShielded(
+    disclose(coin),
+    left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey()),
+    remaining
     );
 
-  // Use the coin's nonce as a globally-unique nullifier proxy.
-  // The nonce is unique per UTXO; persistentHash produces a deterministic Bytes<32>.
-  const nullifier_proxy = persistentHash<Bytes<32>>(public_nonce);
-
   // Commitment = hash(action_type, contract_addr, did_key, color, nullifier_proxy).
-  // Including nullifier_proxy ties each commitment to exactly one token-spend event:
-  // an attacker who reads the public commitment cannot replay it with a fresh nullifier
-  // because the commitment itself encodes the original nullifier_proxy.
+  // This is read by the DID registry's assertCapabilityProof — formula is unchanged.
   const self_bytes = kernel.self().bytes;
   const commitment =
           persistentHash<Vector<5, Bytes<32>>>(

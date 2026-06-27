@@ -24,7 +24,7 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import * as rt from '@midnight-ntwrk/compact-runtime';
-import { Contract as TokenContract, ledger as tokenLedger } from '../generated/token-gating/contract/index.js';
+import { Contract as TokenContract, ledger as tokenLedger } from '../generated/tokenGatingContract.runtime.js';
 import { Contract as DidContract, ledger as didLedger } from '../generated/did-registry/contract/index.js';
 import { TokenStateManager } from '../lib/token/token-state.js';
 import type { ShieldedCoin, TokenMintRecord, TokenCapabilityPrivateState } from '../lib/token/token-types.js';
@@ -212,11 +212,35 @@ describe('REQ-04: full two-TX flow (mint → consume → self_register_did)', ()
 
     // Change coin value = 6 - 1 = 5
     const changeOutputs = consumeResult.context.currentZswapLocalState.outputs;
-    expect(changeOutputs[0].coinInfo.value).toBe(5n);
+    expect(changeOutputs.some((output) => output.coinInfo.value === 5n)).toBe(true);
 
     // TX2 works with this proof (raw coin nonce)
     const ctx = makeDidCtx();
     expect(() => didContract.impureCircuits.self_register_did(ctx, subjectNonce, mintedCoin.color, mintedCoin.nonce, commitment)).not.toThrow();
+  });
+
+  it('mint records the minted token color as valid on the token-gating ledger', () => {
+    const subjectNonce = nonce(52);
+    const did_key = computeDidKey(REGISTRY_SALT, COIN_PK.bytes, subjectNonce);
+    const { mintedCoin, postMintState } = mintTokens(5n, did_key, nonce(62));
+    const l = tokenLedger(postMintState);
+
+    expect(l.valid_colors.member(mintedCoin.color)).toBe(true);
+    expect(l.valid_colors.lookup(mintedCoin.color)).toBe(true);
+  });
+
+  it('consume rejects a shielded coin whose color was not minted by this token-gating contract', () => {
+    const subjectNonce = nonce(53);
+    const did_key = computeDidKey(REGISTRY_SALT, COIN_PK.bytes, subjectNonce);
+    const { mintedCoin, postMintState } = mintTokens(5n, did_key, nonce(63));
+    const invalidCoin = {
+      ...mintedCoin,
+      color: nonce(250),
+    };
+
+    expect(() =>
+      consumeToken(invalidCoin, pad32('self_register_did'), did_key, postMintState)
+    ).toThrow('Invalid token color');
   });
 });
 

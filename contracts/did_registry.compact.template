@@ -3,34 +3,48 @@ pragma language_version >= 0.23 && <= 0.23;
 import CompactStandardLibrary;
 
 export ledger registry_salt: Bytes<32>;
+
 export ledger admin_registered: Boolean;
+
 export ledger initial_admin: ZswapCoinPublicKey;
+
 export ledger did_controller: Map<Bytes<32>, ZswapCoinPublicKey>;
+
 export ledger role_by_key: Map<Bytes<32>, Boolean>;
+
 export ledger party_status: Map<Bytes<32>, Uint<8>>;
+
 export ledger did_commitments: Map<Bytes<32>, Bytes<32>>;
+
 export ledger document_commitments: Map<Bytes<32>, Bytes<32>>;
+
 export ledger proof_commitments: Map<Bytes<32>, Bytes<32>>;
+
 export ledger capability_commitments: Map<Bytes<32>, Bytes<32>>;
+
 export ledger revocation_commitments: Map<Bytes<32>, Bytes<32>>;
+
 export ledger total_active_dids: Uint<64>;
+
 export ledger registry_nonce: Counter;
 
-constructor(salt: Bytes<32>) {
+export ledger used_capability_nullifiers: Map<Bytes<32>, Boolean>;
+
+export ledger token_contract_address: ZswapCoinPublicKey;
+
+export ledger did_token_color: Map<Bytes<32>, Bytes<32>>;
+
+constructor(salt: Bytes<32>, token_contract: ZswapCoinPublicKey) {
   registry_salt = disclose(salt);
+  token_contract_address = disclose(token_contract);
   admin_registered = false;
   total_active_dids = 0 as Uint<64>;
 }
 
 circuit deriveDidKey(controller: ZswapCoinPublicKey, subject_nonce: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<4, Bytes<32>>>(
-    [
-      pad(32, "didmn:did:v1"),
-      registry_salt,
-      controller.bytes,
-      subject_nonce
-    ]
-  );
+           [pad(32, "didmn:did:v1"), registry_salt, controller.bytes, subject_nonce]
+           );
 }
 
 pure circuit roleKey(controller: ZswapCoinPublicKey, role: Bytes<32>): Bytes<32> {
@@ -53,6 +67,55 @@ pure circuit agentRole(): Bytes<32> {
   return pad(32, "AGENT");
 }
 
+pure circuit actionTypeSelfRegister(): Bytes<32> {
+  return pad(32, "self_register_did");
+}
+
+pure circuit actionTypeRequestUpdate(): Bytes<32> {
+  return pad(32, "request_update_did");
+}
+
+pure circuit actionTypeGrantRole(): Bytes<32> {
+  return pad(32, "grant_role");
+}
+
+pure circuit actionTypeRevokeRole(): Bytes<32> {
+  return pad(32, "revoke_role");
+}
+
+pure circuit actionTypeRevokeDid(): Bytes<32> {
+  return pad(32, "revoke_did");
+}
+
+circuit assertCapabilityProof(
+          nullifier: Bytes<32>,
+          commitment_value: Bytes<32>,
+          action_type: Bytes<32>,
+          did_key: Bytes<32>
+          ): [] {
+  const public_nullifier = disclose(nullifier);
+  const public_commitment = disclose(commitment_value);
+
+  // Look up the token color registered for this DID and recompute the expected
+  // commitment using the stored token_contract_address.
+  // Nullifier_proxy = persistentHash(raw_nullifier). Including it in the commitment
+  // ties each proof to exactly one token-spend event (matches token_gating formula).
+  const nullifier_proxy = persistentHash<Bytes<32>>(public_nullifier);
+
+  assert(did_token_color.member(did_key), "DID not registered");
+  const stored_color = did_token_color.lookup(did_key);
+  const self_bytes = token_contract_address.bytes;
+  const expected =
+          persistentHash<Vector<5, Bytes<32>>>(
+            [action_type, self_bytes, did_key, stored_color, nullifier_proxy]
+            );
+
+  assert(public_commitment == expected, "Invalid capability proof");
+  assert(!used_capability_nullifiers.member(public_nullifier), "Capability already used");
+
+  used_capability_nullifiers.insert(public_nullifier, true);
+}
+
 circuit assertRole(role: Bytes<32>): [] {
   const caller = ownPublicKey();
   const key = roleKey(caller, role);
@@ -69,13 +132,38 @@ export circuit register_initial_admin(): [] {
   admin_registered = true;
 }
 
-export circuit self_register_did(subject_nonce: Bytes<32>): Bytes<32> {
+export circuit self_register_did(
+                 subject_nonce: Bytes<32>,
+                 token_color: Bytes<32>,
+                 nullifier: Bytes<32>,
+                 commitment_value: Bytes<32>
+                 ): Bytes<32> {
   assert(admin_registered, "Registry not yet bootstrapped");
-  const controller = ownPublicKey();
   const public_nonce = disclose(subject_nonce);
+  const controller = ownPublicKey();
   const did_key = disclose(deriveDidKey(controller, public_nonce));
 
+  // The DID does not exist yet in did_token_color, so we cannot use
+  // assertCapabilityProof (which looks up the stored color). Inline the
+  // verification using the supplied token_color.
+  // Formula matches consume_token_for_action: persistentHash([action, contract, did_key, color, nullifier_proxy])
+  const public_color = disclose(token_color);
+  const public_nullifier = disclose(nullifier);
+  const public_commitment = disclose(commitment_value);
+  const nullifier_proxy = persistentHash<Bytes<32>>(public_nullifier);
+  const self_bytes = token_contract_address.bytes;
+  const expected =
+          persistentHash<Vector<5, Bytes<32>>>(
+            [actionTypeSelfRegister(), self_bytes, did_key, public_color, nullifier_proxy]
+            );
+  assert(public_commitment == expected, "Invalid capability proof");
+  assert(!used_capability_nullifiers.member(public_nullifier), "Capability already used");
+  used_capability_nullifiers.insert(public_nullifier, true);
+
   assert(!did_controller.member(did_key), "DID already registered");
+
+  // Store the token color associated with this DID for subsequent operations.
+  did_token_color.insert(did_key, public_color);
 
   did_controller.insert(did_key, controller);
   party_status.insert(did_key, 1 as Uint<8>);
@@ -89,15 +177,18 @@ export circuit self_register_did(subject_nonce: Bytes<32>): Bytes<32> {
 }
 
 export circuit request_update_did(
-  subject_nonce: Bytes<32>,
-  doc_commitment: Bytes<32>,
-  cap_commitment: Bytes<32>
-): [] {
+                 subject_nonce: Bytes<32>,
+                 doc_commitment: Bytes<32>,
+                 cap_commitment: Bytes<32>,
+                 nullifier: Bytes<32>,
+                 commitment_value: Bytes<32>
+                 ): [] {
   const controller = ownPublicKey();
   const public_nonce = disclose(subject_nonce);
+  const did_key = disclose(deriveDidKey(controller, public_nonce));
+  assertCapabilityProof(nullifier, commitment_value, actionTypeRequestUpdate(), did_key);
   const public_doc_commitment = disclose(doc_commitment);
   const public_cap_commitment = disclose(cap_commitment);
-  const did_key = disclose(deriveDidKey(controller, public_nonce));
 
   assert(did_controller.member(did_key), "DID not registered");
   assert(did_controller.lookup(did_key) == controller, "Caller is not DID controller");
@@ -110,11 +201,11 @@ export circuit request_update_did(
 }
 
 export circuit issue_did(
-  did_key: Bytes<32>,
-  did_commitment: Bytes<32>,
-  doc_commitment: Bytes<32>,
-  proof_commitment: Bytes<32>
-): [] {
+                 did_key: Bytes<32>,
+                 did_commitment: Bytes<32>,
+                 doc_commitment: Bytes<32>,
+                 proof_commitment: Bytes<32>
+                 ): [] {
   const caller = ownPublicKey();
   const admin_lookup_key = roleKey(caller, adminRole());
   const issuer_lookup_key = roleKey(caller, issuerRole());
@@ -137,27 +228,40 @@ export circuit issue_did(
   total_active_dids = (total_active_dids + (1 as Uint<64>)) as Uint<64>;
 }
 
-export circuit grant_role(did_key: Bytes<32>, role: Bytes<32>): [] {
+export circuit grant_role(
+                 did_key: Bytes<32>,
+                 role: Bytes<32>,
+                 nullifier: Bytes<32>,
+                 commitment_value: Bytes<32>
+                 ): [] {
   assertRole(adminRole());
   const public_did_key = disclose(did_key);
+  assertCapabilityProof(nullifier, commitment_value, actionTypeGrantRole(), public_did_key);
   const public_role = disclose(role);
   assert(did_controller.member(public_did_key), "DID not registered");
   const target = did_controller.lookup(public_did_key);
   role_by_key.insert(roleKey(target, public_role), true);
 }
 
-export circuit revoke_role(did_key: Bytes<32>, role: Bytes<32>): [] {
+export circuit revoke_role(
+                 did_key: Bytes<32>,
+                 role: Bytes<32>,
+                 nullifier: Bytes<32>,
+                 commitment_value: Bytes<32>
+                 ): [] {
   assertRole(adminRole());
   const public_did_key = disclose(did_key);
+  assertCapabilityProof(nullifier, commitment_value, actionTypeRevokeRole(), public_did_key);
   const public_role = disclose(role);
   assert(did_controller.member(public_did_key), "DID not registered");
   const target = did_controller.lookup(public_did_key);
   role_by_key.insert(roleKey(target, public_role), false);
 }
 
-export circuit revoke_did(did_key: Bytes<32>): [] {
+export circuit revoke_did(did_key: Bytes<32>, nullifier: Bytes<32>, commitment_value: Bytes<32>): [] {
   assertRole(adminRole());
   const public_did_key = disclose(did_key);
+  assertCapabilityProof(nullifier, commitment_value, actionTypeRevokeDid(), public_did_key);
   assert(did_controller.member(public_did_key), "DID not registered");
   assert(party_status.member(public_did_key), "DID not registered");
   assert(party_status.lookup(public_did_key) == (2 as Uint<8>), "DID is not active");
@@ -169,5 +273,5 @@ export circuit revoke_did(did_key: Bytes<32>): [] {
 }
 
 export circuit contract_version(): Bytes<32> {
-  return pad(32, "did-registry:v2");
+  return pad(32, "__CONTRACT_VERSION__");
 }

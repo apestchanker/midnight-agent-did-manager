@@ -24,6 +24,9 @@ vi.mock("@midnight-ntwrk/midnight-js-types", () => ({
 
 
 describe("providers reconnect", () => {
+  const shieldedAddress =
+    "mn_shield-cpk_preprod1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqs554jet";
+
   it("routes connectedAPI calls through the reconnectable current wallet session", async () => {
     vi.stubGlobal("window", {
       location: { origin: "http://localhost:5174" },
@@ -40,7 +43,7 @@ describe("providers reconnect", () => {
         proverServerUri: "http://127.0.0.1:6300",
       })),
       getShieldedAddresses: vi.fn(async () => ({
-        shieldedAddress: "shielded1",
+        shieldedAddress,
         shieldedCoinPublicKey: "coin" as never,
         shieldedEncryptionPublicKey: "enc" as never,
       })),
@@ -73,7 +76,7 @@ describe("providers reconnect", () => {
         proverServerUri: "http://127.0.0.1:6300",
       })),
       getShieldedAddresses: vi.fn(async () => ({
-        shieldedAddress: "shielded1",
+        shieldedAddress,
         shieldedCoinPublicKey: "coin" as never,
         shieldedEncryptionPublicKey: "enc" as never,
       })),
@@ -135,7 +138,7 @@ describe("providers reconnect", () => {
         proverServerUri: "http://127.0.0.1:6300",
       })),
       getShieldedAddresses: vi.fn(async () => ({
-        shieldedAddress: "shielded1",
+        shieldedAddress,
         shieldedCoinPublicKey: "coin" as never,
         shieldedEncryptionPublicKey: "enc" as never,
       })),
@@ -194,7 +197,7 @@ describe("providers reconnect", () => {
         proverServerUri: "http://127.0.0.1:6300",
       })),
       getShieldedAddresses: vi.fn(async () => ({
-        shieldedAddress: "shielded1",
+        shieldedAddress,
         shieldedCoinPublicKey: "coin" as never,
         shieldedEncryptionPublicKey: "enc" as never,
       })),

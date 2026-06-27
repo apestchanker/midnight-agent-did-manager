@@ -12,6 +12,7 @@ import { IssuerPanel } from "./components/IssuerPanel";
 import { OwnerVaultPanel } from "./components/OwnerVaultPanel";
 import { WorkflowPanel } from "./components/WorkflowPanel";
 import { VcPanel } from "./components/VcPanel";
+import { TokenGatingPanel } from "./components/TokenGatingPanel";
 import type { DidRecord, DeployResult, RegistryAccess, RegistrySummary } from "./types/did";
 import type {
   DidRequestRow,
@@ -26,6 +27,8 @@ import {
   getSavedContractAddress,
   getSavedDeployment,
 } from "./lib/didContract";
+import { getSavedTokenDeployment } from "./lib/did/cache";
+import { TokenGatingAPI } from "./lib/token/token-gating-api";
 import {
   requestDidWithSync,
   revokeDidWithSync,
@@ -89,6 +92,7 @@ export default function App() {
     | typeof SECTION_IDS.credentials
     | typeof SECTION_IDS.workflow
     | "admin-subscriptions"
+    | "admin-tokens"
     | "admin-logs"
     | "owner-vault"
     | "deploy-did-registry";
@@ -161,6 +165,7 @@ export default function App() {
   const [selectedAgentKey, setSelectedAgentKey] = useState("");
   const [didRecord, setDidRecord] = useState<DidRecord | null>(null);
   const [deployResult, setDeployResult] = useState<DeployResult | null>(null);
+  const [tokenAPI, setTokenAPI] = useState<TokenGatingAPI | null>(null);
   const [registryAccess, setRegistryAccess] = useState<RegistryAccess | null>(null);
   const [customerRequests, setCustomerRequests] = useState<DidRequestRow[]>([]);
   const [adminRequests, setAdminRequests] = useState<DidRequestRow[]>([]);
@@ -418,6 +423,16 @@ export default function App() {
       setSelectedAgentKey("");
     }
   }, [walletAddress]);
+
+  // Reconnect to the token gating contract when providers become available
+  useEffect(() => {
+    if (!providers) { setTokenAPI(null); return; }
+    const saved = getSavedTokenDeployment();
+    if (!saved?.contractAddress) return;
+    TokenGatingAPI.join(providers, saved.contractAddress)
+      .then(setTokenAPI)
+      .catch(() => setTokenAPI(null));
+  }, [providers]);
 
   useEffect(() => {
     if (viewMode === "user") {
@@ -942,11 +957,11 @@ export default function App() {
   }, [contractAddress, didRecord?.status]);
 
   useEffect(() => {
-    if (!registryApi || !walletAddress.trim()) {
+    if (!registryApi || !walletAddress.trim() || !providers) {
       setRegistryAccess(null);
       return;
     }
-    const subscription = registryApi.access$(walletAddress).subscribe({
+    const subscription = registryApi.access$(providers.shieldedCoinPublicKeyHex).subscribe({
       next: (result) => {
         setRegistryAccess(result);
         if (
@@ -966,7 +981,7 @@ export default function App() {
     });
 
     return () => subscription.unsubscribe();
-  }, [registryApi, walletAddress, isConfiguredAdminWallet]);
+  }, [registryApi, walletAddress, isConfiguredAdminWallet, providers]);
 
   useEffect(() => {
     if (!walletAddress.trim()) {
@@ -1051,7 +1066,8 @@ export default function App() {
       ? [
           { id: SECTION_IDS.wallet, label: "Wallet", shortLabel: "W" },
           { id: SECTION_IDS.registry, label: "Registry", shortLabel: "R" },
-          { id: "admin-subscriptions", label: "Subscriptions", shortLabel: "S" },
+          { id: "admin-subscriptions", label: "DID Quota", shortLabel: "S" },
+          { id: "admin-tokens", label: "Action Credits", shortLabel: "T" },
           { id: SECTION_IDS.workflow, label: "Review Queue", shortLabel: "Q" },
           { id: SECTION_IDS.issuer, label: "Issuer", shortLabel: "I" },
           { id: "admin-logs", label: "Logs", shortLabel: "L" },
@@ -2139,6 +2155,25 @@ export default function App() {
                   }
                   showSectionNav={false}
                   showHeader={false}
+                />
+              </section>
+            )}
+
+            {providers && viewMode === "admin" && activeMainSection === "admin-tokens" && (
+              <section id="admin-tokens" className="scroll-mt-24 space-y-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-white">Shielded Action Credits</h2>
+                  <p className="text-sm text-zinc-500">
+                    On-chain shielded tokens that gate DID registry operations. Each gated action
+                    (self-register, update, grant/revoke role, revoke DID) consumes one credit.
+                    Separate from the off-chain DID issuance quota shown in{" "}
+                    <strong>DID Quota</strong>.
+                  </p>
+                </div>
+                <TokenGatingPanel
+                  providers={providers}
+                  tokenAPI={tokenAPI}
+                  isAdmin={isConfiguredAdminWallet}
                 />
               </section>
             )}

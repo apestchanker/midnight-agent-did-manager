@@ -273,5 +273,5 @@ export circuit revoke_did(did_key: Bytes<32>, nullifier: Bytes<32>, commitment_v
 }
 
 export circuit contract_version(): Bytes<32> {
-  return pad(32, "did-registry:v2");
+  return pad(32, "2.0.0");
 }

@@ -26,6 +26,27 @@
             "type-name": "Bytes",
             "length": 32
           }
+        },
+        {
+          "name": "token_color",
+          "type": {
+            "type-name": "Bytes",
+            "length": 32
+          }
+        },
+        {
+          "name": "nullifier",
+          "type": {
+            "type-name": "Bytes",
+            "length": 32
+          }
+        },
+        {
+          "name": "commitment_value",
+          "type": {
+            "type-name": "Bytes",
+            "length": 32
+          }
         }
       ],
       "result-type": {
@@ -54,6 +75,20 @@
         },
         {
           "name": "cap_commitment",
+          "type": {
+            "type-name": "Bytes",
+            "length": 32
+          }
+        },
+        {
+          "name": "nullifier",
+          "type": {
+            "type-name": "Bytes",
+            "length": 32
+          }
+        },
+        {
+          "name": "commitment_value",
           "type": {
             "type-name": "Bytes",
             "length": 32
@@ -124,6 +159,20 @@
             "type-name": "Bytes",
             "length": 32
           }
+        },
+        {
+          "name": "nullifier",
+          "type": {
+            "type-name": "Bytes",
+            "length": 32
+          }
+        },
+        {
+          "name": "commitment_value",
+          "type": {
+            "type-name": "Bytes",
+            "length": 32
+          }
         }
       ],
       "result-type": {
@@ -150,6 +199,20 @@
             "type-name": "Bytes",
             "length": 32
           }
+        },
+        {
+          "name": "nullifier",
+          "type": {
+            "type-name": "Bytes",
+            "length": 32
+          }
+        },
+        {
+          "name": "commitment_value",
+          "type": {
+            "type-name": "Bytes",
+            "length": 32
+          }
         }
       ],
       "result-type": {
@@ -165,6 +228,20 @@
       "arguments": [
         {
           "name": "did_key",
+          "type": {
+            "type-name": "Bytes",
+            "length": 32
+          }
+        },
+        {
+          "name": "nullifier",
+          "type": {
+            "type-name": "Bytes",
+            "length": 32
+          }
+        },
+        {
+          "name": "commitment_value",
           "type": {
             "type-name": "Bytes",
             "length": 32
@@ -196,7 +273,10 @@
   "ledger": [
     {
       "name": "registry_salt",
-      "index": 0,
+      "index": [
+        0,
+        0
+      ],
       "exported": true,
       "storage": "Cell",
       "type": {
@@ -206,7 +286,10 @@
     },
     {
       "name": "admin_registered",
-      "index": 1,
+      "index": [
+        1,
+        0
+      ],
       "exported": true,
       "storage": "Cell",
       "type": {
@@ -215,7 +298,10 @@
     },
     {
       "name": "initial_admin",
-      "index": 2,
+      "index": [
+        1,
+        1
+      ],
       "exported": true,
       "storage": "Cell",
       "type": {
@@ -234,7 +320,10 @@
     },
     {
       "name": "did_controller",
-      "index": 3,
+      "index": [
+        1,
+        2
+      ],
       "exported": true,
       "storage": "Map",
       "key": {
@@ -257,7 +346,10 @@
     },
     {
       "name": "role_by_key",
-      "index": 4,
+      "index": [
+        1,
+        3
+      ],
       "exported": true,
       "storage": "Map",
       "key": {
@@ -270,7 +362,10 @@
     },
     {
       "name": "party_status",
-      "index": 5,
+      "index": [
+        1,
+        4
+      ],
       "exported": true,
       "storage": "Map",
       "key": {
@@ -284,7 +379,10 @@
     },
     {
       "name": "did_commitments",
-      "index": 6,
+      "index": [
+        1,
+        5
+      ],
       "exported": true,
       "storage": "Map",
       "key": {
@@ -298,7 +396,10 @@
     },
     {
       "name": "document_commitments",
-      "index": 7,
+      "index": [
+        1,
+        6
+      ],
       "exported": true,
       "storage": "Map",
       "key": {
@@ -312,7 +413,10 @@
     },
     {
       "name": "proof_commitments",
-      "index": 8,
+      "index": [
+        1,
+        7
+      ],
       "exported": true,
       "storage": "Map",
       "key": {
@@ -326,7 +430,10 @@
     },
     {
       "name": "capability_commitments",
-      "index": 9,
+      "index": [
+        1,
+        8
+      ],
       "exported": true,
       "storage": "Map",
       "key": {
@@ -340,7 +447,10 @@
     },
     {
       "name": "revocation_commitments",
-      "index": 10,
+      "index": [
+        1,
+        9
+      ],
       "exported": true,
       "storage": "Map",
       "key": {
@@ -354,7 +464,10 @@
     },
     {
       "name": "total_active_dids",
-      "index": 11,
+      "index": [
+        1,
+        10
+      ],
       "exported": true,
       "storage": "Cell",
       "type": {
@@ -364,9 +477,67 @@
     },
     {
       "name": "registry_nonce",
-      "index": 12,
+      "index": [
+        1,
+        11
+      ],
       "exported": true,
       "storage": "Counter"
+    },
+    {
+      "name": "used_capability_nullifiers",
+      "index": [
+        1,
+        12
+      ],
+      "exported": true,
+      "storage": "Map",
+      "key": {
+        "type-name": "Bytes",
+        "length": 32
+      },
+      "value": {
+        "type-name": "Boolean"
+      }
+    },
+    {
+      "name": "token_contract_address",
+      "index": [
+        1,
+        13
+      ],
+      "exported": true,
+      "storage": "Cell",
+      "type": {
+        "type-name": "Struct",
+        "name": "ZswapCoinPublicKey",
+        "elements": [
+          {
+            "name": "bytes",
+            "type": {
+              "type-name": "Bytes",
+              "length": 32
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "did_token_color",
+      "index": [
+        1,
+        14
+      ],
+      "exported": true,
+      "storage": "Map",
+      "key": {
+        "type-name": "Bytes",
+        "length": 32
+      },
+      "value": {
+        "type-name": "Bytes",
+        "length": 32
+      }
     }
   ]
 }

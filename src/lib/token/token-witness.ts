@@ -21,7 +21,7 @@ export interface TokenProviders {
         coinInfo?: { nonce: Uint8Array; color: Uint8Array; value: bigint };
       }>;
       consume_token_for_action: (
-        coin: { nonce: Uint8Array; color: Uint8Array; value: bigint; mt_index: bigint },
+        coin: { nonce: Uint8Array; color: Uint8Array; value: bigint },
         actionType: Uint8Array,
         didKey: Uint8Array
       ) => Promise<{ txHash: string }>;
@@ -138,7 +138,6 @@ export async function consumeTokenForAction(
       nonce: coin.nonce,
       color: coin.color,
       value: coin.value,
-      mt_index: 0n,
     },
     actionTypeBytes,
     didKey

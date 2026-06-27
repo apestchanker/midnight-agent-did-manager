@@ -157,9 +157,15 @@ export async function deriveRegistryAccess(
   const { persistentHash, CompactTypeVector, Bytes32Descriptor } = await import(
     "@midnight-ntwrk/compact-runtime"
   );
+  const walletPublicKeyBytes = fromHex(walletPublicKeyHex);
+  if (walletPublicKeyBytes.length !== 32) {
+    throw new Error(
+      `Expected a 32-byte wallet public key for registry access, got ${walletPublicKeyBytes.length} bytes.`,
+    );
+  }
   const roleKeyBytes = persistentHash(
     new CompactTypeVector(2, Bytes32Descriptor),
-    [fromHex(walletPublicKeyHex), ADMIN_ROLE_TAG],
+    [walletPublicKeyBytes, ADMIN_ROLE_TAG],
   );
   const adminRoleValue = mapLookupByHexKey(
     ledgerState.role_by_key,

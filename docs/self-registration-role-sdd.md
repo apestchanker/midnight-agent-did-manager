@@ -2,20 +2,20 @@
 
 ## Status
 
-Target design for the next DID registry iteration.
+Implemented design for the current DID registry iteration.
 
-This SDD replaces the current browser-local owner-secret authority model with a Midnight-native controller model based on `ownPublicKey()` and `ZswapCoinPublicKey`. It is not yet fully implemented in `contracts/did_registry.compact`.
+This SDD replaces the earlier browser-local owner-secret authority model with a Midnight-native controller model based on `ownPublicKey()` and `ZswapCoinPublicKey`. The implemented contract also gates privileged user/controller actions with shielded action-credit tokens minted by `contracts/token_gating.compact`.
 
 Feasibility was verified with the local Compact compiler using probe contracts under `.analysis/`:
 
 - `.analysis/controller_binding_probe.compact`
 - `.analysis/self_registration_probe.compact`
 
-The probes compiled successfully and generated prover/verifier artifacts under `/tmp`.
+The original probes compiled successfully and generated prover/verifier artifacts under `/tmp`. The production implementation now lives in `contracts/did_registry.compact` and `contracts/token_gating.compact`, with generated browser assets under `public/contracts/managed/`.
 
 ## Problem
 
-The current DID registry uses a local owner secret through `witness issuerSecret()` for privileged issuance, update, and revocation. That creates a poor adoption and security model:
+The earlier DID registry model used a local owner secret through `witness issuerSecret()` for privileged issuance, update, and revocation. That created a poor adoption and security model:
 
 - browser-local private state can be lost or compromised
 - users must reason about a separate technical secret
@@ -34,6 +34,7 @@ The new design must let users self-register safely on a public chain without req
 - Let admins issue, revoke, certify, grant roles, and revoke roles.
 - Let admins grant or revoke `ADMIN`, `ISSUER`, `USER`, and `AGENT` roles for registered controllers.
 - Support additional admins without redeploying the registry.
+- Gate self-registration and privileged mutations with shielded action credits issued by the token-gating contract.
 - Support Dust sponsorship if the sponsored transaction still preserves the user's `ownPublicKey()` as the circuit caller.
 
 ## Non-Goals
@@ -86,6 +87,12 @@ For one DID per wallet, the product can use a fixed nonce. For multiple agents p
 
 The nonce is not an authority secret. It only selects a DID slot under the controller key. If an attacker sees the nonce, their `ownPublicKey()` is different, so they derive a different DID key.
 
+### Shielded Action Credit
+
+A shielded action credit is a token minted by `token_gating.compact`. The admin mints `credits + 1` raw units to the user's shielded wallet. One raw unit is a permanent anchor; every gated DID registry operation consumes one spendable raw unit.
+
+Wallets may show the token as `Kind: unknown` or `Verified: No` because that metadata is wallet-local token classification. didMN verifies the token by checking the active token-gating contract's `valid_colors` ledger and by enforcing `consume_token_for_action` before the registry operation.
+
 ## High-Level Architecture
 
 ```text
@@ -97,31 +104,36 @@ Wallet tx caller
 
 Admin wallet caller
   -> Compact ownPublicKey()
-  -> role_key = hash("didmn:role:v1", ownPublicKey().bytes, role)
+  -> role_key = hash(ownPublicKey().bytes, role)
   -> role_by_key[role_key] must be true for privileged actions
+
+Shielded action-credit holder
+  -> TX1 consume_token_for_action on token_gating
+  -> token_gating verifies color in valid_colors and writes commitment
+  -> TX2 DID registry operation verifies supplied nullifier/commitment
 ```
 
 ## On-Chain State
 
-Target ledgers:
+Implemented DID registry ledgers:
 
 ```compact
-export ledger initialized: Boolean;
 export ledger registry_salt: Bytes<32>;
 export ledger admin_registered: Boolean;
 export ledger initial_admin: ZswapCoinPublicKey;
 
 export ledger did_controller: Map<Bytes<32>, ZswapCoinPublicKey>;
-export ledger did_status: Map<Bytes<32>, Uint<8>>;
+export ledger party_status: Map<Bytes<32>, Uint<8>>;
 export ledger did_commitments: Map<Bytes<32>, Bytes<32>>;
 export ledger document_commitments: Map<Bytes<32>, Bytes<32>>;
 export ledger proof_commitments: Map<Bytes<32>, Bytes<32>>;
 export ledger capability_commitments: Map<Bytes<32>, Bytes<32>>;
 export ledger revocation_commitments: Map<Bytes<32>, Bytes<32>>;
+export ledger used_capability_nullifiers: Map<Bytes<32>, Boolean>;
+export ledger token_contract_address: ZswapCoinPublicKey;
+export ledger did_token_color: Map<Bytes<32>, Bytes<32>>;
 
 export ledger role_by_key: Map<Bytes<32>, Boolean>;
-export ledger party_status: Map<Bytes<32>, Uint<8>>;
-export ledger total_requests: Uint<64>;
 export ledger total_active_dids: Uint<64>;
 export ledger registry_nonce: Counter;
 ```
@@ -163,13 +175,7 @@ circuit deriveDidKey(controller: ZswapCoinPublicKey, subject_nonce: Bytes<32>): 
 }
 
 circuit roleKey(controller: ZswapCoinPublicKey, role: Bytes<32>): Bytes<32> {
-  return persistentHash<Vector<3, Bytes<32>>>(
-    [
-      pad(32, "didmn:role:v1"),
-      controller.bytes,
-      role
-    ]
-  );
+  return persistentHash<Vector<2, Bytes<32>>>([controller.bytes, role]);
 }
 
 pure circuit adminRole(): Bytes<32> {
@@ -204,6 +210,7 @@ export circuit register_initial_admin(): [] {
   const caller = ownPublicKey();
   initial_admin = caller;
   role_by_key.insert(roleKey(caller, adminRole()), true);
+  role_by_key.insert(roleKey(caller, userRole()), true);
   admin_registered = true;
 }
 ```
@@ -221,17 +228,26 @@ No user registration is allowed by the platform before canonical registry valida
 ### Self-Register DID
 
 ```compact
-export circuit self_register_did(subject_nonce: Bytes<32>): Bytes<32> {
+export circuit self_register_did(
+  subject_nonce: Bytes<32>,
+  token_color: Bytes<32>,
+  nullifier: Bytes<32>,
+  commitment_value: Bytes<32>
+): Bytes<32> {
+  assert(admin_registered, "Registry not yet bootstrapped");
   const controller = ownPublicKey();
   const public_subject_nonce = disclose(subject_nonce);
   const did_key = disclose(deriveDidKey(controller, public_subject_nonce));
 
+  assertCapabilityProofForSelfRegister(token_color, nullifier, commitment_value, did_key);
   assert(!did_controller.member(did_key), "DID already registered");
 
+  did_token_color.insert(did_key, disclose(token_color));
   did_controller.insert(did_key, controller);
-  did_status.insert(did_key, 1 as Uint<8>);
-  role_by_key.insert(roleKey(controller, userRole()), true);
-  registry_nonce.increment(1);
+  party_status.insert(did_key, 1 as Uint<8>);
+  if (!role_by_key.member(roleKey(controller, userRole()))) {
+    role_by_key.insert(roleKey(controller, userRole()), true);
+  }
 
   return did_key;
 }
@@ -242,27 +258,67 @@ Security effect:
 - attacker using the same nonce derives a different `did_key` because their `ownPublicKey()` is different
 - attacker cannot register the victim wallet's DID key
 - attacker cannot later modify the victim DID because mutation checks compare against `ownPublicKey()`
+- attacker also cannot use arbitrary wallet coins because the token proof must match a color minted by the active token-gating contract and the nullifier must be unused
+
+### Token-Gating Contract
+
+```compact
+export ledger capability_commitments: Map<Bytes<32>, Bytes<32>>;
+export ledger valid_colors: Map<Bytes<32>, Boolean>;
+
+export circuit mint_capability_tokens(
+  subscription_key: Bytes<32>,
+  recipient: ZswapCoinPublicKey,
+  coin_nonce: Bytes<32>,
+  amount: Uint<64>
+): [] {
+  assert(amount >= (1 as Uint<64>), "Amount must be >= 1");
+  const domain_sep = persistentHash<Bytes<32>>(disclose(subscription_key));
+  const total = (disclose(amount) + (1 as Uint<64>)) as Uint<64>;
+  mintShieldedToken(domain_sep, total, disclose(coin_nonce), left<ZswapCoinPublicKey, ContractAddress>(disclose(recipient)));
+  valid_colors.insert(tokenType(domain_sep, kernel.self()), true);
+}
+
+export circuit consume_token_for_action(
+  coin: ShieldedCoinInfo,
+  action_type: Bytes<32>,
+  did_key: Bytes<32>
+): [] {
+  assert(valid_colors.member(disclose(coin.color)), "Invalid token color");
+  assert(disclose(coin.value) >= (2 as Uint<128>), "Anchor token: value must be >= 2");
+  receiveShielded(disclose(coin));
+  sendImmediateShielded(disclose(coin), left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey()), disclose(coin.value) - (1 as Uint<128>));
+  capability_commitments.insert(
+    persistentHash<Bytes<32>>(disclose(coin.nonce)),
+    persistentHash<Vector<5, Bytes<32>>>([disclose(action_type), kernel.self().bytes, disclose(did_key), disclose(coin.color), persistentHash<Bytes<32>>(disclose(coin.nonce))])
+  );
+}
+```
+
+The app classifies wallet token balances as didMN action credits only when the active token-gating contract recognizes the token color in `valid_colors`. Wallet-level metadata such as `Kind: unknown` or `Verified: No` does not control registry authorization.
 
 ### Request Self-Service Update
 
 ```compact
 export circuit request_update_did(
   subject_nonce: Bytes<32>,
-  update_commitment: Bytes<32>,
-  capability_commitment: Bytes<32>
+  doc_commitment: Bytes<32>,
+  cap_commitment: Bytes<32>,
+  nullifier: Bytes<32>,
+  commitment_value: Bytes<32>
 ): [] {
   const controller = ownPublicKey();
   const public_subject_nonce = disclose(subject_nonce);
   const did_key = disclose(deriveDidKey(controller, public_subject_nonce));
+  assertCapabilityProof(nullifier, commitment_value, actionTypeRequestUpdate(), did_key);
 
   assert(did_controller.member(did_key), "DID not registered");
   assert(did_controller.lookup(did_key) == controller, "Caller is not DID controller");
-  assert(did_status.lookup(did_key) == (2 as Uint<8>), "DID is not active");
+  assert(party_status.lookup(did_key) == (2 as Uint<8>), "DID is not active");
 
-  document_commitments.insert(did_key, disclose(update_commitment));
-  capability_commitments.insert(did_key, disclose(capability_commitment));
-  did_status.insert(did_key, 4 as Uint<8>);
-  registry_nonce.increment(1);
+  document_commitments.insert(did_key, disclose(doc_commitment));
+  capability_commitments.insert(did_key, disclose(cap_commitment));
+  party_status.insert(did_key, 4 as Uint<8>);
 }
 ```
 
@@ -275,18 +331,20 @@ export circuit issue_did(
   document_commitment: Bytes<32>,
   proof_commitment: Bytes<32>
 ): [] {
-  assertRole(adminRole());
+  const caller = ownPublicKey();
+  const is_admin = role_by_key.member(roleKey(caller, adminRole())) && role_by_key.lookup(roleKey(caller, adminRole()));
+  const is_issuer = role_by_key.member(roleKey(caller, issuerRole())) && role_by_key.lookup(roleKey(caller, issuerRole()));
+  assert(is_admin || is_issuer, "Missing role");
   const public_did_key = disclose(did_key);
 
   assert(did_controller.member(public_did_key), "DID not registered");
-  assert(did_status.lookup(public_did_key) == (1 as Uint<8>), "DID is not pending issuance");
+  assert(party_status.lookup(public_did_key) == (1 as Uint<8>), "DID is not pending issuance");
 
   did_commitments.insert(public_did_key, disclose(did_commitment));
   document_commitments.insert(public_did_key, disclose(document_commitment));
   proof_commitments.insert(public_did_key, disclose(proof_commitment));
-  did_status.insert(public_did_key, 2 as Uint<8>);
+  party_status.insert(public_did_key, 2 as Uint<8>);
   total_active_dids = (total_active_dids + 1) as Uint<64>;
-  registry_nonce.increment(1);
 }
 ```
 
@@ -297,24 +355,34 @@ export circuit issue_did(
 Admin can grant or revoke roles for registered DID controllers.
 
 ```compact
-export circuit grant_role(did_key: Bytes<32>, role: Bytes<32>): [] {
+export circuit grant_role(
+  did_key: Bytes<32>,
+  role: Bytes<32>,
+  nullifier: Bytes<32>,
+  commitment_value: Bytes<32>
+): [] {
   assertRole(adminRole());
   const public_did_key = disclose(did_key);
+  assertCapabilityProof(nullifier, commitment_value, actionTypeGrantRole(), public_did_key);
   assert(did_controller.member(public_did_key), "DID not registered");
 
   const target = did_controller.lookup(public_did_key);
   role_by_key.insert(roleKey(target, disclose(role)), true);
-  registry_nonce.increment(1);
 }
 
-export circuit revoke_role(did_key: Bytes<32>, role: Bytes<32>): [] {
+export circuit revoke_role(
+  did_key: Bytes<32>,
+  role: Bytes<32>,
+  nullifier: Bytes<32>,
+  commitment_value: Bytes<32>
+): [] {
   assertRole(adminRole());
   const public_did_key = disclose(did_key);
+  assertCapabilityProof(nullifier, commitment_value, actionTypeRevokeRole(), public_did_key);
   assert(did_controller.member(public_did_key), "DID not registered");
 
   const target = did_controller.lookup(public_did_key);
   role_by_key.insert(roleKey(target, disclose(role)), false);
-  registry_nonce.increment(1);
 }
 ```
 
@@ -414,30 +482,23 @@ The DApp must:
 - show role state for the connected controller
 - show clear errors for "DID not registered", "Caller is not DID controller", and "Missing role"
 
-## Migration Plan
+## Implementation Status
 
-1. Keep the current `issuerSecret()` registry as legacy/dev.
-2. Add the new controller-binding registry contract version.
-3. Add tests for derived DID key registration and controller-only update.
-4. Add admin bootstrap and role grant/revoke tests.
-5. Update TypeScript SDK integration to use `self_register_did(subject_nonce)`.
-6. Update DID construction from `agent-key` to `did-key`.
-7. Add resolver support for the new registry state.
-8. Add UI flows for self-registration and controller status.
-9. Test Dust sponsorship and confirm `ownPublicKey()` remains the user key.
-10. Mark the old local owner vault flow as deprecated for production.
+The controller-bound registry and token-gating contracts are implemented in `contracts/did_registry.compact` and `contracts/token_gating.compact`. Generated runtime and ZK assets are committed under `src/generated/`, `contracts/managed/`, and `public/contracts/managed/`.
+
+The old `issuerSecret()` authority path is legacy context only and is not the production authorization model for the current registry.
 
 ## Verification Checklist
 
-- `compact compile` succeeds for the new registry contract.
+- `npm run compile-all` succeeds for the registry, token-gating, and ownership-proof contracts.
 - Generated TypeScript types expose no required witnesses for self-registration.
 - Self-registration stores `did_controller[did_key] = ownPublicKey()`.
 - Same nonce from a different wallet yields a different DID key.
-- Registered controller can request update.
+- Registered controller can request update after spending a valid action credit.
 - Different wallet cannot request update for that DID.
 - Admin can issue registered DID.
 - Non-admin cannot issue DID.
-- Admin can grant another registered DID controller the `ADMIN` role.
+- Admin can grant another registered DID controller the `ADMIN` role after spending a valid action credit.
 - Admin can revoke roles without revoking the final active admin.
 - Dust-sponsored registration preserves the user's `ownPublicKey()`.
 

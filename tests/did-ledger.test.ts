@@ -19,6 +19,14 @@ function fromHex(value: string): Uint8Array {
   return bytes;
 }
 
+function adminRoleTag(): Uint8Array {
+  const tag = new Uint8Array(32);
+  new TextEncoder().encode("ADMIN").forEach((byte, index) => {
+    tag[index] = byte;
+  });
+  return tag;
+}
+
 describe("did ledger helpers", () => {
   it("derives registry summary counts from ledger state", () => {
     const ledgerState = {
@@ -50,15 +58,20 @@ describe("did ledger helpers", () => {
   });
 
   it("derives access flags from ledger keys", async () => {
-    const adminAddress = "addr_test_admin";
-    const { createAgentKey } = await import("../src/lib/did/commitments");
-    const adminKey = await createAgentKey(adminAddress);
+    const adminKey = fromHex("11".repeat(32));
     const adminKeyHex = toHex(adminKey);
+    const { persistentHash, CompactTypeVector, Bytes32Descriptor } = await import(
+      "@midnight-ntwrk/compact-runtime"
+    );
+    const roleKey = persistentHash(
+      new CompactTypeVector(2, Bytes32Descriptor),
+      [adminKey, adminRoleTag()],
+    );
 
     const access = await deriveRegistryAccess(
       {
-        initial_admin: adminKey,
-        role_by_key: new Map([[adminKey, true]]),
+        initial_admin: { bytes: adminKey },
+        role_by_key: new Map([[roleKey, true]]),
       },
       "contract123",
       adminKeyHex,
@@ -67,7 +80,19 @@ describe("did ledger helpers", () => {
 
     expect(access).toMatchObject({
       contractAddress: "contract123",
-      isRegistryAdmin: false,
+      isRegistryAdmin: true,
+      registryAdminKeyHex: adminKeyHex,
     });
+  });
+
+  it("rejects non-32-byte wallet keys before compact hashing", async () => {
+    await expect(
+      deriveRegistryAccess(
+        { role_by_key: new Map() },
+        "contract123",
+        "abcd",
+        toHex,
+      ),
+    ).rejects.toThrow("Expected a 32-byte wallet public key");
   });
 });

@@ -17,6 +17,11 @@ import type {
   ConnectedAPI,
   KeyMaterialProvider,
 } from "@midnight-ntwrk/dapp-connector-api";
+import {
+  MidnightBech32m,
+  ShieldedAddress,
+  ShieldedCoinPublicKey,
+} from "@midnight-ntwrk/wallet-sdk-address-format";
 import type { ContractAddress, SigningKey } from "@midnight-ntwrk/compact-runtime";
 import { levelPrivateStateProvider } from "@midnight-ntwrk/midnight-js-level-private-state-provider";
 import { requestWalletPermissionsIfSupported } from "./wallet-permissions";
@@ -296,6 +301,7 @@ export interface AppProviders extends MidnightProviders<string> {
   proofProviderSource: "configured_env" | "wallet";
   proofWarningRequired: boolean;
   shieldedAddress: string;
+  shieldedCoinPublicKeyHex: string;
   unshieldedAddress: string;
   zkArtifactsBaseUrl: string;
 }
@@ -337,6 +343,26 @@ function getManagedContractUrl(path: string): string {
   return new URL(path, window.location.origin).toString();
 }
 
+function extractShieldedCoinPublicKeyHex(shieldedAddress: string, networkId: string): string {
+  const parsed = MidnightBech32m.parse(shieldedAddress);
+  if (parsed.type === "shield-cpk") {
+    return toHex(
+      (ShieldedCoinPublicKey.codec.decode(networkId as never, parsed) as { data: Uint8Array })
+        .data,
+    );
+  }
+  if (parsed.type === "shield-addr") {
+    return toHex(
+      (
+        ShieldedAddress.codec.decode(networkId as never, parsed) as {
+          coinPublicKey: { data: Uint8Array };
+        }
+      ).coinPublicKey.data,
+    );
+  }
+  throw new Error(`Unsupported shielded address type: ${parsed.type}`);
+}
+
 function isLocalProverServerUrl(url?: string): boolean {
   if (!url) return false;
   try {
@@ -352,6 +378,14 @@ function normalizeCircuitId(circuitId: string): string {
   return localName;
 }
 
+function looksLikeHtml(bytes: Uint8Array): boolean {
+  const sample = new TextDecoder()
+    .decode(bytes.slice(0, 128))
+    .trimStart()
+    .toLowerCase();
+  return sample.startsWith("<!doctype html") || sample.startsWith("<html");
+}
+
 class NormalizedFetchZkConfigProvider extends ZKConfigProvider<string> {
   constructor(private readonly baseUrl: string) {
     super();
@@ -363,7 +397,14 @@ class NormalizedFetchZkConfigProvider extends ZKConfigProvider<string> {
       throw new Error(`${response.status} ${response.statusText}`);
     }
     const buffer = await response.arrayBuffer();
-    return new Uint8Array(buffer);
+    const bytes = new Uint8Array(buffer);
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("text/html") || looksLikeHtml(bytes)) {
+      throw new Error(
+        `Expected ZK artifact bytes at ${path}, but received HTML. Check the managed contract path and dev server static asset routing.`,
+      );
+    }
+    return bytes;
   }
 
   private async fetchCircuitArtifact(
@@ -444,6 +485,10 @@ export async function buildProviders(
   setNetworkId(config.networkId as never);
   const shielded = await api.getShieldedAddresses();
   const unshielded = await api.getUnshieldedAddress();
+  const shieldedCoinPublicKeyHex = extractShieldedCoinPublicKeyHex(
+    shielded.shieldedAddress,
+    config.networkId,
+  );
 
   const accountId = `${config.networkId}:${unshielded.unshieldedAddress}`;
   const managedContractUrl = getManagedContractUrl(MANAGED_CONTRACT_PATH);
@@ -658,6 +703,7 @@ export async function buildProviders(
     proofWarningRequired:
       !configuredProofProvider && !isLocalProverServerUrl(config.proverServerUri),
     shieldedAddress: shielded.shieldedAddress,
+    shieldedCoinPublicKeyHex,
     unshieldedAddress: unshielded.unshieldedAddress,
     zkArtifactsBaseUrl: managedContractUrl,
   };
