@@ -6,6 +6,8 @@ import type {
   RevokeDidInput,
   UpdateDidInput,
 } from "../../types/did";
+import type { CapabilityProof, TokenBalance } from "../token/token-types.js";
+import { executeGatedAction, type TokenProviders } from "../token/token-witness.js";
 import {
   createWalletDidRequest,
   syncWalletIssuedDidStorage,
@@ -85,6 +87,7 @@ export async function requestDidWithSync(
     organization?: string;
     organizationDisclosure: "disclosed" | "undisclosed";
     didDocument: string;
+    capabilityProof?: CapabilityProof;
   },
 ): Promise<DidRecord> {
   const record = await api.requestDid(input);
@@ -179,9 +182,95 @@ export async function issueDidWithSync(
   return record;
 }
 
+/**
+ * Returns the current token balance for the user (REQ-12).
+ * Reads from the local private state — no on-chain query needed.
+ */
+export function getTokenBalance(tokenProviders: TokenProviders): TokenBalance {
+  return tokenProviders.stateManager.getBalance();
+}
+
+/**
+ * Orchestrated update: auto-consumes a capability token (TX1) then calls
+ * request_update_did (TX2). Handles pending proof retry if TX2 fails (REQ-11).
+ *
+ * @param didKey - The 32-byte on-chain DID key obtained from a prior selfRegisterDid call.
+ */
+export async function updateDidOrchestrated(
+  api: DidRegistryAPI,
+  tokenProviders: TokenProviders,
+  input: UpdateDidInput,
+  didKey: Uint8Array,
+): Promise<DidRecord> {
+  let record: DidRecord | undefined;
+
+  await executeGatedAction(
+    tokenProviders,
+    'request_update_did',
+    didKey,
+    async (p) => {
+      record = await api.updateDid({ ...input, capabilityProof: p });
+      return { txHash: record.txHash ?? '' };
+    },
+  );
+
+  const confirmedRecord = record!;
+  try {
+    await syncWalletUpdatedDidStorage({
+      did: confirmedRecord.did || "",
+      didDocument: JSON.parse(input.didDocument),
+      documentCommitment: confirmedRecord.documentHashHex,
+      proofCommitment: confirmedRecord.proofCommitmentHex,
+    });
+  } catch (error) {
+    throw new Error(
+      `DID update confirmed on-chain but persistence failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return confirmedRecord;
+}
+
+/**
+ * Orchestrated revoke: auto-consumes a capability token (TX1) then calls
+ * revoke_did (TX2). Handles pending proof retry if TX2 fails (REQ-11).
+ *
+ * @param didKey - The 32-byte on-chain DID key obtained from a prior selfRegisterDid call.
+ */
+export async function revokeDidOrchestrated(
+  api: DidRegistryAPI,
+  tokenProviders: TokenProviders,
+  input: RevokeDidInput,
+  didKey: Uint8Array,
+): Promise<DidRecord> {
+  let record: DidRecord | undefined;
+
+  await executeGatedAction(
+    tokenProviders,
+    'revoke_did',
+    didKey,
+    async (p) => {
+      record = await api.revokeDid({ ...input, capabilityProof: p });
+      return { txHash: record.txHash ?? '' };
+    },
+  );
+
+  const confirmedRecord = record!;
+  try {
+    await syncWalletRevokedDidStorage({
+      did: confirmedRecord.did || "",
+      revocationCommitment: confirmedRecord.revocationCommitmentHex,
+    });
+  } catch (error) {
+    throw new Error(
+      `DID revocation confirmed on-chain but persistence failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return confirmedRecord;
+}
+
 export async function updateDidWithSync(
   api: DidRegistryAPI,
-  input: UpdateDidInput,
+  input: UpdateDidInput & { capabilityProof?: CapabilityProof },
 ): Promise<DidRecord> {
   const record = await api.updateDid(input);
   try {
@@ -203,7 +292,7 @@ export async function updateDidWithSync(
 
 export async function revokeDidWithSync(
   api: DidRegistryAPI,
-  input: RevokeDidInput,
+  input: RevokeDidInput & { capabilityProof?: CapabilityProof },
 ): Promise<DidRecord> {
   const record = await api.revokeDid(input);
   try {

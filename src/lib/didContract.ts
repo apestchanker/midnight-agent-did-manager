@@ -7,6 +7,7 @@ import type {
   RevokeDidInput,
   UpdateDidInput,
 } from "../types/did";
+import type { CapabilityProof } from "./token/token-types.js";
 import { DidRegistryAPI } from "./did/api";
 import {
   compileDidRegistry,
@@ -58,6 +59,7 @@ export async function requestDid(
     organization?: string;
     organizationDisclosure: "disclosed" | "undisclosed";
     didDocument: string;
+    capabilityProof?: CapabilityProof;
   },
 ): Promise<DidRecord> {
   const api = await joinDidRegistryApi(providers, input.contractAddress);
@@ -69,6 +71,7 @@ export async function requestDid(
     organization: input.organization,
     organizationDisclosure: input.organizationDisclosure,
     didDocument: input.didDocument,
+    capabilityProof: input.capabilityProof,
   });
 }
 
@@ -82,7 +85,7 @@ export async function issueDid(
 
 export async function updateDid(
   providers: AppProviders,
-  input: UpdateDidInput,
+  input: UpdateDidInput & { capabilityProof?: CapabilityProof },
 ): Promise<DidRecord> {
   const api = await joinDidRegistryApi(providers, input.contractAddress);
   return updateDidWithSync(api, input);
@@ -90,7 +93,7 @@ export async function updateDid(
 
 export async function revokeDid(
   providers: AppProviders,
-  input: RevokeDidInput,
+  input: RevokeDidInput & { capabilityProof?: CapabilityProof },
 ): Promise<DidRecord> {
   const api = await joinDidRegistryApi(providers, input.contractAddress);
   return revokeDidWithSync(api, input);

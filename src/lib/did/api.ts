@@ -10,6 +10,7 @@ import type {
   RevokeDidInput,
   UpdateDidInput,
 } from "../../types/did";
+import type { CapabilityProof } from "../token/token-types.js";
 import { getDidMetadata, mergeDidMetadata } from "./cache";
 import {
   createAgentKey,
@@ -133,6 +134,8 @@ export class DidRegistryAPI {
     organizationDisclosure?: "disclosed" | "undisclosed";
     didDocument: string;
     subjectNonce?: Uint8Array;
+    /** Required for gated circuits. Will throw at runtime if omitted when calling a gated contract. */
+    capabilityProof?: CapabilityProof;
   }): Promise<DidRecord> {
     const nonce = input.subjectNonce ?? (await getDefaultSubjectNonce());
     const registration = await this.selfRegisterDid({
@@ -140,6 +143,7 @@ export class DidRegistryAPI {
       agentId: input.agentId,
       subjectWalletAddress: input.subjectWalletAddress,
       didDocument: input.didDocument,
+      capabilityProof: input.capabilityProof ?? undefined,
     });
     const did = await createDidIdentifier(
       this.providers.networkId,
@@ -208,11 +212,27 @@ export class DidRegistryAPI {
     agentId: string;
     subjectWalletAddress?: string;
     didDocument?: string;
+    /** Required for gated circuits. Will throw at runtime if omitted when calling a gated contract. */
+    capabilityProof?: CapabilityProof;
   }): Promise<{ didKeyHex: string; txHash: string; txId?: string }> {
     const nonce = input.subjectNonce ?? (await getDefaultSubjectNonce());
+    if (!input.capabilityProof) {
+      throw new Error("capabilityProof is required for self_register_did (gated circuit)");
+    }
+    if (!input.capabilityProof.coinColor) {
+      throw new Error("capabilityProof.coinColor is required for self_register_did (v2: token_color param)");
+    }
     const tx = await (this.contract.callTx.self_register_did as (
       subjectNonce: Uint8Array,
-    ) => Promise<{ public: { txHash: string; txId?: string }; result: Uint8Array }>)(nonce);
+      tokenColor: Uint8Array,
+      nullifier: Uint8Array,
+      commitmentValue: Uint8Array,
+    ) => Promise<{ public: { txHash: string; txId?: string }; result: Uint8Array }>)(
+      nonce,
+      input.capabilityProof.coinColor,
+      input.capabilityProof.nullifier,
+      input.capabilityProof.commitmentValue,
+    );
 
     return {
       didKeyHex: toHex(tx.result),
@@ -295,7 +315,7 @@ export class DidRegistryAPI {
     };
   }
 
-  async updateDid(input: UpdateDidInput & { subjectNonce?: Uint8Array }): Promise<DidRecord> {
+  async updateDid(input: UpdateDidInput & { subjectNonce?: Uint8Array; capabilityProof?: CapabilityProof }): Promise<DidRecord> {
     const nonce = input.subjectNonce ?? (await getDefaultSubjectNonce());
     const didKeyHex = getDidMetadata(this.contractAddress, input.agentId)?.didKeyHex;
     if (!didKeyHex) {
@@ -316,11 +336,22 @@ export class DidRegistryAPI {
       didDocument: input.didDocument,
     });
 
+    if (!input.capabilityProof) {
+      throw new Error("capabilityProof is required for request_update_did (gated circuit)");
+    }
     const tx = await (this.contract.callTx.request_update_did as (
       subjectNonce: Uint8Array,
       updateCommitment: Uint8Array,
       capabilityCommitment: Uint8Array,
-    ) => Promise<TxResult>)(nonce, documentCommitment, proofCommitment);
+      nullifier: Uint8Array,
+      commitmentValue: Uint8Array,
+    ) => Promise<TxResult>)(
+      nonce,
+      documentCommitment,
+      proofCommitment,
+      input.capabilityProof.nullifier,
+      input.capabilityProof.commitmentValue,
+    );
 
     const now = new Date().toISOString();
     const cached = mergeDidMetadata(this.contractAddress, input.agentId, {
@@ -361,7 +392,7 @@ export class DidRegistryAPI {
     };
   }
 
-  async revokeDid(input: RevokeDidInput): Promise<DidRecord> {
+  async revokeDid(input: RevokeDidInput & { capabilityProof?: CapabilityProof }): Promise<DidRecord> {
     const didKeyHex = input.didKeyHex || getDidMetadata(this.contractAddress, input.agentId)?.didKeyHex;
     if (!didKeyHex) {
       throw new Error("DID key is missing. Self-register the DID before revoking it.");
@@ -380,9 +411,14 @@ export class DidRegistryAPI {
       reason: input.reason,
     });
 
+    if (!input.capabilityProof) {
+      throw new Error("capabilityProof is required for revoke_did (gated circuit)");
+    }
     const tx = await (this.contract.callTx.revoke_did as (
       didKeyArg: Uint8Array,
-    ) => Promise<TxResult>)(didKey);
+      nullifier: Uint8Array,
+      commitmentValue: Uint8Array,
+    ) => Promise<TxResult>)(didKey, input.capabilityProof.nullifier, input.capabilityProof.commitmentValue);
 
     const now = new Date().toISOString();
     const cached = mergeDidMetadata(this.contractAddress, input.agentId, {
@@ -421,6 +457,52 @@ export class DidRegistryAPI {
       txHash: String(tx.public.txHash || ""),
       txId: String(tx.public.txId || ""),
       mode: "onchain",
+    };
+  }
+
+  async grantRole(input: {
+    didKeyHex: string;
+    role: Uint8Array;
+    capabilityProof: CapabilityProof;
+  }): Promise<{ txHash: string; txId?: string }> {
+    const didKey = fromHex(input.didKeyHex);
+    const tx = await (this.contract.callTx.grant_role as (
+      didKey: Uint8Array,
+      role: Uint8Array,
+      nullifier: Uint8Array,
+      commitmentValue: Uint8Array,
+    ) => Promise<TxResult>)(
+      didKey,
+      input.role,
+      input.capabilityProof.nullifier,
+      input.capabilityProof.commitmentValue,
+    );
+    return {
+      txHash: String(tx.public.txHash || ""),
+      txId: String(tx.public.txId || ""),
+    };
+  }
+
+  async revokeRole(input: {
+    didKeyHex: string;
+    role: Uint8Array;
+    capabilityProof: CapabilityProof;
+  }): Promise<{ txHash: string; txId?: string }> {
+    const didKey = fromHex(input.didKeyHex);
+    const tx = await (this.contract.callTx.revoke_role as (
+      didKey: Uint8Array,
+      role: Uint8Array,
+      nullifier: Uint8Array,
+      commitmentValue: Uint8Array,
+    ) => Promise<TxResult>)(
+      didKey,
+      input.role,
+      input.capabilityProof.nullifier,
+      input.capabilityProof.commitmentValue,
+    );
+    return {
+      txHash: String(tx.public.txHash || ""),
+      txId: String(tx.public.txId || ""),
     };
   }
 
