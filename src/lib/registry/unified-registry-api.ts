@@ -189,6 +189,11 @@ export class UnifiedRegistryAPI {
     for (const colorHex of verifiedColors) {
       const bal = rawBalances[colorHex];
       if (bal !== undefined && BigInt(bal) >= 2n) {
+        // value: 2n = 1 credit spent + 1 permanent anchor retained by the contract.
+        // The wallet SDK exposes aggregate balances, not individual UTXOs.
+        // If the balance >= 2n comes from many small UTXOs (each < 2n), the ZK proof
+        // will fail at runtime with a coin-not-found error. Normal mint flow (batches of 5+)
+        // avoids this; users with heavily fragmented wallets should request a re-mint.
         return {
           coin: {
             nonce: crypto.getRandomValues(new Uint8Array(32)),
@@ -200,7 +205,7 @@ export class UnifiedRegistryAPI {
       }
     }
     throw new Error(
-      "No spendable action credits found. Wallet needs shielded tokens with value >= 2.",
+      "No spendable action credits found. Your wallet needs shielded tokens with at least 2 units in a single coin.",
     );
   }
 
@@ -453,7 +458,7 @@ export class UnifiedRegistryAPI {
 
   async revokeDid(input: RevokeDidInput): Promise<DidRecord> {
     const { createRevocationCommitment } = await import("../did/commitments");
-    const didKeyHex = (input as { didKeyHex?: string }).didKeyHex || getDidMetadata(this.contractAddress, input.agentId)?.didKeyHex;
+    const didKeyHex = input.didKeyHex ?? getDidMetadata(this.contractAddress, input.agentId)?.didKeyHex;
     if (!didKeyHex) throw new Error("DID key is missing.");
     const didKeyBytes = fromHex(didKeyHex);
     const did = await createDidIdentifier(this.providers.networkId, this.contractAddress, didKeyHex);

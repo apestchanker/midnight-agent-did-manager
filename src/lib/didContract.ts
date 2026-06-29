@@ -12,7 +12,6 @@ import { DidRegistryAPI } from "./did/api";
 import {
   compileDidRegistry,
   deployDidRegistry,
-  deployTokenGating,
   issueDidWithSync,
   requestDidWithSync,
   revokeDidWithSync,
@@ -42,7 +41,6 @@ export { DidRegistryAPI };
 export {
   compileDidRegistry,
   deployDidRegistry,
-  deployTokenGating,
   exportOwnerVaultBackup,
   getOwnerVaultStatus,
   getSavedCompileArtifact,

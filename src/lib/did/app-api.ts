@@ -24,11 +24,9 @@ import {
   mergeDidMetadata,
   saveCompileArtifact,
   saveDeployment,
-  saveTokenDeployment,
 } from "./cache";
-import { MANAGED_CONTRACT_BASE_PATH, type CompileResult, type TokenDeployResult } from "./types";
+import { MANAGED_CONTRACT_BASE_PATH, type CompileResult } from "./types";
 import { loadManagedContractModule } from "./runtime";
-import { TokenGatingAPI } from "../token/token-gating-api";
 
 export async function compileDidRegistry(
   providers: AppProviders,
@@ -37,15 +35,6 @@ export async function compileDidRegistry(
     await loadManagedContractModule();
   } catch {
     throw new Error("DID Registry artifact not found. Run npm run compile-contract.");
-  }
-
-  // Verify the token-gating managed runtime is also present before marking step 1 complete.
-  try {
-    await import("../../generated/tokenGatingContract.runtime.js");
-  } catch {
-    throw new Error(
-      "Token gating artifact not found. Run npm run compile-token-gating.",
-    );
   }
 
   saveCompileArtifact({
@@ -60,28 +49,6 @@ export async function compileDidRegistry(
   };
 }
 
-export async function deployTokenGating(
-  providers: AppProviders,
-): Promise<TokenDeployResult> {
-  const api = await TokenGatingAPI.deploy(providers);
-  const now = new Date().toISOString();
-  const result: TokenDeployResult = {
-    contractAddress: api.contractAddress,
-    txHash: "",
-    networkId: providers.networkId,
-    deployedAt: now,
-    message: "Token gating contract deployed. Use this address as the token_contract argument when deploying the DID registry.",
-  };
-
-  saveTokenDeployment({
-    contractAddress: result.contractAddress,
-    txHash: result.txHash,
-    networkId: result.networkId,
-    deployedAt: result.deployedAt,
-  });
-
-  return result;
-}
 
 export async function deployDidRegistry(
   providers: AppProviders,
