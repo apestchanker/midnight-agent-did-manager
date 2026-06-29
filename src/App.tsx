@@ -2169,6 +2169,14 @@ export default function App() {
                     <strong>DID Quota</strong>.
                   </p>
                 </div>
+                {registryApiError && (
+                  <div className="rounded-md border border-red-800 bg-red-950/40 p-3">
+                    <p className="text-xs text-red-300">{registryApiError}</p>
+                    <p className="text-xs text-zinc-500 mt-1">
+                      Make sure the contract address field (top of the page) contains the unified registry address from the Deploy tab.
+                    </p>
+                  </div>
+                )}
                 <TokenGatingPanel
                   providers={providers}
                   tokenAPI={tokenAPI}
