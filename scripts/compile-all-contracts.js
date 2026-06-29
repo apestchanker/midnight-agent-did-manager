@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 /**
- * Compiles all Compact contracts in the required order and refreshes all managed assets.
+ * Compiles all Compact contracts and refreshes all managed assets.
  * Run this after any contract source change or on a fresh clone.
  *
- * Order matters:
- *   1. token_gating.compact  — no deps; its address is passed to did_registry constructor
- *   2. did_registry.compact  — depends on token_gating being deployed (address known at runtime)
- *   3. native-ownership-proof (if present)
+ * As of v3.0.0 the token_gating.compact contract is unified into
+ * did_registry.compact (see sdd/wip/unified-gated-did-registry/). The
+ * standalone token_gating compile step was removed; token_gating.compact
+ * is archived under contracts/archived/.
+ *
+ * Contracts:
+ *   1. did_registry.compact         — unified gated DID registry (v3)
+ *   2. native-ownership-proof       — if present
  */
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
@@ -22,8 +26,7 @@ function run(script, label) {
 }
 
 try {
-  run("compile-token-gating.js",    "Compiling token_gating.compact …");
-  run("compile-contract.js",         "Compiling did_registry.compact …");
+  run("compile-contract.js",         "Compiling did_registry.compact (unified v3) …");
   run("compile-ownership-proof.js",  "Compiling native-ownership-proof.compact …");
   console.log("\n✅  All contracts compiled successfully.");
 } catch (err) {
