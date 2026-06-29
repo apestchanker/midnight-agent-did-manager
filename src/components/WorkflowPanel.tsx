@@ -99,6 +99,42 @@ interface ExpandableListItem {
   details: ReactNode;
 }
 
+function actionTokenGrantSummary(grants: CustomerContext["actionTokenGrants"]) {
+  const granted = grants.reduce((sum, grant) => sum + Number(grant.credits_granted || 0), 0);
+  const used = grants.reduce((sum, grant) => sum + Number(grant.credits_used || 0), 0);
+  return {
+    granted,
+    used,
+    remaining: Math.max(0, granted - used),
+  };
+}
+
+function renderActionTokenGrantTotals(grants: CustomerContext["actionTokenGrants"]) {
+  const totals = actionTokenGrantSummary(grants);
+  return (
+    <div className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-300">
+      <div className="mb-2 font-medium text-zinc-100">Shielded Action Tokens</div>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <div>
+          <div className="text-zinc-500">Granted</div>
+          <div className="text-lg font-semibold text-zinc-100">{totals.granted}</div>
+        </div>
+        <div>
+          <div className="text-zinc-500">Used</div>
+          <div className="text-lg font-semibold text-zinc-100">{totals.used}</div>
+        </div>
+        <div>
+          <div className="text-zinc-500">Remaining</div>
+          <div className="text-lg font-semibold text-zinc-100">{totals.remaining}</div>
+        </div>
+      </div>
+      <p className="mt-2 text-zinc-500">
+        These values come from service DB grant records written after successful token mints.
+      </p>
+    </div>
+  );
+}
+
 export function WorkflowPanel({
   providers,
   connectedApi,
@@ -884,6 +920,31 @@ export function WorkflowPanel({
       </div>
     ),
   }));
+  const userActionTokenGrantItems: ExpandableListItem[] = (customerContext?.actionTokenGrants || []).map((grant) => ({
+    id: grant.id,
+    summary: (
+      <div className="space-y-1">
+        <div>{grant.status} · {grant.credits_granted} granted · {grant.credits_used} used</div>
+        <div className="text-zinc-500">
+          remaining {Math.max(0, Number(grant.credits_granted || 0) - Number(grant.credits_used || 0))}
+        </div>
+      </div>
+    ),
+    details: (
+      <div className="space-y-1">
+        <div><span className="text-zinc-500">Granted:</span> {grant.credits_granted}</div>
+        <div><span className="text-zinc-500">Used:</span> {grant.credits_used}</div>
+        <div><span className="text-zinc-500">Remaining:</span> {Math.max(0, Number(grant.credits_granted || 0) - Number(grant.credits_used || 0))}</div>
+        <div><span className="text-zinc-500">Token contract:</span> <span className="font-mono break-all">{grant.token_contract_address}</span></div>
+        <div><span className="text-zinc-500">Network:</span> {grant.network_id}</div>
+        <div><span className="text-zinc-500">Recipient:</span> <span className="font-mono break-all">{grant.recipient_shielded_address}</span></div>
+        {grant.mint_tx_hash && (
+          <div><span className="text-zinc-500">Mint TX:</span> <span className="font-mono break-all">{grant.mint_tx_hash}</span></div>
+        )}
+        <div><span className="text-zinc-500">Recorded:</span> {new Date(grant.created_at).toLocaleString()}</div>
+      </div>
+    ),
+  }));
   const adminSubscriptionItems: ExpandableListItem[] = (adminCustomerContext?.subscriptions || []).map((subscription) => ({
     id: subscription.id,
     summary: (
@@ -904,6 +965,31 @@ export function WorkflowPanel({
         {subscription.ends_at && (
           <div><span className="text-zinc-500">Ends:</span> {new Date(subscription.ends_at).toLocaleString()}</div>
         )}
+      </div>
+    ),
+  }));
+  const adminActionTokenGrantItems: ExpandableListItem[] = (adminCustomerContext?.actionTokenGrants || []).map((grant) => ({
+    id: grant.id,
+    summary: (
+      <div className="space-y-1">
+        <div>{grant.status} · {grant.credits_granted} granted · {grant.credits_used} used</div>
+        <div className="text-zinc-500">
+          remaining {Math.max(0, Number(grant.credits_granted || 0) - Number(grant.credits_used || 0))}
+        </div>
+      </div>
+    ),
+    details: (
+      <div className="space-y-1">
+        <div><span className="text-zinc-500">Granted:</span> {grant.credits_granted}</div>
+        <div><span className="text-zinc-500">Used:</span> {grant.credits_used}</div>
+        <div><span className="text-zinc-500">Remaining:</span> {Math.max(0, Number(grant.credits_granted || 0) - Number(grant.credits_used || 0))}</div>
+        <div><span className="text-zinc-500">Token contract:</span> <span className="font-mono break-all">{grant.token_contract_address}</span></div>
+        <div><span className="text-zinc-500">Network:</span> {grant.network_id}</div>
+        <div><span className="text-zinc-500">Recipient:</span> <span className="font-mono break-all">{grant.recipient_shielded_address}</span></div>
+        {grant.mint_tx_hash && (
+          <div><span className="text-zinc-500">Mint TX:</span> <span className="font-mono break-all">{grant.mint_tx_hash}</span></div>
+        )}
+        <div><span className="text-zinc-500">Recorded:</span> {new Date(grant.created_at).toLocaleString()}</div>
       </div>
     ),
   }));
@@ -1261,6 +1347,18 @@ export function WorkflowPanel({
                 ) : (
                   renderExpandableList("user-subscriptions", userSubscriptionItems, "")
                 )}
+                {customerContext && (
+                  <div className="space-y-2">
+                    {renderActionTokenGrantTotals(customerContext.actionTokenGrants || [])}
+                    {(customerContext.actionTokenGrants || []).length === 0 ? (
+                      <p className="text-xs text-zinc-500">
+                        No action-token grants recorded yet. An admin must mint shielded action credits successfully before they appear here.
+                      </p>
+                    ) : (
+                      renderExpandableList("user-action-token-grants", userActionTokenGrantItems, "")
+                    )}
+                  </div>
+                )}
               </>
             )}
 
@@ -1344,6 +1442,16 @@ export function WorkflowPanel({
                       ) : (
                         renderExpandableList("admin-subscriptions", adminSubscriptionItems, "")
                       )}
+                      <div className="space-y-2">
+                        {renderActionTokenGrantTotals(adminCustomerContext.actionTokenGrants || [])}
+                        {(adminCustomerContext.actionTokenGrants || []).length === 0 ? (
+                          <p className="text-xs text-zinc-500">
+                            No action-token grants recorded yet for this customer.
+                          </p>
+                        ) : (
+                          renderExpandableList("admin-action-token-grants", adminActionTokenGrantItems, "")
+                        )}
+                      </div>
                     </div>
                   </>
                 )}

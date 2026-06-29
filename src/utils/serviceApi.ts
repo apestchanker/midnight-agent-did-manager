@@ -7,6 +7,7 @@ import type {
   DidRequestRow,
   LogEntry,
   McpKey,
+  ActionTokenGrant,
   MidnightProofMaterial,
   MidnightProofRequest,
   MidnightProofSubmission,
@@ -176,6 +177,29 @@ export function createSubscription(payload: {
       status: payload.status,
       endsAt: payload.endsAt,
     }),
+  });
+}
+
+export function recordActionTokenGrant(payload: {
+  customerId?: string;
+  customerRef?: string;
+  subscriptionId?: string;
+  tokenContractAddress: string;
+  networkId: string;
+  recipientShieldedAddress: string;
+  subscriptionKeyHex?: string;
+  creditsGranted: number;
+  creditsUsed?: number;
+  mintTxHash?: string;
+  mintTxId?: string;
+  actorRef?: string;
+}): Promise<ActionTokenGrant> {
+  return requestJson("/api/action-token-grants", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
   });
 }
 

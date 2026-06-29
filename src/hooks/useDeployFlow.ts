@@ -5,6 +5,7 @@ import {
   compileDidRegistry,
   deployTokenGating,
   deployDidRegistry,
+  deployUnifiedRegistry,
 } from "../lib/did/app-api";
 import {
   getSavedCompileArtifact,
@@ -37,6 +38,7 @@ export type UseDeployFlowReturn = {
   handleLoadArtifacts: () => Promise<void>;
   handleDeployTokenGating: () => Promise<void>;
   handleDeployRegistry: () => Promise<void>;
+  handleDeployUnified: () => Promise<void>;
   handleRedeployIntent: () => void;
   handleRedeployCancel: () => void;
   handleRedeployConfirm: () => Promise<void>;
@@ -131,6 +133,32 @@ export function useDeployFlow(
     }
   }
 
+  /**
+   * Deploy the unified v3 contract (token gating + DID registry in one).
+   * Uses step3 state slot; step2 is skipped in the unified flow.
+   */
+  async function handleDeployUnified(): Promise<void> {
+    if (!step1.done) return;
+    setStep3((s) => ({ ...s, loading: true, error: "", message: "" }));
+    try {
+      const result = await deployUnifiedRegistry(providers);
+      setLastDeployResult(result);
+      setStep3({
+        loading: false,
+        error: "",
+        message: result.message ?? "Unified registry deployed.",
+        done: true,
+      });
+      onDeployed(result);
+    } catch (e) {
+      setStep3((s) => ({
+        ...s,
+        loading: false,
+        error: e instanceof Error ? e.message : "Deployment failed",
+      }));
+    }
+  }
+
   function handleRedeployIntent(): void {
     setShowRedeployWarning(true);
   }
@@ -160,6 +188,7 @@ export function useDeployFlow(
     handleLoadArtifacts,
     handleDeployTokenGating,
     handleDeployRegistry,
+    handleDeployUnified,
     handleRedeployIntent,
     handleRedeployCancel,
     handleRedeployConfirm,

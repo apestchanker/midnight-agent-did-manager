@@ -206,10 +206,17 @@ export async function getCustomerByWallet(walletAddress) {
   const customer = result.rows[0];
   if (!customer) return null;
 
-  const [subscriptions, mcpKeys] = await Promise.all([
+  const [subscriptions, actionTokenGrants, mcpKeys] = await Promise.all([
     query(
       `select *
        from subscriptions
+       where customer_id = $1
+       order by created_at desc`,
+      [customer.id],
+    ),
+    query(
+      `select *
+       from action_token_grants
        where customer_id = $1
        order by created_at desc`,
       [customer.id],
@@ -226,6 +233,7 @@ export async function getCustomerByWallet(walletAddress) {
   return {
     customer,
     subscriptions: subscriptions.rows,
+    actionTokenGrants: actionTokenGrants.rows,
     mcpKeys: mcpKeys.rows,
   };
 }
@@ -241,10 +249,17 @@ export async function getCustomerContextById(customerId) {
   const customer = customerResult.rows[0];
   if (!customer) return null;
 
-  const [subscriptions, mcpKeys] = await Promise.all([
+  const [subscriptions, actionTokenGrants, mcpKeys] = await Promise.all([
     query(
       `select *
        from subscriptions
+       where customer_id = $1
+       order by created_at desc`,
+      [customer.id],
+    ),
+    query(
+      `select *
+       from action_token_grants
        where customer_id = $1
        order by created_at desc`,
       [customer.id],
@@ -261,8 +276,109 @@ export async function getCustomerContextById(customerId) {
   return {
     customer,
     subscriptions: subscriptions.rows,
+    actionTokenGrants: actionTokenGrants.rows,
     mcpKeys: mcpKeys.rows,
   };
+}
+
+async function resolveCustomerForActionTokenGrant(client, input) {
+  const customerId = String(input.customerId || "").trim();
+  if (customerId) {
+    const row = (
+      await client.query(`select * from customers where id = $1 limit 1`, [customerId])
+    ).rows[0];
+    if (!row) throw new Error("Customer not found for action token grant.");
+    return row;
+  }
+
+  const ref = String(input.customerRef || "").trim();
+  if (!ref) {
+    throw new Error("customerId or customerRef is required for action token grant.");
+  }
+
+  const normalizedRef = normalizeWallet(ref);
+  const row = (
+    await client.query(
+      `select c.*
+       from customers c
+       left join customer_wallets cw on cw.customer_id = c.id
+       where c.email = $1
+          or c.id::text = $1
+          or cw.wallet_address = $2
+       order by c.created_at desc
+       limit 1`,
+      [ref, normalizedRef],
+    )
+  ).rows[0];
+
+  if (!row) {
+    throw new Error("Customer not found for action token grant.");
+  }
+  return row;
+}
+
+export async function recordActionTokenGrant(input) {
+  return withTransaction(async (client) => {
+    const customer = await resolveCustomerForActionTokenGrant(client, input);
+    const creditsGranted = Number(input.creditsGranted);
+    const creditsUsed = Number(input.creditsUsed || 0);
+    if (!Number.isInteger(creditsGranted) || creditsGranted < 0) {
+      throw new Error("creditsGranted must be a non-negative integer.");
+    }
+    if (!Number.isInteger(creditsUsed) || creditsUsed < 0 || creditsUsed > creditsGranted) {
+      throw new Error("creditsUsed must be a non-negative integer not greater than creditsGranted.");
+    }
+
+    const row = (
+      await client.query(
+        `insert into action_token_grants (
+           customer_id,
+           subscription_id,
+           token_contract_address,
+           network_id,
+           recipient_shielded_address,
+           subscription_key_hex,
+           credits_granted,
+           credits_used,
+           mint_tx_hash,
+           mint_tx_id,
+           status
+         )
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, coalesce($11, 'active'))
+         returning *`,
+        [
+          customer.id,
+          input.subscriptionId || null,
+          String(input.tokenContractAddress || "").trim(),
+          String(input.networkId || "").trim(),
+          String(input.recipientShieldedAddress || "").trim(),
+          input.subscriptionKeyHex ? String(input.subscriptionKeyHex).trim().toLowerCase() : null,
+          creditsGranted,
+          creditsUsed,
+          input.mintTxHash || null,
+          input.mintTxId || null,
+          input.status || "active",
+        ],
+      )
+    ).rows[0];
+
+    await audit(client, {
+      actorType: "admin",
+      actorRef: input.actorRef || "action-token-panel",
+      eventType: "action_token_grant_recorded",
+      entityType: "action_token_grant",
+      entityId: row.id,
+      eventData: {
+        customerId: customer.id,
+        creditsGranted,
+        tokenContractAddress: row.token_contract_address,
+        networkId: row.network_id,
+        mintTxHash: row.mint_tx_hash,
+      },
+    });
+
+    return row;
+  });
 }
 
 export async function saveAdminRegistryDeployment(input) {

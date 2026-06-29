@@ -16,6 +16,9 @@ import {
 } from "./service-sync";
 import { createDidIdentifier } from "./commitments";
 import { DidRegistryAPI } from "./api";
+import type { UnifiedRegistryAPI } from "../registry/unified-registry-api";
+
+type AnyRegistryAPI = DidRegistryAPI | UnifiedRegistryAPI;
 import {
   getSavedCompileArtifact,
   mergeDidMetadata,
@@ -120,8 +123,48 @@ export async function deployDidRegistry(
   return result;
 }
 
+/**
+ * Deploy the unified DID registry + token-gating contract (v3).
+ * No separate token-gating contract needed — everything is in one contract.
+ */
+export async function deployUnifiedRegistry(
+  providers: AppProviders,
+): Promise<DeployResult> {
+  const compileData = getSavedCompileArtifact();
+  if (!compileData) {
+    throw new Error(
+      "Managed contract assets have not been validated yet. Load the compiled contract first.",
+    );
+  }
+
+  const { UnifiedRegistryAPI } = await import("../registry/unified-registry-api");
+  const api = await UnifiedRegistryAPI.deploy(providers);
+  const deployed = api.getDeployMetadata();
+  const initializeTx = await api.registerInitialAdmin();
+  const result: DeployResult = {
+    contractAddress: api.contractAddress,
+    txHash: String(deployed?.public?.txHash || ""),
+    txId: String(deployed?.public?.txId || ""),
+    initializeTxHash: initializeTx.txHash,
+    initializeTxId: initializeTx.txId,
+    txStatus: "confirmed",
+    mode: "onchain",
+    deployedAt: new Date().toISOString(),
+    networkId: providers.networkId,
+    message:
+      "Unified DID registry deployed to Midnight. Token gating and DID operations share this single contract. The connected wallet is registered as the initial registry admin.",
+  };
+
+  saveDeployment({
+    ...result,
+    networkId: providers.networkId,
+    deployedAt: result.deployedAt || new Date().toISOString(),
+  });
+  return result;
+}
+
 export async function requestDidWithSync(
-  api: DidRegistryAPI,
+  api: AnyRegistryAPI,
   input: {
     requesterWalletAddress: string;
     agentId: string;
@@ -188,7 +231,7 @@ export async function requestDidWithSync(
 }
 
 export async function issueDidWithSync(
-  api: DidRegistryAPI,
+  api: AnyRegistryAPI,
   input: IssueDidInput,
 ): Promise<DidRecord> {
   const record = await api.issueDid(input);
@@ -312,7 +355,7 @@ export async function revokeDidOrchestrated(
 }
 
 export async function updateDidWithSync(
-  api: DidRegistryAPI,
+  api: AnyRegistryAPI,
   input: UpdateDidInput & { capabilityProof?: CapabilityProof },
 ): Promise<DidRecord> {
   const record = await api.updateDid(input);
@@ -334,7 +377,7 @@ export async function updateDidWithSync(
 }
 
 export async function revokeDidWithSync(
-  api: DidRegistryAPI,
+  api: AnyRegistryAPI,
   input: RevokeDidInput & { capabilityProof?: CapabilityProof },
 ): Promise<DidRecord> {
   const record = await api.revokeDid(input);

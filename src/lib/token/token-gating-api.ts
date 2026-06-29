@@ -4,6 +4,8 @@ import type { AppProviders } from "../../../lib/providers";
 import { fromHex, toHex } from "../../../lib/wallet-bridge";
 import { extractContractAddress } from "../did/runtime";
 import { generateSubscriptionKey } from "./subscription";
+import type { CapabilityProof, ActionType } from "./token-types";
+import { ACTION_TYPE_BYTES } from "./token-types";
 
 const TOKEN_GATING_CONTRACT_BASE_PATH = "/contracts/managed/token-gating";
 
@@ -102,6 +104,81 @@ export class TokenGatingAPI {
       }
     }
     return verified;
+  }
+
+  /**
+   * Consumes one action credit from the wallet's shielded balance, writing a
+   * capability commitment on-chain. Returns the CapabilityProof needed by the
+   * gated DID registry circuits (nullifier + commitmentValue + coinColor).
+   *
+   * TX flow:
+   *  1. Read wallet's shielded balance → find a verified token color with value >= 2.
+   *  2. Call consume_token_for_action circuit (spends 1 credit, emits commitment).
+   *  3. Read the on-chain commitment from capability_commitments ledger map.
+   *  4. Return CapabilityProof.
+   */
+  async consumeForAction(
+    didKey: Uint8Array,
+    actionType: ActionType,
+  ): Promise<CapabilityProof> {
+    // Read wallet balances to find a valid token color (color → bigint balance)
+    const rawBalances = await this.providers.connectedAPI.getShieldedBalances() as Record<string, bigint>;
+
+    // Find a color verified by this contract with value >= 2 (anchor-protected)
+    const verifiedColors = await this.fetchVerifiedTokenColors(Object.keys(rawBalances));
+    let tokenColor: Uint8Array | null = null;
+    for (const colorHex of verifiedColors) {
+      const bal = rawBalances[colorHex];
+      if (bal !== undefined && BigInt(bal) >= 2n) {
+        tokenColor = fromHex(colorHex);
+        break;
+      }
+    }
+    if (!tokenColor) {
+      throw new Error("No spendable action credits found. Wallet needs shielded tokens with value >= 2.");
+    }
+
+    // Pass value=2n: the circuit requires >= 2 (consumes 1, returns 1 as change).
+    // The wallet's balanceUnsealedTransaction selects the actual UTXOs internally via
+    // Zswap — the DApp never needs to know individual UTXO values or nonces.
+    // Passing the full aggregate balance was causing "Balance failed: Insufficient funds"
+    // because two shielded ops (receiveShielded + sendImmediateShielded) on a large
+    // value exhausted fee DUST in the wallet.
+    const coinNonce = crypto.getRandomValues(new Uint8Array(32));
+
+    await (
+      this.contract.callTx.consume_token_for_action as (
+        coin: { nonce: Uint8Array; color: Uint8Array; value: bigint },
+        actionType: Uint8Array,
+        didKey: Uint8Array,
+      ) => Promise<TxResult>
+    )(
+      { nonce: coinNonce, color: tokenColor, value: 2n },
+      ACTION_TYPE_BYTES[actionType],
+      didKey,
+    );
+
+    // Compute the commitment value off-chain using the same formula as the circuit:
+    //   nullifier_proxy = persistentHash<Bytes<32>>(public_nonce)
+    //   commitment = persistentHash<Vector<5, Bytes<32>>>([action, contract_addr, did_key, color, nullifier_proxy])
+    // This avoids a queryContractState round-trip and works even when the indexer
+    // hasn't yet indexed the token-gating contract state.
+    const { persistentHash, Bytes32Descriptor, CompactTypeVector } = await import("@midnight-ntwrk/compact-runtime");
+    const nullifierProxy = persistentHash(Bytes32Descriptor, coinNonce);
+    const contractAddressBytes = fromHex(this.contractAddress);
+    const commitmentValue = persistentHash(
+      new CompactTypeVector(5, Bytes32Descriptor),
+      [ACTION_TYPE_BYTES[actionType], contractAddressBytes, didKey, tokenColor, nullifierProxy],
+    );
+
+    return {
+      nullifier: coinNonce,
+      commitmentValue,
+      actionType,
+      didKey,
+      tokenContractAddress: this.contractAddress,
+      coinColor: tokenColor,
+    };
   }
 
   /**
