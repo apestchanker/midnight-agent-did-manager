@@ -130,7 +130,8 @@ export class UnifiedRegistryAPI {
       module,
       deployed as { callTx: Record<string, unknown> },
     );
-    api.deployTxData = (deployed as { public?: { txHash?: string; txId?: string } }) ?? null;
+    // The SDK stores deploy TX metadata at contract.deployTxData (same pattern as DidRegistryAPI)
+    api.deployTxData = (deployed as unknown as { deployTxData?: { public?: { txHash?: string; txId?: string } } }).deployTxData ?? null;
     return api;
   }
 

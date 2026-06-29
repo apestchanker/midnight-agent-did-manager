@@ -121,13 +121,9 @@ export function DeployPanel({ providers, onDeployed }: DeployPanelProps) {
               <BadgeCheck className="h-4 w-4" />
               Deployment confirmed on-chain
             </p>
-            <p className="text-xs text-zinc-300 mt-1">
-              <span className="text-zinc-500">Deploy Tx:</span>{" "}
-              <span className="break-all font-mono">{lastDeployResult.txId || lastDeployResult.txHash}</span>
-            </p>
-            {lastDeployResult.txId && lastDeployResult.txHash && lastDeployResult.txId !== lastDeployResult.txHash && (
+            {lastDeployResult.txHash && (
               <p className="text-xs text-zinc-300 mt-1">
-                <span className="text-zinc-500">Deploy Tx Hash:</span>{" "}
+                <span className="text-zinc-500">Deploy Tx:</span>{" "}
                 <a
                   href={explorerTxUrl(lastDeployResult.txHash)}
                   target="_blank"
@@ -138,10 +134,25 @@ export function DeployPanel({ providers, onDeployed }: DeployPanelProps) {
                 </a>
               </p>
             )}
-            <p className="text-xs text-zinc-300 mt-1">
-              <span className="text-zinc-500">Initialization:</span>{" "}
-              constructor-based
-            </p>
+            {lastDeployResult.contractAddress && (
+              <p className="text-xs text-zinc-300 mt-1">
+                <span className="text-zinc-500">Contract:</span>{" "}
+                <span className="break-all font-mono">{lastDeployResult.contractAddress}</span>
+              </p>
+            )}
+            {lastDeployResult.initializeTxHash && (
+              <p className="text-xs text-zinc-300 mt-1">
+                <span className="text-zinc-500">Admin Init Tx:</span>{" "}
+                <a
+                  href={explorerTxUrl(lastDeployResult.initializeTxHash)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="break-all font-mono text-emerald-400 underline underline-offset-2"
+                >
+                  {lastDeployResult.initializeTxHash}
+                </a>
+              </p>
+            )}
           </div>
         )}
       </CardContent>
