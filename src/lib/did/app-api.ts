@@ -16,16 +16,17 @@ import {
 } from "./service-sync";
 import { createDidIdentifier } from "./commitments";
 import { DidRegistryAPI } from "./api";
+import type { UnifiedRegistryAPI } from "../registry/unified-registry-api";
+
+type AnyRegistryAPI = DidRegistryAPI | UnifiedRegistryAPI;
 import {
   getSavedCompileArtifact,
   mergeDidMetadata,
   saveCompileArtifact,
   saveDeployment,
-  saveTokenDeployment,
 } from "./cache";
-import { MANAGED_CONTRACT_BASE_PATH, type CompileResult, type TokenDeployResult } from "./types";
+import { MANAGED_CONTRACT_BASE_PATH, type CompileResult } from "./types";
 import { loadManagedContractModule } from "./runtime";
-import { TokenGatingAPI } from "../token/token-gating-api";
 
 export async function compileDidRegistry(
   providers: AppProviders,
@@ -34,15 +35,6 @@ export async function compileDidRegistry(
     await loadManagedContractModule();
   } catch {
     throw new Error("DID Registry artifact not found. Run npm run compile-contract.");
-  }
-
-  // Verify the token-gating managed runtime is also present before marking step 1 complete.
-  try {
-    await import("../../generated/tokenGatingContract.runtime.js");
-  } catch {
-    throw new Error(
-      "Token gating artifact not found. Run npm run compile-token-gating.",
-    );
   }
 
   saveCompileArtifact({
@@ -57,28 +49,6 @@ export async function compileDidRegistry(
   };
 }
 
-export async function deployTokenGating(
-  providers: AppProviders,
-): Promise<TokenDeployResult> {
-  const api = await TokenGatingAPI.deploy(providers);
-  const now = new Date().toISOString();
-  const result: TokenDeployResult = {
-    contractAddress: api.contractAddress,
-    txHash: "",
-    networkId: providers.networkId,
-    deployedAt: now,
-    message: "Token gating contract deployed. Use this address as the token_contract argument when deploying the DID registry.",
-  };
-
-  saveTokenDeployment({
-    contractAddress: result.contractAddress,
-    txHash: result.txHash,
-    networkId: result.networkId,
-    deployedAt: result.deployedAt,
-  });
-
-  return result;
-}
 
 export async function deployDidRegistry(
   providers: AppProviders,
@@ -120,8 +90,48 @@ export async function deployDidRegistry(
   return result;
 }
 
+/**
+ * Deploy the unified DID registry + token-gating contract (v3).
+ * No separate token-gating contract needed — everything is in one contract.
+ */
+export async function deployUnifiedRegistry(
+  providers: AppProviders,
+): Promise<DeployResult> {
+  const compileData = getSavedCompileArtifact();
+  if (!compileData) {
+    throw new Error(
+      "Managed contract assets have not been validated yet. Load the compiled contract first.",
+    );
+  }
+
+  const { UnifiedRegistryAPI } = await import("../registry/unified-registry-api");
+  const api = await UnifiedRegistryAPI.deploy(providers);
+  const deployed = api.getDeployMetadata();
+  const initializeTx = await api.registerInitialAdmin();
+  const result: DeployResult = {
+    contractAddress: api.contractAddress,
+    txHash: String(deployed?.public?.txHash || ""),
+    txId: String(deployed?.public?.txId || ""),
+    initializeTxHash: initializeTx.txHash,
+    initializeTxId: initializeTx.txId,
+    txStatus: "confirmed",
+    mode: "onchain",
+    deployedAt: new Date().toISOString(),
+    networkId: providers.networkId,
+    message:
+      "Unified DID registry deployed to Midnight. Token gating and DID operations share this single contract. The connected wallet is registered as the initial registry admin.",
+  };
+
+  saveDeployment({
+    ...result,
+    networkId: providers.networkId,
+    deployedAt: result.deployedAt || new Date().toISOString(),
+  });
+  return result;
+}
+
 export async function requestDidWithSync(
-  api: DidRegistryAPI,
+  api: AnyRegistryAPI,
   input: {
     requesterWalletAddress: string;
     agentId: string;
@@ -188,7 +198,7 @@ export async function requestDidWithSync(
 }
 
 export async function issueDidWithSync(
-  api: DidRegistryAPI,
+  api: AnyRegistryAPI,
   input: IssueDidInput,
 ): Promise<DidRecord> {
   const record = await api.issueDid(input);
@@ -312,7 +322,7 @@ export async function revokeDidOrchestrated(
 }
 
 export async function updateDidWithSync(
-  api: DidRegistryAPI,
+  api: AnyRegistryAPI,
   input: UpdateDidInput & { capabilityProof?: CapabilityProof },
 ): Promise<DidRecord> {
   const record = await api.updateDid(input);
@@ -334,7 +344,7 @@ export async function updateDidWithSync(
 }
 
 export async function revokeDidWithSync(
-  api: DidRegistryAPI,
+  api: AnyRegistryAPI,
   input: RevokeDidInput & { capabilityProof?: CapabilityProof },
 ): Promise<DidRecord> {
   const record = await api.revokeDid(input);

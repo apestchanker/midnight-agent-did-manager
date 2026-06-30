@@ -18,6 +18,23 @@ export interface Subscription {
   ends_at?: string | null;
 }
 
+export interface ActionTokenGrant {
+  id: string;
+  customer_id: string;
+  subscription_id?: string | null;
+  token_contract_address: string;
+  network_id: string;
+  recipient_shielded_address: string;
+  subscription_key_hex?: string | null;
+  credits_granted: number;
+  credits_used: number;
+  mint_tx_hash?: string | null;
+  mint_tx_id?: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface McpKey {
   id: string;
   customer_id: string;
@@ -36,6 +53,7 @@ export interface McpKey {
 export interface CustomerContext {
   customer: Customer;
   subscriptions: Subscription[];
+  actionTokenGrants: ActionTokenGrant[];
   mcpKeys: McpKey[];
 }
 

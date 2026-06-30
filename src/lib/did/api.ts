@@ -126,6 +126,18 @@ export class DidRegistryAPI {
     );
   }
 
+  async readRegistrySalt(): Promise<Uint8Array> {
+    const state = await this.providers.publicDataProvider.queryContractState(
+      this.contractAddress as never,
+    );
+    if (!state) throw new Error("Could not read DID registry ledger state");
+    const ledger = this.module.ledger((state as { data: unknown }).data as never);
+    const salt = ledger.registry_salt;
+    if (salt instanceof Uint8Array) return salt;
+    if (salt && typeof salt === "object" && "bytes" in salt) return (salt as { bytes: Uint8Array }).bytes;
+    throw new Error("registry_salt not found in DID registry ledger");
+  }
+
   async registerInitialAdmin(): Promise<{ txHash: string; txId?: string }> {
     const tx = await (this.contract.callTx.register_initial_admin as () => Promise<TxResult>)();
     return {

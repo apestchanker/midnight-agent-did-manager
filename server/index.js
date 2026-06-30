@@ -11,6 +11,7 @@ import {
   createDidRequest,
   createWalletDidRequest,
   createSubscription,
+  recordActionTokenGrant,
   revokeCustomerMcpKey,
   updateCustomerMcpKeyScopes,
   getLatestAdminRegistryDeployment,
@@ -237,6 +238,53 @@ const server = createServer(async (req, res) => {
           didQuotaTotal: body.didQuotaTotal,
           status: body.status,
           endsAt: body.endsAt,
+        }),
+      );
+      return;
+    }
+
+    if (req.method === "POST" && parts[0] === "api" && parts[1] === "customers" && parts[3] === "action-token-grants") {
+      const body = await readJson(req);
+      sendJson(
+        res,
+        201,
+        await recordActionTokenGrant({
+          customerId: parts[2],
+          subscriptionId: body.subscriptionId,
+          tokenContractAddress: body.tokenContractAddress,
+          networkId: body.networkId,
+          recipientShieldedAddress: body.recipientShieldedAddress,
+          subscriptionKeyHex: body.subscriptionKeyHex,
+          creditsGranted: body.creditsGranted,
+          creditsUsed: body.creditsUsed,
+          mintTxHash: body.mintTxHash,
+          mintTxId: body.mintTxId,
+          actorRef: body.actorRef,
+          status: body.status,
+        }),
+      );
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/action-token-grants") {
+      const body = await readJson(req);
+      sendJson(
+        res,
+        201,
+        await recordActionTokenGrant({
+          customerId: body.customerId,
+          customerRef: body.customerRef,
+          subscriptionId: body.subscriptionId,
+          tokenContractAddress: body.tokenContractAddress,
+          networkId: body.networkId,
+          recipientShieldedAddress: body.recipientShieldedAddress,
+          subscriptionKeyHex: body.subscriptionKeyHex,
+          creditsGranted: body.creditsGranted,
+          creditsUsed: body.creditsUsed,
+          mintTxHash: body.mintTxHash,
+          mintTxId: body.mintTxId,
+          actorRef: body.actorRef,
+          status: body.status,
         }),
       );
       return;

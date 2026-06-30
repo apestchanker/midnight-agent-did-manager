@@ -31,6 +31,23 @@ create table if not exists subscriptions (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists action_token_grants (
+  id uuid primary key default gen_random_uuid(),
+  customer_id uuid not null references customers(id) on delete cascade,
+  subscription_id uuid references subscriptions(id) on delete set null,
+  token_contract_address text not null,
+  network_id text not null,
+  recipient_shielded_address text not null,
+  subscription_key_hex text,
+  credits_granted integer not null check (credits_granted >= 0),
+  credits_used integer not null default 0 check (credits_used >= 0 and credits_used <= credits_granted),
+  mint_tx_hash text,
+  mint_tx_id text,
+  status text not null default 'active' check (status in ('active', 'revoked')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists mcp_keys (
   id uuid primary key default gen_random_uuid(),
   customer_id uuid not null references customers(id) on delete cascade,
@@ -129,6 +146,8 @@ where agent_id is null;
 
 create index if not exists idx_customer_wallets_customer_id on customer_wallets(customer_id);
 create index if not exists idx_subscriptions_customer_id on subscriptions(customer_id);
+create index if not exists idx_action_token_grants_customer_id on action_token_grants(customer_id, created_at desc);
+create index if not exists idx_action_token_grants_contract on action_token_grants(token_contract_address, network_id);
 create index if not exists idx_mcp_keys_customer_id on mcp_keys(customer_id);
 create index if not exists idx_did_requests_customer_id on did_requests(customer_id);
 create index if not exists idx_did_requests_subject_wallet on did_requests(subject_wallet_address);

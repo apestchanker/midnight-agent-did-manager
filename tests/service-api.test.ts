@@ -144,6 +144,48 @@ describe("serviceApi Task 6", () => {
     });
   });
 
+  describe("recordActionTokenGrant", () => {
+    it("POSTs the DB-backed action token grant record", async () => {
+      const mockGrant = {
+        id: "grant-1",
+        customer_id: "customer-1",
+        token_contract_address: "token-contract",
+        network_id: "Undeployed",
+        recipient_shielded_address: "mn_shield-addr_1...",
+        credits_granted: 5,
+        credits_used: 0,
+        status: "active",
+        created_at: "2026-06-27T00:00:00.000Z",
+        updated_at: "2026-06-27T00:00:00.000Z",
+      };
+      const fetchMock = mockFetch(mockGrant, 201);
+      vi.stubGlobal("fetch", fetchMock);
+
+      const { recordActionTokenGrant } = await import("../src/utils/serviceApi.js");
+      const result = await recordActionTokenGrant({
+        customerRef: "user@example.com",
+        tokenContractAddress: "token-contract",
+        networkId: "Undeployed",
+        recipientShieldedAddress: "mn_shield-addr_1...",
+        subscriptionKeyHex: "ab".repeat(32),
+        creditsGranted: 5,
+        creditsUsed: 0,
+        mintTxHash: "tx-1",
+      });
+
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toContain("/api/action-token-grants");
+      expect(init.method).toBe("POST");
+      const body = JSON.parse(init.body as string);
+      expect(body.customerRef).toBe("user@example.com");
+      expect(body.creditsGranted).toBe(5);
+      expect(body.creditsUsed).toBe(0);
+      expect(body.mintTxHash).toBe("tx-1");
+      expect(result.credits_granted).toBe(5);
+    });
+  });
+
   describe("verifyMidnightProofRequest removal", () => {
     it("verifyMidnightProofRequest is removed from serviceApi", async () => {
       const serviceApi = await import("../src/utils/serviceApi.js");

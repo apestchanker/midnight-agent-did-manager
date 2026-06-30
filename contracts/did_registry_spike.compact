@@ -1,0 +1,122 @@
+pragma language_version >= 0.23 && <= 0.23;
+
+import CompactStandardLibrary;
+
+// === LEDGER MÍNIMO ===
+// Colors minted/accepted by this contract — consumeToken rejects any other color.
+export ledger valid_colors: Map<Bytes<32>, Boolean>;
+
+// Anti-replay: each consumed coin's nullifier_proxy is recorded here.
+export ledger used_capability_nullifiers: Map<Bytes<32>, Boolean>;
+
+// DID controller mapping.
+export ledger did_controller: Map<Bytes<32>, ZswapCoinPublicKey>;
+
+// Bootstrap gate.
+export ledger admin_registered: Boolean;
+
+// Salt for DID key derivation.
+export ledger registry_salt: Bytes<32>;
+
+// === CONSTRUCTOR ===
+constructor(salt: Bytes<32>) {
+  registry_salt = disclose(salt);
+  admin_registered = false;
+}
+
+// === HELPERS PURE ===
+circuit deriveDidKey(controller: ZswapCoinPublicKey, subject_nonce: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>(
+           [registry_salt, controller.bytes, subject_nonce]
+           );
+}
+
+// === HELPER INTERNO (no exported) ===
+// Generalization of consume_token_for_action: takes custody of the coin,
+// validates color and value, enforces single-use via nullifier_proxy, and
+// returns all-but-1 unit to the caller in the same transaction.
+circuit consumeToken(coin: ShieldedCoinInfo): [] {
+  const public_color = disclose(coin.color);
+  const public_value = disclose(coin.value);
+  const public_nonce = disclose(coin.nonce);
+
+  // Only tokens minted/registered by this contract are accepted.
+  assert(valid_colors.member(public_color), "Invalid token color");
+
+  // Anchor protection: must retain >= 1 unit after consuming 1.
+  assert(public_value >= (2 as Uint<128>), "Insufficient token value");
+
+  // Replay protection: each coin nonce can only gate one action.
+  const nullifier_proxy = persistentHash<Bytes<32>>(public_nonce);
+  assert(!used_capability_nullifiers.member(nullifier_proxy), "Token already used");
+
+  // Contract takes custody of the coin (wallet balances the Zswap spend side).
+  receiveShielded(disclose(coin));
+
+  // Return all-but-1 unit back to the caller in the same transaction.
+  const remaining = (public_value - (1 as Uint<128>)) as Uint<128>;
+  sendImmediateShielded(
+    disclose(coin),
+    left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey()),
+    remaining
+    );
+
+  used_capability_nullifiers.insert(nullifier_proxy, true);
+}
+
+// === CIRCUITO GATEADO ===
+export circuit gated_self_register_did(
+                 coin: ShieldedCoinInfo,
+                 subject_nonce: Bytes<32>
+                 ): Bytes<32> {
+  // 1. Pre-checks de estado (ANTES de consumeToken per ADR-004)
+  assert(admin_registered, "Registry not yet bootstrapped");
+  const controller = ownPublicKey();
+  const did_key = disclose(deriveDidKey(controller, disclose(subject_nonce)));
+  assert(!did_controller.member(did_key), "DID already registered");
+
+  // 2. Consume token (atómico)
+  consumeToken(coin);
+
+  // 3. Registrar DID
+  did_controller.insert(did_key, controller);
+
+  return did_key;
+}
+
+// =====================================================================
+// TASK 1.2 — Firmas de stdlib 0.23 VERIFICADAS contra este spike
+// =====================================================================
+// El spike compila con exit code 0 vía:
+//   compact compile --skip-zk contracts/did_registry_spike.compact <outdir>
+// (binario: `compact`, no `compactc`; salida en contract/index.js)
+//
+// Primitivas confirmadas válidas en Compact 0.23.0:
+//
+//   ShieldedCoinInfo            struct con campos { nonce: Bytes<32>,
+//                                color: Bytes<32>, value: Uint<128> }
+//   receiveShielded(coin: ShieldedCoinInfo): []
+//                                — requiere disclose(coin)
+//   sendImmediateShielded(coin: ShieldedCoinInfo,
+//       recipient: Either<ZswapCoinPublicKey, ContractAddress>,
+//       value: Uint<128>): []   — requiere disclose(coin); value es Uint<128>
+//   left<ZswapCoinPublicKey, ContractAddress>(pk): Either<...>
+//   ownPublicKey(): ZswapCoinPublicKey   — campo .bytes: Bytes<32>
+//   persistentHash<T>(value: T): Bytes<32>
+//       — usado como persistentHash<Bytes<32>>(nonce) y
+//         persistentHash<Vector<N, Bytes<32>>>([...])
+//   pad(n, "literal"): Bytes<n>          — ambos args literales
+//   disclose(v): v                       — requerido en escrituras de
+//                                          witness/coin-derived a ledger
+//
+// Primitivas adicionales usadas en el contrato unificado (token_gating.compact,
+// también pin 0.23, ya compilado en producción — confirmadas por el build actual):
+//   mintShieldedToken(domain_sep: Bytes<32>, amount: Uint<64>,
+//       nonce: Bytes<32>,
+//       recipient: Either<ZswapCoinPublicKey, ContractAddress>): []
+//   tokenType(domain_sep: Bytes<32>, contract: ContractAddress): Bytes<32>
+//   kernel.self(): ContractAddress       — campo .bytes: Bytes<32>
+//
+// Nota: `remaining` debe castearse explícitamente a Uint<128>:
+//   const remaining = (disclose(coin.value) - (1 as Uint<128>)) as Uint<128>;
+// =====================================================================

@@ -23,12 +23,10 @@ import type {
 } from "./types/service";
 import { APP_VERSION } from "./lib/version";
 import {
-  DidRegistryAPI,
   getSavedContractAddress,
   getSavedDeployment,
 } from "./lib/didContract";
-import { getSavedTokenDeployment } from "./lib/did/cache";
-import { TokenGatingAPI } from "./lib/token/token-gating-api";
+import { UnifiedRegistryAPI } from "./lib/registry";
 import {
   requestDidWithSync,
   revokeDidWithSync,
@@ -165,7 +163,7 @@ export default function App() {
   const [selectedAgentKey, setSelectedAgentKey] = useState("");
   const [didRecord, setDidRecord] = useState<DidRecord | null>(null);
   const [deployResult, setDeployResult] = useState<DeployResult | null>(null);
-  const [tokenAPI, setTokenAPI] = useState<TokenGatingAPI | null>(null);
+  const [tokenAPI, setTokenAPI] = useState<UnifiedRegistryAPI | null>(null);
   const [registryAccess, setRegistryAccess] = useState<RegistryAccess | null>(null);
   const [customerRequests, setCustomerRequests] = useState<DidRequestRow[]>([]);
   const [adminRequests, setAdminRequests] = useState<DidRequestRow[]>([]);
@@ -187,7 +185,7 @@ export default function App() {
     null,
   );
   const [registryDids, setRegistryDids] = useState<RegistryDidRow[]>([]);
-  const [registryApi, setRegistryApi] = useState<DidRegistryAPI | null>(null);
+  const [registryApi, setRegistryApi] = useState<UnifiedRegistryAPI | null>(null);
   const [registryApiError, setRegistryApiError] = useState("");
   const [registryProofPackageJson, setRegistryProofPackageJson] = useState("");
   const [registryProofVerification, setRegistryProofVerification] =
@@ -424,15 +422,14 @@ export default function App() {
     }
   }, [walletAddress]);
 
-  // Reconnect to the token gating contract when providers become available
+  // tokenAPI is now an alias to the unified registry contract (same contract handles both gating + DID)
   useEffect(() => {
-    if (!providers) { setTokenAPI(null); return; }
-    const saved = getSavedTokenDeployment();
-    if (!saved?.contractAddress) return;
-    TokenGatingAPI.join(providers, saved.contractAddress)
-      .then(setTokenAPI)
-      .catch(() => setTokenAPI(null));
-  }, [providers]);
+    if (registryApi) {
+      setTokenAPI(registryApi);
+    } else {
+      setTokenAPI(null);
+    }
+  }, [registryApi]);
 
   useEffect(() => {
     if (viewMode === "user") {
@@ -544,7 +541,7 @@ export default function App() {
     }
 
     let cancelled = false;
-    DidRegistryAPI.join(providers, contractAddress)
+    UnifiedRegistryAPI.join(providers, contractAddress)
       .then((api) => {
         if (!cancelled) {
           setRegistryApi(api);
@@ -694,7 +691,7 @@ export default function App() {
   async function refreshAgentRecord(
     agentId: string,
     subjectWalletAddress?: string,
-    apiOverride?: DidRegistryAPI,
+    apiOverride?: UnifiedRegistryAPI,
   ) {
     const activeRegistryApi = apiOverride || registryApi;
     if (!activeRegistryApi) throw new Error("Wallet providers not ready");
@@ -747,12 +744,12 @@ export default function App() {
       );
     }
 
-    let activeRegistryApi: DidRegistryAPI;
+    let activeRegistryApi: UnifiedRegistryAPI;
     try {
       activeRegistryApi =
         registryApi?.contractAddress === targetContractAddress
           ? registryApi
-          : await DidRegistryAPI.join(providers, targetContractAddress);
+          : await UnifiedRegistryAPI.join(providers, targetContractAddress);
       setRegistryApiError("");
     } catch (error) {
       const message = registryJoinErrorMessage(error, targetContractAddress);
@@ -823,15 +820,17 @@ export default function App() {
       ].join(":"),
     );
 
-    const record = await registryApi.requestDid({
-      requesterWalletAddress: payload.requesterWalletAddress || walletAddress,
+    // Single atomic TX: consumes token credit AND registers DID in one ZK circuit.
+    // The gated_self_register_did circuit verifies token ownership on-chain — no cross-contract
+    // commitment needed because both token gating and DID logic live in the same contract.
+    const record = await registryApi.gatedSelfRegisterDid({
+      subjectNonce,
       agentId: payload.agentId,
       subjectWalletAddress: payload.subjectWalletAddress,
       agentName: payload.agentName,
       organization: payload.organization,
       organizationDisclosure: payload.organizationDisclosure,
       didDocument: payload.didDocument,
-      subjectNonce,
     });
 
     setDidRecord(record);
@@ -2140,6 +2139,7 @@ export default function App() {
                   connectedApi={providers?.connectedAPI ?? api}
                   walletAddress={walletAddress}
                   contractAddress={contractAddress}
+                  registryApi={registryApi}
                   mode={viewMode}
                   onIssueOnChain={handleIssueDid}
                   onApproveOnChain={handleApproveDidRequestOnChain}
@@ -2170,6 +2170,14 @@ export default function App() {
                     <strong>DID Quota</strong>.
                   </p>
                 </div>
+                {registryApiError && (
+                  <div className="rounded-md border border-red-800 bg-red-950/40 p-3">
+                    <p className="text-xs text-red-300">{registryApiError}</p>
+                    <p className="text-xs text-zinc-500 mt-1">
+                      Make sure the contract address field (top of the page) contains the unified registry address from the Deploy tab.
+                    </p>
+                  </div>
+                )}
                 <TokenGatingPanel
                   providers={providers}
                   tokenAPI={tokenAPI}

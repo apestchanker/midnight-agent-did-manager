@@ -5,7 +5,8 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Coins, RefreshCw, ShieldCheck, Zap } from "lucide-react";
 import type { AppProviders } from "../../lib/providers";
-import type { TokenGatingAPI } from "../lib/token/token-gating-api";
+import type { UnifiedRegistryAPI } from "../lib/registry";
+import { recordActionTokenGrant } from "../utils/serviceApi";
 import {
   MidnightBech32m,
   ShieldedAddress,
@@ -32,7 +33,7 @@ function parseShieldedAddress(address: string, networkId: string): Uint8Array {
 
 interface TokenGatingPanelProps {
   providers: AppProviders;
-  tokenAPI: TokenGatingAPI | null;
+  tokenAPI: UnifiedRegistryAPI | null;
   isAdmin: boolean;
 }
 
@@ -43,7 +44,7 @@ export function TokenGatingPanel({ providers, tokenAPI, isAdmin }: TokenGatingPa
 
   // Admin mint form
   const [recipientAddress, setRecipientAddress] = useState("");
-  const [recipientUserId, setRecipientUserId] = useState("");
+  const [recipientCustomerRef, setRecipientCustomerRef] = useState("");
   const [grantCredits, setGrantCredits] = useState("5");
   const [minting, setMinting] = useState(false);
   const [mintResult, setMintResult] = useState("");
@@ -79,21 +80,27 @@ export function TokenGatingPanel({ providers, tokenAPI, isAdmin }: TokenGatingPa
     void loadBalances();
   }, [loadBalances]);
 
-  const contractColor = tokenAPI ? tokenAPI.contractAddress : null;
-  const myBalance = contractColor
-    ? balances.find((b) => b.color === contractColor)?.rawBalance ?? 0n
+  // Find the verified action credit balance (the color whose address is in valid_colors on the contract).
+  // contractAddress is NOT the token color — the color comes from fetchVerifiedTokenColors.
+  const myVerifiedBalance = tokenAPI
+    ? balances.find((b) => b.verified)
     : null;
+  const myBalance = myVerifiedBalance?.rawBalance ?? (tokenAPI ? 0n : null);
   const canAct = myBalance !== null && myBalance > 1n;
 
   async function handleMint() {
     if (!tokenAPI) return;
     const addr = recipientAddress.trim();
-    const userId = recipientUserId.trim();
+    const customerRef = recipientCustomerRef.trim();
     const credits = BigInt(grantCredits || "0");
 
     if (!addr) { setMintError("Recipient wallet address is required."); return; }
-    if (!userId) { setMintError("User ID is required."); return; }
+    if (!customerRef) { setMintError("Customer email, ID, or linked wallet is required."); return; }
     if (credits < 1n) { setMintError("Credits must be >= 1."); return; }
+    if (credits > BigInt(Number.MAX_SAFE_INTEGER)) {
+      setMintError("Credits exceed the service record limit.");
+      return;
+    }
 
     setMinting(true);
     setMintError("");
@@ -102,10 +109,33 @@ export function TokenGatingPanel({ providers, tokenAPI, isAdmin }: TokenGatingPa
       console.debug("[TokenGatingPanel] handleMint", { addr, networkId: providers.networkId });
       const recipientBytes = parseShieldedAddress(addr, providers.networkId);
       console.debug("[TokenGatingPanel] parsed recipientBytes length:", recipientBytes.length, "hex:", Buffer.from(recipientBytes).toString("hex").slice(0, 16) + "...");
-      const { txHash } = await tokenAPI.mintToRecipient(recipientBytes, userId, credits);
-      setMintResult(`Granted ${credits} action credit(s) + 1 anchor. TX: ${txHash}`);
+      const { txHash, subscriptionKey } = await tokenAPI.mintTokens({
+        recipientBytes,
+        userId: customerRef,
+        credits,
+      });
+      try {
+        await recordActionTokenGrant({
+          customerRef,
+          tokenContractAddress: tokenAPI.contractAddress,
+          networkId: providers.networkId,
+          recipientShieldedAddress: addr,
+          subscriptionKeyHex: Buffer.from(subscriptionKey).toString("hex"),
+          creditsGranted: Number(credits),
+          creditsUsed: 0,
+          mintTxHash: txHash,
+          actorRef: providers.unshieldedAddress,
+        });
+        setMintResult(`Granted ${credits} action credit(s) + 1 anchor. TX: ${txHash}. Grant recorded in customer subscription record.`);
+      } catch (recordError) {
+        setMintResult(
+          `Granted ${credits} action credit(s) + 1 anchor. TX: ${txHash}. Grant record failed: ${
+            recordError instanceof Error ? recordError.message : "unknown error"
+          }`,
+        );
+      }
       setRecipientAddress("");
-      setRecipientUserId("");
+      setRecipientCustomerRef("");
       setGrantCredits("5");
     } catch (e) {
       setMintError(e instanceof Error ? e.message : "Mint failed");
@@ -248,14 +278,17 @@ export function TokenGatingPanel({ providers, tokenAPI, isAdmin }: TokenGatingPa
               </p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="user-id" className="text-zinc-200">User ID</Label>
+              <Label htmlFor="customer-ref" className="text-zinc-200">Customer Record</Label>
               <Input
-                id="user-id"
-                placeholder="user@example.com or internal user ID"
-                value={recipientUserId}
-                onChange={(e) => setRecipientUserId(e.target.value)}
+                id="customer-ref"
+                placeholder="customer email, ID, or linked wallet"
+                value={recipientCustomerRef}
+                onChange={(e) => setRecipientCustomerRef(e.target.value)}
                 className="bg-zinc-950 border-zinc-800 text-white placeholder:text-zinc-500"
               />
+              <p className="text-xs text-zinc-500">
+                Used to write the action-token grant into the service DB after mint success.
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="credits" className="text-zinc-200">Action Credits to Grant</Label>
