@@ -2139,6 +2139,7 @@ export default function App() {
                   connectedApi={providers?.connectedAPI ?? api}
                   walletAddress={walletAddress}
                   contractAddress={contractAddress}
+                  registryApi={registryApi}
                   mode={viewMode}
                   onIssueOnChain={handleIssueDid}
                   onApproveOnChain={handleApproveDidRequestOnChain}

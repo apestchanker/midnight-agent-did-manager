@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import type { AppProviders } from "../../lib/providers";
+import type { UnifiedRegistryAPI } from "../lib/registry";
 import type { DidRecord } from "../types/did";
 import type {
   BootstrapResponse,
@@ -55,6 +56,7 @@ interface WorkflowPanelProps {
   connectedApi: ConnectedAPI | null;
   walletAddress: string;
   contractAddress: string;
+  registryApi?: UnifiedRegistryAPI | null;
   mode: "user" | "admin";
   onIssueOnChain: (payload: {
     requestId?: string;
@@ -99,38 +101,70 @@ interface ExpandableListItem {
   details: ReactNode;
 }
 
-function actionTokenGrantSummary(grants: CustomerContext["actionTokenGrants"]) {
-  const granted = grants.reduce((sum, grant) => sum + Number(grant.credits_granted || 0), 0);
-  const used = grants.reduce((sum, grant) => sum + Number(grant.credits_used || 0), 0);
-  return {
-    granted,
-    used,
-    remaining: Math.max(0, granted - used),
-  };
-}
 
-function renderActionTokenGrantTotals(grants: CustomerContext["actionTokenGrants"]) {
-  const totals = actionTokenGrantSummary(grants);
+function renderActionTokenGrantTotals(
+  grants: CustomerContext["actionTokenGrants"],
+  activeContractAddress: string,
+  onChainBalances: Record<string, bigint>,
+  loading: boolean,
+) {
+  const current = grants.filter(
+    (g) => g.token_contract_address?.toLowerCase() === activeContractAddress?.toLowerCase(),
+  );
+  const legacy = grants.filter(
+    (g) => g.token_contract_address?.toLowerCase() !== activeContractAddress?.toLowerCase(),
+  );
+
+  const granted = current.reduce((sum, g) => sum + Number(g.credits_granted || 0), 0);
+
+  // Sum on-chain spendable across all verified colors (balance - 1 anchor each)
+  const verifiedColors = Object.keys(onChainBalances);
+  let onChainRemaining: number | null = null;
+  if (verifiedColors.length > 0) {
+    onChainRemaining = verifiedColors.reduce((sum, color) => {
+      const bal = onChainBalances[color] ?? 0n;
+      return sum + Number(bal > 1n ? bal - 1n : 0n);
+    }, 0);
+  }
+
+  const usedDisplay = onChainRemaining !== null
+    ? granted - onChainRemaining
+    : current.reduce((sum, g) => sum + Number(g.credits_used || 0), 0);
+  const remainingDisplay = onChainRemaining !== null ? onChainRemaining : Math.max(0, granted - usedDisplay);
+  const isOnChain = onChainRemaining !== null;
+
   return (
     <div className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-300">
-      <div className="mb-2 font-medium text-zinc-100">Shielded Action Tokens</div>
+      <div className="mb-2 flex items-center justify-between">
+        <span className="font-medium text-zinc-100">Shielded Action Tokens</span>
+        {loading && <span className="text-zinc-500">syncing…</span>}
+        {!loading && isOnChain && <span className="text-emerald-500">on-chain</span>}
+        {!loading && !isOnChain && <span className="text-zinc-600">off-chain (DB)</span>}
+      </div>
       <div className="grid gap-2 sm:grid-cols-3">
         <div>
           <div className="text-zinc-500">Granted</div>
-          <div className="text-lg font-semibold text-zinc-100">{totals.granted}</div>
+          <div className="text-lg font-semibold text-zinc-100">{granted}</div>
         </div>
         <div>
           <div className="text-zinc-500">Used</div>
-          <div className="text-lg font-semibold text-zinc-100">{totals.used}</div>
+          <div className="text-lg font-semibold text-zinc-100">{usedDisplay}</div>
         </div>
         <div>
           <div className="text-zinc-500">Remaining</div>
-          <div className="text-lg font-semibold text-zinc-100">{totals.remaining}</div>
+          <div className="text-lg font-semibold text-zinc-100">{remainingDisplay}</div>
         </div>
       </div>
       <p className="mt-2 text-zinc-500">
-        These values come from service DB grant records written after successful token mints.
+        {isOnChain
+          ? "Used count derived from live wallet balance vs. total minted (on-chain source of truth)."
+          : "From the active registry contract. Used count from service DB — may lag on-chain state."}
       </p>
+      {legacy.length > 0 && (
+        <p className="mt-1 text-amber-600">
+          {legacy.length} legacy grant{legacy.length > 1 ? "s" : ""} from a previous contract are excluded — those tokens cannot be spent on the current registry.
+        </p>
+      )}
     </div>
   );
 }
@@ -139,6 +173,8 @@ export function WorkflowPanel({
   providers,
   connectedApi,
   walletAddress,
+  contractAddress,
+  registryApi,
   mode,
   onIssueOnChain,
   onApproveOnChain,
@@ -165,6 +201,10 @@ export function WorkflowPanel({
   const [scopeDrafts, setScopeDrafts] = useState<Record<string, string[]>>({});
   const [humanProofView, setHumanProofView] = useState<HumanProofView>("pending");
   const [expandedGroups, setExpandedGroups] = useState<Record<string, Record<string, boolean>>>({});
+  const [showLegacyGrants, setShowLegacyGrants] = useState(false);
+  // color hex → on-chain balance (read from wallet + verified against contract ledger)
+  const [onChainBalances, setOnChainBalances] = useState<Record<string, bigint>>({});
+  const [onChainBalancesLoading, setOnChainBalancesLoading] = useState(false);
   const [proofPackages, setProofPackages] = useState<Record<string, MidnightProofVerificationPackage>>({});
 
   const refreshDashboard = useCallback(async () => {
@@ -920,31 +960,107 @@ export function WorkflowPanel({
       </div>
     ),
   }));
-  const userActionTokenGrantItems: ExpandableListItem[] = (customerContext?.actionTokenGrants || []).map((grant) => ({
-    id: grant.id,
+  const legacyActionTokenGrantItems: ExpandableListItem[] = (customerContext?.actionTokenGrants || []).filter(
+    (g) => g.token_contract_address?.toLowerCase() !== contractAddress?.toLowerCase(),
+  ).map((grant) => ({
+    id: `legacy-${grant.id}`,
     summary: (
       <div className="space-y-1">
-        <div>{grant.status} · {grant.credits_granted} granted · {grant.credits_used} used</div>
-        <div className="text-zinc-500">
-          remaining {Math.max(0, Number(grant.credits_granted || 0) - Number(grant.credits_used || 0))}
+        <div className="flex items-center gap-2">
+          <span className="rounded bg-amber-900/60 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-400">Legacy</span>
+          <span className="text-zinc-500 line-through">{grant.status}</span>
+          <span className="text-zinc-500">· {grant.credits_granted} granted · unusable</span>
         </div>
+        <div className="text-zinc-600">Contract: <span className="font-mono">{grant.token_contract_address?.slice(0, 16)}…</span></div>
       </div>
     ),
     details: (
-      <div className="space-y-1">
-        <div><span className="text-zinc-500">Granted:</span> {grant.credits_granted}</div>
-        <div><span className="text-zinc-500">Used:</span> {grant.credits_used}</div>
-        <div><span className="text-zinc-500">Remaining:</span> {Math.max(0, Number(grant.credits_granted || 0) - Number(grant.credits_used || 0))}</div>
-        <div><span className="text-zinc-500">Token contract:</span> <span className="font-mono break-all">{grant.token_contract_address}</span></div>
-        <div><span className="text-zinc-500">Network:</span> {grant.network_id}</div>
-        <div><span className="text-zinc-500">Recipient:</span> <span className="font-mono break-all">{grant.recipient_shielded_address}</span></div>
+      <div className="space-y-1 text-zinc-500">
+        <div className="rounded bg-amber-950/40 border border-amber-800 px-2 py-1 text-amber-400 text-[11px] font-medium mb-2">
+          These tokens were minted on a previous contract and cannot be spent on the current registry. You may hold them in your wallet but they have no utility here.
+        </div>
+        <div><span className="text-zinc-600">Granted:</span> {grant.credits_granted}</div>
+        <div><span className="text-zinc-600">Used:</span> {grant.credits_used}</div>
+        <div><span className="text-zinc-600">Token contract:</span> <span className="font-mono break-all">{grant.token_contract_address}</span></div>
+        <div><span className="text-zinc-600">Network:</span> {grant.network_id}</div>
+        <div><span className="text-zinc-600">Recipient:</span> <span className="font-mono break-all">{grant.recipient_shielded_address}</span></div>
         {grant.mint_tx_hash && (
-          <div><span className="text-zinc-500">Mint TX:</span> <span className="font-mono break-all">{grant.mint_tx_hash}</span></div>
+          <div><span className="text-zinc-600">Mint TX:</span> <span className="font-mono break-all">{grant.mint_tx_hash}</span></div>
         )}
-        <div><span className="text-zinc-500">Recorded:</span> {new Date(grant.created_at).toLocaleString()}</div>
+        <div><span className="text-zinc-600">Recorded:</span> {new Date(grant.created_at).toLocaleString()}</div>
       </div>
     ),
   }));
+
+  // Compute on-chain used for each active grant.
+  // All grants for the same contract share the same token color pool.
+  // On-chain we can only see the aggregate balance, not per-grant usage.
+  // We attribute used tokens to grants in chronological order (oldest first).
+  const activeGrants = (customerContext?.actionTokenGrants || []).filter(
+    (g) => g.token_contract_address?.toLowerCase() === contractAddress?.toLowerCase(),
+  );
+  const totalGranted = activeGrants.reduce((s, g) => s + Number(g.credits_granted || 0), 0);
+  const totalOnChainSpendable = Object.values(onChainBalances).reduce(
+    (s, bal) => s + Number(bal > 1n ? bal - 1n : 0n), 0,
+  );
+  // on-chain used across all grants; null if no verified balance available yet
+  const totalOnChainUsed = Object.keys(onChainBalances).length > 0
+    ? Math.max(0, totalGranted - totalOnChainSpendable)
+    : null;
+
+  // Distribute used count across grants oldest-first
+  let remainingUsedToAttribute = totalOnChainUsed ?? 0;
+  const grantOnChainUsed = activeGrants.map((g) => {
+    const cap = Number(g.credits_granted || 0);
+    const used = totalOnChainUsed !== null
+      ? Math.min(cap, remainingUsedToAttribute)
+      : null;
+    if (used !== null) remainingUsedToAttribute -= used;
+    return { grant: g, onChainUsed: used };
+  });
+
+  const userActionTokenGrantItems: ExpandableListItem[] = grantOnChainUsed.map(({ grant, onChainUsed: ocUsed }) => {
+    const credited = Number(grant.credits_granted || 0);
+    const usedVal = ocUsed !== null ? ocUsed : Number(grant.credits_used || 0);
+    const remainingVal = Math.max(0, credited - usedVal);
+    const isLive = ocUsed !== null;
+    return {
+      id: grant.id,
+      summary: (
+        <div className="space-y-1">
+          <div>
+            {grant.status} · {credited} granted · {usedVal} used
+            {isLive && <span className="ml-1 text-emerald-500 text-[10px]">●live</span>}
+          </div>
+          <div className="text-zinc-500">remaining {remainingVal}</div>
+        </div>
+      ),
+      details: (
+        <div className="space-y-1">
+          <div><span className="text-zinc-500">Granted:</span> {credited}</div>
+          <div>
+            <span className="text-zinc-500">Used:</span> {usedVal}
+            {isLive
+              ? <span className="ml-1 text-emerald-500 text-[10px]">(on-chain)</span>
+              : <span className="ml-1 text-zinc-600 text-[10px]">(DB — may lag)</span>}
+          </div>
+          <div><span className="text-zinc-500">Remaining:</span> {remainingVal}</div>
+          <div><span className="text-zinc-500">Token contract:</span> <span className="font-mono break-all">{grant.token_contract_address}</span></div>
+          <div><span className="text-zinc-500">Network:</span> {grant.network_id}</div>
+          <div><span className="text-zinc-500">Recipient:</span> <span className="font-mono break-all">{grant.recipient_shielded_address}</span></div>
+          {grant.mint_tx_hash && (
+            <div><span className="text-zinc-500">Mint TX:</span> <span className="font-mono break-all">{grant.mint_tx_hash}</span></div>
+          )}
+          <div><span className="text-zinc-500">Recorded:</span> {new Date(grant.created_at).toLocaleString()}</div>
+          {isLive && totalOnChainUsed !== null && activeGrants.length > 1 && (
+            <div className="mt-1 text-zinc-600 text-[10px]">
+              Per-grant used count is estimated (oldest-first attribution). Total on-chain used across all grants: {totalOnChainUsed}.
+            </div>
+          )}
+        </div>
+      ),
+    };
+  });
   const adminSubscriptionItems: ExpandableListItem[] = (adminCustomerContext?.subscriptions || []).map((subscription) => ({
     id: subscription.id,
     summary: (
@@ -1105,6 +1221,33 @@ export function WorkflowPanel({
     }
     onActiveSectionChange?.(nextSection);
   }
+
+  // Load on-chain shielded balances (verified against contract ledger) whenever
+  // the subscriptions section is visible and we have a connected registry.
+  useEffect(() => {
+    if (section !== "subscriptions" || !registryApi || !providers?.connectedAPI) return;
+    let cancelled = false;
+    setOnChainBalancesLoading(true);
+    (async () => {
+      try {
+        const raw = (await providers.connectedAPI.getShieldedBalances()) as Record<string, bigint>;
+        const verified = await registryApi.fetchVerifiedTokenColors(Object.keys(raw));
+        if (!cancelled) {
+          const result: Record<string, bigint> = {};
+          for (const color of verified) {
+            const bal = raw[color];
+            if (bal !== undefined) result[color] = BigInt(bal);
+          }
+          setOnChainBalances(result);
+        }
+      } catch {
+        // silently ignore — UI falls back to DB values
+      } finally {
+        if (!cancelled) setOnChainBalancesLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [section, registryApi, providers?.connectedAPI]);
 
   function navButton(id: DashboardSection, label: string) {
     const active = section === id;
@@ -1349,13 +1492,32 @@ export function WorkflowPanel({
                 )}
                 {customerContext && (
                   <div className="space-y-2">
-                    {renderActionTokenGrantTotals(customerContext.actionTokenGrants || [])}
+                    {renderActionTokenGrantTotals(customerContext.actionTokenGrants || [], contractAddress, onChainBalances, onChainBalancesLoading)}
                     {(customerContext.actionTokenGrants || []).length === 0 ? (
                       <p className="text-xs text-zinc-500">
                         No action-token grants recorded yet. An admin must mint shielded action credits successfully before they appear here.
                       </p>
                     ) : (
                       renderExpandableList("user-action-token-grants", userActionTokenGrantItems, "")
+                    )}
+                    {legacyActionTokenGrantItems.length > 0 && (
+                      <div className="space-y-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowLegacyGrants((v) => !v)}
+                          className="rounded-md border border-amber-800/50 bg-amber-950/20 px-3 py-2 text-xs font-medium text-amber-500 transition hover:bg-amber-950/40"
+                        >
+                          {showLegacyGrants ? "Hide Legacy Tokens" : `Show Legacy Tokens (${legacyActionTokenGrantItems.length})`}
+                        </button>
+                        {showLegacyGrants && (
+                          <div className="space-y-2">
+                            <p className="text-[11px] text-amber-600">
+                              These grants belong to a previous contract. The tokens exist in your wallet but cannot be used with the current registry.
+                            </p>
+                            {renderExpandableList("user-legacy-grants", legacyActionTokenGrantItems, "")}
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 )}
@@ -1443,7 +1605,7 @@ export function WorkflowPanel({
                         renderExpandableList("admin-subscriptions", adminSubscriptionItems, "")
                       )}
                       <div className="space-y-2">
-                        {renderActionTokenGrantTotals(adminCustomerContext.actionTokenGrants || [])}
+                        {renderActionTokenGrantTotals(adminCustomerContext.actionTokenGrants || [], contractAddress, onChainBalances, onChainBalancesLoading)}
                         {(adminCustomerContext.actionTokenGrants || []).length === 0 ? (
                           <p className="text-xs text-zinc-500">
                             No action-token grants recorded yet for this customer.

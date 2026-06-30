@@ -80,10 +80,12 @@ export function TokenGatingPanel({ providers, tokenAPI, isAdmin }: TokenGatingPa
     void loadBalances();
   }, [loadBalances]);
 
-  const contractColor = tokenAPI ? tokenAPI.contractAddress : null;
-  const myBalance = contractColor
-    ? balances.find((b) => b.color === contractColor)?.rawBalance ?? 0n
+  // Find the verified action credit balance (the color whose address is in valid_colors on the contract).
+  // contractAddress is NOT the token color — the color comes from fetchVerifiedTokenColors.
+  const myVerifiedBalance = tokenAPI
+    ? balances.find((b) => b.verified)
     : null;
+  const myBalance = myVerifiedBalance?.rawBalance ?? (tokenAPI ? 0n : null);
   const canAct = myBalance !== null && myBalance > 1n;
 
   async function handleMint() {
