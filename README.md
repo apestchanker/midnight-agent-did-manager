@@ -82,13 +82,12 @@ Recommended startup order for a fresh local setup:
 Compile all contracts and refresh managed assets:
 
 ```bash
-npm run compile-all        # recommended — compiles all contracts in order
-npm run compile-token-gating   # only token_gating.compact
-npm run compile-contract       # only did_registry.compact
+npm run compile-all              # recommended — compiles both contracts in order
+npm run compile-contract         # only did_registry.compact
 npm run compile-ownership-proof  # only native_ownership_proof.compact
 ```
 
-`npm run compile-all` runs the three scripts in the correct order: token_gating → did_registry → ownership_proof. You must compile before deploying from the admin panel — the compile step generates the ZK proving/verifier keys (`.prover` and `.verifier` files). Full ZK compilation can take several minutes.
+`npm run compile-all` runs the two scripts in order: did_registry → ownership_proof. As of v3.0.0, `token_gating.compact` is unified into `did_registry.compact` (see [Contract Directory Notes](#contract-directory-notes)) — there is no separate token-gating compile step. You must compile before deploying from the admin panel — the compile step generates the ZK proving/verifier keys (`.prover` and `.verifier` files). Full ZK compilation can take several minutes.
 
 You need the official Midnight Compact compiler installed as `compact` or `compactc`.
 
@@ -96,17 +95,16 @@ Generated outputs are local build products and are intentionally ignored by Git.
 
 Outputs:
 
-- `contracts/managed/token-gating/` — token gating managed artifacts (keys, zkir, contract)
-- `public/contracts/managed/token-gating/` — browser-served token gating assets
-- `src/generated/tokenGatingContract.runtime.js` — token gating runtime JS
-- `contracts/managed/did-registry/` and `public/contracts/managed/did-registry/` — DID registry artifacts (unchanged location)
+- `contracts/managed/did-registry/` and `public/contracts/managed/did-registry/` — DID registry artifacts (keys, zkir, contract)
+- `contracts/managed/native-ownership-proof/` and `public/contracts/managed/native-ownership-proof/` — native ownership proof artifacts
+- `src/generated/didRegistryContract.runtime.js` — DID registry runtime JS
+- `src/generated/nativeOwnershipProof.runtime.js` — native ownership proof runtime JS
 - `contracts/compiled/did_registry.compiled.json` — local metadata snapshot
 
-Deploying from the admin panel (3-step flow):
+Deploying from the admin panel (2-step flow):
 
-1. **Load Artifact** — validates compiled artifacts for both contracts.
-2. **Deploy Token Gating** — deploys `token_gating.compact`; displays and copies the contract address; persists it in localStorage. A warning banner appears if an address already exists (re-deploying invalidates existing DIDs).
-3. **Deploy DID Registry** — deploys `did_registry.compact`, passing the token gating address from step 2 as the constructor argument. Step 3 is gated — unavailable until step 2 is complete.
+1. **Step 1: Load Artifacts** — validates the compiled `did_registry` and `native-ownership-proof` artifacts.
+2. **Step 2: Deploy Unified Registry** — deploys `did_registry.compact` as a single atomic transaction. The constructor takes `(salt, admin_recipient, admin_coin_nonce, admin_supply)` and mints the genesis admin token in the same transaction (see below). Step 2 is gated — unavailable until step 1 is complete.
 
 Important:
 
