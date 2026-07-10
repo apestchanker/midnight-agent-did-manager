@@ -324,13 +324,13 @@ sequenceDiagram
 
     DApp->>Wallet: Spend capability-token coin, then register controller-bound DID
     Wallet->>Contract: gated_self_register_did(coin, subject_nonce)
-    Contract->>Contract: consumeToken(coin); did_controller[did_key] = ownPublicKey()
+    Contract->>Contract: consumeToken(coin), then did_controller[did_key] = ownPublicKey()
     Contract-->>Wallet: DID slot registered
 
     Human->>DApp: Admin issues DID
     DApp->>Wallet: Sign issue transaction
     Wallet->>Contract: issue_did(coin, did_key, commitments)
-    Contract->>Contract: consumeAdminToken(coin); set DID active
+    Contract->>Contract: consumeAdminToken(coin), then set DID active
     Contract-->>Wallet: DID issued
 
     API->>DB: Persist issued DID and VC metadata
