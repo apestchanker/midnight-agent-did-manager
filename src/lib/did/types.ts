@@ -36,6 +36,7 @@ export type CachedDidMetadata = {
   agentId: string;
   didKeyHex?: string;
   subjectWalletAddress?: string;
+  controller?: string;
   agentName?: string;
   organization?: string;
   organizationDisclosure?: "disclosed" | "undisclosed";

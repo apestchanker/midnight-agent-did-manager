@@ -1,0 +1,381 @@
+{
+  "feature": "006-clarify-did-controller-metadata",
+  "generated_at": "2026-07-10",
+  "spec_refs": [
+    "1-functional/spec.md",
+    "2-technical/spec.md"
+  ],
+  "tasks": [
+    {
+      "id": "1",
+      "title": "Add controller field to shared DID types",
+      "description": "Add controller?: string to RequestDidInput, IssueDidInput, UpdateDidInput, DidRecord in src/types/did.ts (RevokeDidInput unchanged). Add controller?: string next to subjectWalletAddress?: string in CachedDidMetadata (src/lib/did/types.ts, line ~38). Add controller?: string | null to DidRequestRow (src/types/service.ts line ~71/80) and RegistryDidRow (src/types/service.ts line ~286/292). Add controller?: string | null to getPersistedDidState's inline return type in src/utils/serviceApi.ts (lines ~279-305). Pure structural/type additions only, no logic change.",
+      "files": [
+        "src/types/did.ts",
+        "src/lib/did/types.ts",
+        "src/types/service.ts",
+        "src/utils/serviceApi.ts"
+      ],
+      "acceptance_criteria": [
+        "RequestDidInput, IssueDidInput, UpdateDidInput, and DidRecord in src/types/did.ts each declare controller?: string; RevokeDidInput is unchanged",
+        "CachedDidMetadata in src/lib/did/types.ts declares controller?: string next to subjectWalletAddress?: string",
+        "DidRequestRow and RegistryDidRow in src/types/service.ts each declare controller?: string | null",
+        "getPersistedDidState's inline return type in src/utils/serviceApi.ts declares controller?: string | null",
+        "npx tsc --noEmit succeeds with no new type errors introduced by these additive optional fields"
+      ],
+      "spec_refs": [
+        "#REQ-01",
+        "#REQ-03",
+        "#ADR-001",
+        "#ADR-003"
+      ],
+      "depends_on": [],
+      "status": "done",
+      "tdd": false
+    },
+    {
+      "id": "2",
+      "title": "Add controller column to did_requests and did_records schema",
+      "description": "Insert two idempotent, additive ALTER TABLE statements in server/schema.sql immediately after line 139 (existing add-column block) and before the existing backfill block at line 140: `alter table if exists did_requests add column if not exists controller text;` and `alter table if exists did_records add column if not exists controller text;`. Both columns are nullable, no default, no backfill, no index \u2014 consistent with the file's existing migration convention.",
+      "files": [
+        "server/schema.sql"
+      ],
+      "acceptance_criteria": [
+        "server/schema.sql contains an idempotent `add column if not exists controller text` statement for did_requests and for did_records, placed after the existing add-column block and before the pre-existing backfill block",
+        "Running the schema migration against a fresh database and against an already-migrated database both succeed without error (safe to apply twice)",
+        "No existing column, index, or backfill statement in server/schema.sql is modified or reordered"
+      ],
+      "spec_refs": [
+        "#REQ-03",
+        "#REQ-04"
+      ],
+      "depends_on": [],
+      "status": "done",
+      "tdd": false
+    },
+    {
+      "id": "3",
+      "title": "Persist controller on DID request creation/update paths",
+      "description": "In server/registry-service.js: createOrUpdateDidRequestRecord (line ~840) accepts input.controller, defaulting to input.controller || requesterWallet; add controller to both the update branch (lines ~875-905, `controller = $N`) and the insert branch (lines ~911-956, new column + placeholder). createWalletDidRequest (line ~1156) passes controller: input.controller through unchanged. createDidRequest (MCP flow, line ~1097) passes controller: holderWallet (server-derived only \u2014 MCP callers never send controller, per the existing platformGeneratedDidFields contract already enforced in server/mcp-core.js, which needs no code change).",
+      "files": [
+        "server/registry-service.js",
+        "tests/registry-service-request.test.ts",
+        "tests/registry-service-mcp.test.ts"
+      ],
+      "acceptance_criteria": [
+        "createOrUpdateDidRequestRecord persists the explicit input.controller value when provided, verified via a new test case in tests/registry-service-request.test.ts asserting the insert/update SQL params include the submitted controller",
+        "createOrUpdateDidRequestRecord defaults controller to requesterWallet when input.controller is omitted, verified via a new test case in tests/registry-service-request.test.ts",
+        "createWalletDidRequest propagates input.controller unchanged into createOrUpdateDidRequestRecord's input",
+        "The MCP createDidRequest flow persists controller = holderWallet regardless of any caller-supplied value, verified via a new test case in tests/registry-service-mcp.test.ts",
+        "npm test -- tests/registry-service-request.test.ts tests/registry-service-mcp.test.ts passes"
+      ],
+      "spec_refs": [
+        "#REQ-02",
+        "#REQ-03",
+        "#ADR-001"
+      ],
+      "depends_on": [
+        "1",
+        "2"
+      ],
+      "status": "done",
+      "tdd": true
+    },
+    {
+      "id": "4",
+      "title": "Fall back to subject_wallet_address for legacy requests in buildDidDocumentForRequest",
+      "description": "In src/lib/did/request-document.js line 13, change `controller: request.subject_wallet_address` to `controller: request.controller || request.subject_wallet_address` (ADR-002's legacy-fallback rule for the issuance-time document builder, kept independent from resolveDid()'s own fallback rule in task 5).",
+      "files": [
+        "src/lib/did/request-document.js",
+        "tests/did-request-document.test.ts"
+      ],
+      "acceptance_criteria": [
+        "buildDidDocumentForRequest returns controller equal to request.controller when the request object has a non-empty controller value, verified by a new test case in tests/did-request-document.test.ts",
+        "buildDidDocumentForRequest falls back to request.subject_wallet_address when request.controller is null/undefined (legacy row simulation), verified by a new test case in tests/did-request-document.test.ts",
+        "The two existing test cases in tests/did-request-document.test.ts continue to pass unchanged (they exercise requests with no controller field, exercising the fallback path)",
+        "npm test -- tests/did-request-document.test.ts passes"
+      ],
+      "spec_refs": [
+        "#REQ-04",
+        "#ADR-002"
+      ],
+      "depends_on": [
+        "3"
+      ],
+      "status": "done",
+      "tdd": true
+    },
+    {
+      "id": "5",
+      "title": "Persist and resolve controller on issue/update/resolve/list paths",
+      "description": "In server/registry-service.js: issueApprovedDidRequest (line ~1275) passes controller: request.controller into upsertIssuedDidRecord (lines ~1373-1390). upsertIssuedDidRecord (line ~970) accepts input.controller, adding it to the insert branch (lines ~998-1039) and the update branch (lines ~1061-1091, `controller = $N`). syncWalletIssuedDid (line ~1435) accepts/passes controller: input.controller. syncWalletUpdatedDid (line ~1501) accepts input.controller and extends its `update did_records` statement (lines ~1503-1517) with `controller = coalesce($N, controller)` \u2014 MUST use coalesce, not a hard overwrite, so an update call that omits controller does not null out the existing persisted value. resolveDid (line ~1680) changes line 1698 from `controller: record.did` to `controller: record.controller || record.did` (ADR-002's fallback rule for the resolution endpoint, independent from task 4's). listRegistryDidRecords (line ~1637) adds `dr.controller,` to its explicit column SELECT list (lines ~1644-1664) \u2014 required for RegistryDidRow.controller to ever carry real data.",
+      "files": [
+        "server/registry-service.js",
+        "tests/registry-service-issue.test.ts"
+      ],
+      "acceptance_criteria": [
+        "issueApprovedDidRequest passes the request's persisted controller into upsertIssuedDidRecord, verified by a new test case in tests/registry-service-issue.test.ts",
+        "syncWalletUpdatedDid preserves the existing persisted controller when the update call omits controller (coalesce, not overwrite-to-null), verified by a new test case asserting the SQL uses coalesce($N, controller) and that a call without controller does not null the column",
+        "resolveDid returns controller = record.controller when present, and falls back to record.did when record.controller is null/undefined, verified by a new test case in tests/registry-service-issue.test.ts",
+        "listRegistryDidRecords' SELECT includes dr.controller, verified by asserting the query string/params in a new test case",
+        "npm test -- tests/registry-service-issue.test.ts passes"
+      ],
+      "spec_refs": [
+        "#REQ-03",
+        "#REQ-04",
+        "#ADR-002",
+        "#ADR-003"
+      ],
+      "depends_on": [
+        "3",
+        "4",
+        "2"
+      ],
+      "status": "done",
+      "tdd": true
+    },
+    {
+      "id": "6",
+      "title": "Thread controller through UnifiedRegistryAPI client facade",
+      "description": "In src/lib/registry/unified-registry-api.ts: gatedSelfRegisterDid (line ~315), requestDid (line ~447, add controller?: string to its inline input type and thread into the gatedSelfRegisterDid call at line ~459), updateDid (line ~472), and issueDid (line ~587) each accept controller?: string, include it in their mergeDidMetadata(...) patch, and reflect it in the returned DidRecord as `controller: opts.controller ?? cached.controller`. revokeDid's own signature is unchanged. No circuit-call (callTx.*) argument list changes anywhere \u2014 controller never becomes an on-chain parameter, it stays off-chain metadata baked into the didDocument JSON string.",
+      "files": [
+        "src/lib/registry/unified-registry-api.ts",
+        "tests/unified-registry.test.ts"
+      ],
+      "acceptance_criteria": [
+        "gatedSelfRegisterDid, requestDid, updateDid, and issueDid each call mergeDidMetadata with the passed controller value, verified by new/extended assertions in tests/unified-registry.test.ts alongside the existing mergeDidMetadata assertions (e.g. near lines 375, 442)",
+        "The DidRecord returned by updateDid/issueDid reflects opts.controller when provided, and falls back to the cached value when omitted",
+        "No existing callTx.* invocation (gated_self_register_did, request_update_did, issue_did, revoke_did) gains a new circuit argument for controller \u2014 existing circuit-argument assertions in tests/unified-registry.test.ts continue to pass unchanged",
+        "npm test -- tests/unified-registry.test.ts passes"
+      ],
+      "spec_refs": [
+        "#REQ-01",
+        "#REQ-02",
+        "#REQ-03",
+        "#ADR-001"
+      ],
+      "depends_on": [
+        "1"
+      ],
+      "status": "done",
+      "tdd": true
+    },
+    {
+      "id": "7",
+      "title": "Propagate controller through app-api.ts and serviceApi.ts",
+      "description": "In src/lib/did/app-api.ts: requestDidWithSync (line ~92) adds controller?: string to its input type, includes it in the mergeDidMetadata(...) patch (line ~107) and in the createWalletDidRequest({...}) call (line ~131). issueDidWithSync (line ~159) passes controller: input.controller into syncWalletIssuedDidStorage({...}) (line ~165). updateDidWithSync (line ~205) passes controller: input.controller into syncWalletUpdatedDidStorage({...}) (line ~211). In src/utils/serviceApi.ts: createWalletDidRequest (line ~223), syncWalletIssuedDid (line ~472), and syncWalletUpdatedDid (line ~498) each add controller?: string to their payload types and forward it in the request body sent to the corresponding registry-service.js REST endpoint.",
+      "files": [
+        "src/lib/did/app-api.ts",
+        "src/utils/serviceApi.ts",
+        "tests/app-api.test.ts",
+        "tests/service-api.test.ts"
+      ],
+      "acceptance_criteria": [
+        "requestDidWithSync includes controller in both the mergeDidMetadata patch and the createWalletDidRequest request body when controller is supplied, verified by a new test in tests/app-api.test.ts",
+        "issueDidWithSync and updateDidWithSync forward input.controller into their respective sync-storage calls, verified by new tests in tests/app-api.test.ts",
+        "createWalletDidRequest, syncWalletIssuedDid, and syncWalletUpdatedDid in src/utils/serviceApi.ts include controller in the POST body when provided, verified by new/extended test cases in tests/service-api.test.ts",
+        "npm test -- tests/app-api.test.ts tests/service-api.test.ts passes"
+      ],
+      "spec_refs": [
+        "#REQ-02",
+        "#REQ-03",
+        "#ADR-001"
+      ],
+      "depends_on": [
+        "6",
+        "5",
+        "1"
+      ],
+      "status": "done",
+      "tdd": true
+    },
+    {
+      "id": "8",
+      "title": "Add independent controller field to RequestForm",
+      "description": "In src/components/RequestForm.tsx: add new state next to agentAddress (line ~40): `const [controller, setController] = useState(walletAddress || \"\"); useEffect(() => { setController(walletAddress || \"\"); }, [walletAddress]);`. In the default-document effect (lines ~58-80), change `controller: agentAddress || \"\"` to `controller: controller || \"\"` and add controller to the deps array. Add a new editable Input directly under the existing read-only \"Human Wallet\" block (lines ~129-136), labeled \"Controller (DID Document metadata)\", with helper text: \"Informative DID Document metadata \u2014 does not grant authorization. See README \u00a7 DID Document `controller` Field.\". In handleSubmit (line ~96), add controller to the onRequest(...) payload. onRequest prop type gains controller?: string.",
+      "files": [
+        "src/components/RequestForm.tsx",
+        "tests/request-form.test.tsx"
+      ],
+      "acceptance_criteria": [
+        "Editing the new controller field does not change agentAddress's state, and editing agentAddress does not change controller's state (REQ-01 Scenario 02), verified by a new test in tests/request-form.test.tsx",
+        "The controller field is pre-filled with walletAddress when the form first mounts with a connected wallet (REQ-02 Scenario 01), verified in the same test file",
+        "Manually editing controller before submit causes onRequest to receive the edited value, not the walletAddress default (REQ-02 Scenario 02), verified in the same test file",
+        "handleSubmit's onRequest(...) payload includes the current controller value",
+        "npm test -- tests/request-form.test.tsx passes (add jsdom test environment / @testing-library/react as needed, or extract the default-population logic into a small pure/testable helper if full component rendering is impractical in this project's current test setup)"
+      ],
+      "spec_refs": [
+        "#REQ-01",
+        "#REQ-02",
+        "#REQ-06",
+        "#ADR-004"
+      ],
+      "depends_on": [
+        "1"
+      ],
+      "status": "done",
+      "tdd": true
+    },
+    {
+      "id": "9",
+      "title": "Add three-level default controller chain to IssuerPanel",
+      "description": "In src/components/IssuerPanel.tsx: IssuerPanelProps gains `walletAddress: string` and `targetController?: string`. Add new state/effect per ADR-003: `const [controller, setController] = useState(record?.controller || targetController || walletAddress || \"\"); useEffect(() => { setController(record?.controller || targetController || walletAddress || \"\"); }, [record?.controller, targetController, walletAddress]);`. buildDefaultDidDocument() line ~52 changes `targetSubjectWalletAddress || record?.subjectWalletAddress || \"\"` to `controller || \"\"`, with controller added to its useCallback deps. handleIssue/handleUpdate (lines ~92-142) add controller to the onIssue/onUpdate payloads. onRevoke is unchanged.",
+      "files": [
+        "src/components/IssuerPanel.tsx",
+        "tests/issuer-panel.test.tsx"
+      ],
+      "acceptance_criteria": [
+        "When record?.controller has a value, the controller state resolves to it regardless of targetController or walletAddress (priority level 1), verified by a new test in tests/issuer-panel.test.tsx",
+        "When record?.controller is absent but targetController has a value, the controller state resolves to targetController (priority level 2), verified in the same test file",
+        "When both record?.controller and targetController are absent, the controller state resolves to walletAddress (priority level 3, first-time default), verified in the same test file",
+        "handleIssue and handleUpdate include the current controller value in their onIssue/onUpdate payloads",
+        "npm test -- tests/issuer-panel.test.tsx passes (add jsdom test environment / @testing-library/react as needed, or extract the three-level default-chain logic into a small pure/testable helper if full component rendering is impractical in this project's current test setup)"
+      ],
+      "spec_refs": [
+        "#REQ-02",
+        "#REQ-03",
+        "#REQ-06",
+        "#ADR-003",
+        "#ADR-004"
+      ],
+      "depends_on": [
+        "1"
+      ],
+      "status": "done",
+      "tdd": true
+    },
+    {
+      "id": "10",
+      "title": "Wire controller props and payloads through App.tsx",
+      "description": "In src/App.tsx: handleRequestDid (line ~660) adds controller?: string to its payload type and passes it into requestDidWithSync(...) (line ~673). handleIssueDid/handleUpdateDid (line ~720) add controller?: string to their payload types and pass it through to activeRegistryApi.issueDid({...})/updateDid({...}) (line ~767). The IssuerPanel call site (lines ~2045-2055) adds two new props: walletAddress={walletAddress} and targetController={selectedAdminDid.controller}. The repair useEffect (lines ~584-631) that re-creates a missing wallet DID request via createWalletDidRequest adds controller: didRecord.controller || walletAddress to its call (line ~598).",
+      "files": [
+        "src/App.tsx"
+      ],
+      "acceptance_criteria": [
+        "handleRequestDid, handleIssueDid, and handleUpdateDid forward controller from their payload into the corresponding app-api.ts call",
+        "The IssuerPanel element receives walletAddress and targetController props sourced from the connected wallet and selectedAdminDid.controller respectively",
+        "The repair useEffect's createWalletDidRequest call includes controller: didRecord.controller || walletAddress",
+        "npx tsc --noEmit succeeds with no new type errors in src/App.tsx"
+      ],
+      "spec_refs": [
+        "#REQ-02",
+        "#REQ-03",
+        "#ADR-003"
+      ],
+      "depends_on": [
+        "7",
+        "8",
+        "9"
+      ],
+      "status": "done",
+      "tdd": false
+    },
+    {
+      "id": "11",
+      "title": "Document controller as non-authoritative DID Document metadata",
+      "description": "Insert a new '### DID Document `controller` Field' subsection into README.md after line 491 (end of '### Off-chain' content) and before line 493 ('## Midnight-Centered Credential Direction'), per the exact copy specified in 2-technical/spec.md's Docs section: states that controller is informative W3C DID metadata, defaults from the connected wallet, and is editable; explicitly states it has no bearing on update/revoke authorization; cross-references the existing 'Authorization model \u2014 coin-gated, not identity-gated' section and 'Coin-Gated Authorization (v0.9)'; documents the legacy fallback for pre-feature records.",
+      "files": [
+        "README.md"
+      ],
+      "acceptance_criteria": [
+        "README.md contains a '### DID Document `controller` Field' subsection placed between the existing '### Off-chain' and '## Midnight-Centered Credential Direction' sections",
+        "The new subsection explicitly states controller is informative metadata with no authorization effect, and attributes real authorization exclusively to the on-chain capability-token mechanism (REQ-05 Scenario 01)",
+        "No sentence in the new subsection (or elsewhere describing controller) states or implies that possessing, matching, or controlling the controller value grants or is required for update/revoke permission (REQ-05 Scenario 02) \u2014 verified by manual review of the added text",
+        "The new subsection documents the legacy fallback behavior (controller falls back to the DID's own identifier for records that predate this feature)"
+      ],
+      "spec_refs": [
+        "#REQ-05"
+      ],
+      "depends_on": [],
+      "status": "done",
+      "tdd": false
+    },
+    {
+      "id": "12",
+      "title": "Cross-layer tests for full request-to-issue and update lifecycles",
+      "description": "Add cross-function lifecycle tests exercising server/registry-service.js's exported functions together (following the mocked server/db.js query/withTransaction pattern already used in tests/registry-service-issue.test.ts and tests/registry-service-request.test.ts \u2014 this codebase has no real-Postgres test harness, so 'integration' here means multi-function flow through registry-service.js with a mocked DB layer, not a live database). Cover: (1) full request-then-issue cycle where controller ('C1') differs from subject_wallet_address, asserting the issued did_records row and resolveDid() both reflect C1; (2) update cycle where a DID with controller C1 is updated to C2 via syncWalletUpdatedDid, asserting a subsequent resolveDid() reflects C2 not C1; (3) legacy row simulation where controller is null on both did_requests and did_records rows, asserting buildDidDocumentForRequest falls back to subject_wallet_address (per task 4) and resolveDid() independently falls back to record.did (per task 5), per ADR-002's two non-unified fallback rules.",
+      "files": [
+        "tests/did-controller-lifecycle.test.ts"
+      ],
+      "acceptance_criteria": [
+        "A test asserts that a DID requested with controller C1 (\u2260 subject_wallet_address) and then issued via issueApprovedDidRequest results in a did_records row with controller = C1, and that resolveDid() for that DID returns controller = C1",
+        "A test asserts that updating an issued DID's controller from C1 to C2 via syncWalletUpdatedDid causes a subsequent resolveDid() to return controller = C2, not C1",
+        "A test simulates a legacy did_requests/did_records row pair with controller = null and asserts buildDidDocumentForRequest falls back to subject_wallet_address while resolveDid() independently falls back to record.did, confirming the two ADR-002 fallback rules do not interfere with each other",
+        "npm test -- tests/did-controller-lifecycle.test.ts passes"
+      ],
+      "spec_refs": [
+        "#REQ-01",
+        "#REQ-03",
+        "#REQ-04",
+        "#ADR-002"
+      ],
+      "depends_on": [
+        "3",
+        "4",
+        "5",
+        "2"
+      ],
+      "status": "done",
+      "tdd": true
+    },
+    {
+      "id": "13",
+      "title": "Final build, typecheck, full test suite, and doc-wording verification",
+      "description": "Wiring/smoke-test task closing out the feature: run the full build, the full TypeScript typecheck, and the full test suite across every file touched by tasks 1-12, and manually confirm the README wording added in task 11 does not, anywhere in the document, imply that controller governs or is required for update/revoke authorization.",
+      "files": [
+        "src/types/did.ts",
+        "src/lib/did/types.ts",
+        "src/types/service.ts",
+        "src/utils/serviceApi.ts",
+        "server/schema.sql",
+        "server/registry-service.js",
+        "src/lib/did/request-document.js",
+        "src/lib/registry/unified-registry-api.ts",
+        "src/lib/did/app-api.ts",
+        "src/components/RequestForm.tsx",
+        "src/components/IssuerPanel.tsx",
+        "src/App.tsx",
+        "README.md"
+      ],
+      "acceptance_criteria": [
+        "npm run build completes with no errors",
+        "npx tsc --noEmit completes with no errors",
+        "npm test completes with all tests passing, including every test file added or modified in tasks 1-12",
+        "Manual grep/review of README.md confirms no sentence describing controller states or implies it grants, is required for, or is matched against wallet identity to authorize update/revoke actions \u2014 every such statement attributes authorization exclusively to the capability-token mechanism",
+        "Manual confirmation that subjectWalletAddress's name, semantics, and existing population/edit behavior are unchanged in RequestForm.tsx and IssuerPanel.tsx (REQ-06)"
+      ],
+      "spec_refs": [
+        "#REQ-01",
+        "#REQ-02",
+        "#REQ-03",
+        "#REQ-04",
+        "#REQ-05",
+        "#REQ-06"
+      ],
+      "depends_on": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12"
+      ],
+      "status": "done",
+      "tdd": false,
+      "notes": "Completado por el orquestador tras interrupcion por limite de sesion del sdd-implementer. npx tsc --noEmit limpio. npm test -> 31 archivos, 273/273 passing. npm run build -> exit 0 (el classifier de Bash que bloqueaba build/lint ya se habia recuperado). npm run lint -> 0 errores, 1 warning pre-existente no relacionado (TokenGatingPanel.tsx, react-hooks/exhaustive-deps). Verificacion de wording (paso 5): re-grep de 'controller' en README.md y en RequestForm.tsx/IssuerPanel.tsx confirmo que todo texto de cara al usuario dice explicitamente 'does not grant authorization' o remite a la seccion README. Se detecto una ambiguedad menor no capturada por el sdd-implementer: README.md tiene dos conceptos distintos llamados 'controller' (el did_controller on-chain del contrato en la seccion Development, y el campo controller del DID Document JSON documentado por esta feature) sin cross-reference entre ambos. Se agrego una nota explicita de desambiguacion en la nueva seccion 'DID Document controller Field'. Re-verificado tsc/build/test limpios tras el cambio."
+    }
+  ],
+  "summary": {
+    "total": 13,
+    "completed": 13,
+    "pending": 0,
+    "in_progress": 0,
+    "tdd_tasks": 8
+  }
+}

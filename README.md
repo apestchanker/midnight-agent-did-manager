@@ -490,6 +490,30 @@ That is a convenience choice for research and prototyping, not a recommended pro
 
 In a production deployment, off-chain identity payloads, credentials, and other sensitive holder material should be moved to a proper vault or secure custody system so that only the agent, the human owner/operator, or another explicitly authorized principal can access them.
 
+### DID Document `controller` Field
+
+The `controller` field inside a DID Document is informative W3C DID metadata. It
+records who the document *declares* as its controller and defaults to the human
+operator's connected wallet at request/issuance/update time, editable before
+submission. It has no bearing on who is actually authorized to update or revoke a
+DID on this platform.
+
+Real authorization is governed exclusively on-chain by possession and consumption
+of the correct capability-token color — see "Authorization model — coin-gated, not
+identity-gated" above and [Coin-Gated Authorization (v0.9)](#coin-gated-authorization-v09).
+Possessing, matching, or controlling the `controller` value neither grants nor is
+required for update or revoke permission.
+
+DID records created before this field existed have no persisted `controller` value;
+resolution falls back to the DID's own identifier for those legacy records.
+
+Note this is a different concept from the on-chain `did_controller` ledger entry
+described under [Development](#development) ("update/revoke of a DID by its own
+controller is resolved from `ownPublicKey()` plus the DID's linked capability-token
+color") — that ledger entry is part of the real, on-chain authorization mechanism;
+the `controller` field described in this section is off-chain document metadata and
+is not.
+
 ## Midnight-Centered Credential Direction
 
 The current implementation still issues issuer-signed JWT Verifiable Credentials and can assemble W3C-shaped presentation bundles.

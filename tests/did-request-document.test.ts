@@ -54,4 +54,45 @@ describe("DID request document construction", () => {
       organization: "undisclosed",
     });
   });
+
+  it("uses request.controller when the request carries a non-empty explicit controller (ADR-002)", () => {
+    const doc = buildDidDocumentForRequest({
+      requested_did: "did:midnight:preview:contract:agent",
+      subject_wallet_address: "mn_addr_preview1holder",
+      controller: "mn_addr_preview1controller",
+      organization_name: "Matrix Labs",
+      organization_disclosure: "disclosed",
+      request_payload: {
+        agentName: "Agent Smith",
+      },
+    });
+
+    expect(doc.controller).toBe("mn_addr_preview1controller");
+    expect(doc.controller).not.toBe("mn_addr_preview1holder");
+  });
+
+  it("falls back to subject_wallet_address when request.controller is null/undefined (legacy row, ADR-002)", () => {
+    const docWithNull = buildDidDocumentForRequest({
+      requested_did: "did:midnight:preview:contract:agent",
+      subject_wallet_address: "mn_addr_preview1holder",
+      controller: null,
+      organization_name: "Matrix Labs",
+      organization_disclosure: "disclosed",
+      request_payload: {
+        agentName: "Agent Smith",
+      },
+    });
+    expect(docWithNull.controller).toBe("mn_addr_preview1holder");
+
+    const docWithUndefined = buildDidDocumentForRequest({
+      requested_did: "did:midnight:preview:contract:agent",
+      subject_wallet_address: "mn_addr_preview1holder",
+      organization_name: "Matrix Labs",
+      organization_disclosure: "disclosed",
+      request_payload: {
+        agentName: "Agent Smith",
+      },
+    });
+    expect(docWithUndefined.controller).toBe("mn_addr_preview1holder");
+  });
 });

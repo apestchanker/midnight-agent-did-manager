@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useReducer, useState } from "react";
 import { Button } from "./ui/button";
 import {
   Card,
@@ -10,6 +10,11 @@ import {
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import type { DidRecord } from "../types/did";
+import {
+  agentControllerReducer,
+  buildRequestDidDocument,
+  computeDefaultController,
+} from "../lib/did/request-form-state";
 
 interface RequestFormProps {
   contractAddress: string;
@@ -23,6 +28,7 @@ interface RequestFormProps {
     organization?: string;
     organizationDisclosure: "disclosed" | "undisclosed";
     didDocument: string;
+    controller?: string;
   }) => Promise<DidRecord>;
 }
 
@@ -37,7 +43,11 @@ export function RequestForm({
   initialAgentId,
   onRequest,
 }: RequestFormProps) {
-  const [agentAddress, setAgentAddress] = useState(initialAgentAddress || "");
+  const [fields, dispatchFields] = useReducer(agentControllerReducer, {
+    agentAddress: initialAgentAddress || "",
+    controller: computeDefaultController(walletAddress),
+  });
+  const { agentAddress, controller } = fields;
   const [agentId, setAgentId] = useState(initialAgentId || createSystemAgentId());
   const [agentName, setAgentName] = useState("");
   const [organization, setOrganization] = useState("");
@@ -48,8 +58,18 @@ export function RequestForm({
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    setAgentAddress(initialAgentAddress || "");
+    dispatchFields({
+      type: "SYNC_AGENT_ADDRESS_FROM_PROP",
+      value: initialAgentAddress || "",
+    });
   }, [initialAgentAddress]);
+
+  useEffect(() => {
+    dispatchFields({
+      type: "SYNC_CONTROLLER_DEFAULT",
+      value: computeDefaultController(walletAddress),
+    });
+  }, [walletAddress]);
 
   useEffect(() => {
     setAgentId(initialAgentId || createSystemAgentId());
@@ -58,26 +78,14 @@ export function RequestForm({
   useEffect(() => {
     if (didDocumentTouched) return;
     setDidDocument(
-      JSON.stringify(
-        {
-          id: "",
-          controller: agentAddress || "",
-          agentName: agentName || "",
-          organization:
-            organizationDisclosure === "disclosed" ? organization || "" : "undisclosed",
-          service: [
-            {
-              id: "#agent-endpoint",
-              type: "AgentEndpoint",
-              serviceEndpoint: "https://agent.example.com",
-            },
-          ],
-        },
-        null,
-        2,
-      ),
+      buildRequestDidDocument({
+        controller,
+        agentName,
+        organization,
+        organizationDisclosure,
+      }),
     );
-  }, [agentAddress, agentName, didDocumentTouched, organization, organizationDisclosure]);
+  }, [controller, agentName, didDocumentTouched, organization, organizationDisclosure]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -100,6 +108,7 @@ export function RequestForm({
         organization,
         organizationDisclosure,
         didDocument,
+        controller,
       });
       setMessage(
         `Request confirmed on-chain. Agent key: ${record.agentKeyHex}`,
@@ -136,20 +145,42 @@ export function RequestForm({
           </div>
 
           <div>
+            <Label htmlFor="controller" className="text-zinc-300">
+              Controller (DID Document metadata)
+            </Label>
+            <Input
+              id="controller"
+              value={controller}
+              onChange={(e) =>
+                dispatchFields({ type: "SET_CONTROLLER", value: e.target.value })
+              }
+              placeholder="mn_addr_preprod1..."
+              className="mt-1 bg-zinc-950 border-zinc-800 text-white"
+            />
+            <p className="mt-1 text-xs text-zinc-500">
+              Informative DID Document metadata — does not grant authorization. See README § DID Document `controller` Field.
+            </p>
+          </div>
+
+          <div>
             <Label htmlFor="agentAddress" className="text-zinc-300">
               Agent Wallet Address
             </Label>
             <Input
               id="agentAddress"
               value={agentAddress}
-              onChange={(e) => setAgentAddress(e.target.value)}
+              onChange={(e) =>
+                dispatchFields({ type: "SET_AGENT_ADDRESS", value: e.target.value })
+              }
               placeholder="mn_addr_preprod1..."
               className="mt-1 bg-zinc-950 border-zinc-800 text-white"
             />
             <div className="mt-2 flex flex-wrap gap-2">
               <Button
                 type="button"
-                onClick={() => setAgentAddress(walletAddress)}
+                onClick={() =>
+                  dispatchFields({ type: "SET_AGENT_ADDRESS", value: walletAddress })
+                }
                 disabled={!walletAddress.trim()}
                 className="bg-zinc-800 hover:bg-zinc-700 text-white"
               >

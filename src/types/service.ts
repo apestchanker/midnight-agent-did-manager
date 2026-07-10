@@ -78,6 +78,7 @@ export interface DidRequestRow {
   agent_id?: string | null;
   requester_wallet_address: string;
   subject_wallet_address: string;
+  controller?: string | null;
   request_status: string;
   organization_name?: string | null;
   organization_disclosure: "disclosed" | "undisclosed";
@@ -292,6 +293,7 @@ export interface RegistryDidRow {
   subject_wallet_address: string;
   subject_agent_key: string;
   issuer_wallet_address: string;
+  controller?: string | null;
   status: string;
   organization_name?: string | null;
   organization_disclosure: "disclosed" | "undisclosed";

@@ -551,6 +551,176 @@ describe("REQ-08 security: coin-based gating replaces commitment-based gating", 
   });
 });
 
+// ─── Task 6: controller field propagation through UnifiedRegistryAPI ────────
+// (feature 006-clarify-did-controller-metadata) — controller is threaded as a
+// structured field through gatedSelfRegisterDid/requestDid/updateDid/issueDid,
+// never re-derived from the didDocument JSON, and never becomes a callTx.*
+// circuit argument (ADR-001, Compact Contract Changes: None).
+
+describe("Task 6 — controller field propagation (client facade)", () => {
+  it("gatedSelfRegisterDid includes controller in the mergeDidMetadata patch and the returned DidRecord", async () => {
+    const cache = await import("../src/lib/did/cache");
+    const api = await buildAPI();
+
+    const result = await api.gatedSelfRegisterDid({
+      subjectNonce: new Uint8Array(32),
+      agentId: "agent-controller-1",
+      controller: "mn_addr_controller_1",
+      didDocument: "{}",
+    });
+
+    expect(cache.mergeDidMetadata).toHaveBeenCalledWith(
+      expect.any(String),
+      "agent-controller-1",
+      expect.objectContaining({ controller: "mn_addr_controller_1" }),
+    );
+    expect(result.controller).toBe("mn_addr_controller_1");
+  });
+
+  it("gatedSelfRegisterDid does not add a new circuit argument for controller", async () => {
+    const callTx = makeCallTx();
+    const api = await buildAPI(undefined, callTx);
+
+    await api.gatedSelfRegisterDid({
+      subjectNonce: new Uint8Array(32),
+      agentId: "agent-controller-1b",
+      controller: "mn_addr_controller_1b",
+    });
+
+    const args = (callTx.gated_self_register_did as Mock).mock.calls[0];
+    expect(args).toHaveLength(2); // coin + subjectNonce only — unchanged
+  });
+
+  it("requestDid threads controller through to gatedSelfRegisterDid's cache patch and returned DidRecord", async () => {
+    const cache = await import("../src/lib/did/cache");
+    const api = await buildAPI();
+
+    const result = await api.requestDid({
+      agentId: "agent-controller-2",
+      controller: "mn_addr_controller_2",
+      didDocument: "{}",
+    });
+
+    expect(cache.mergeDidMetadata).toHaveBeenCalledWith(
+      expect.any(String),
+      "agent-controller-2",
+      expect.objectContaining({ controller: "mn_addr_controller_2" }),
+    );
+    expect(result.controller).toBe("mn_addr_controller_2");
+  });
+
+  it("updateDid includes controller in the mergeDidMetadata patch and reflects opts.controller in the returned DidRecord when provided", async () => {
+    const cache = await import("../src/lib/did/cache");
+    const contractAddress = "57c84efb75" + "0".repeat(54);
+    (cache.mergeDidMetadata as Mock)(contractAddress, "agent-controller-3", {
+      didKeyHex: toHex(MOCK_DID_KEY),
+    });
+
+    const api = await buildAPI();
+    const result = await api.updateDid({
+      agentId: "agent-controller-3",
+      didDocument: "{}",
+      controller: "mn_addr_controller_3",
+    } as never);
+
+    expect(cache.mergeDidMetadata).toHaveBeenCalledWith(
+      contractAddress,
+      "agent-controller-3",
+      expect.objectContaining({ controller: "mn_addr_controller_3" }),
+    );
+    expect(result.controller).toBe("mn_addr_controller_3");
+
+    // No new circuit argument added to request_update_did
+    const callTx = makeCallTx();
+    const api2 = await buildAPI(undefined, callTx);
+    (cache.mergeDidMetadata as Mock)(contractAddress, "agent-controller-3c", {
+      didKeyHex: toHex(MOCK_DID_KEY),
+    });
+    await api2.updateDid({
+      agentId: "agent-controller-3c",
+      didDocument: "{}",
+      controller: "mn_addr_controller_3c",
+    } as never);
+    const args = (callTx.request_update_did as Mock).mock.calls[0];
+    expect(args).toHaveLength(4); // coin + nonce + docCommitment + capCommitment only
+  });
+
+  it("updateDid falls back to the cached controller value when opts.controller is omitted", async () => {
+    const cache = await import("../src/lib/did/cache");
+    const contractAddress = "57c84efb75" + "0".repeat(54);
+    (cache.mergeDidMetadata as Mock)(contractAddress, "agent-controller-4", {
+      didKeyHex: toHex(MOCK_DID_KEY),
+      controller: "mn_addr_cached_controller_4",
+    });
+
+    const api = await buildAPI();
+    const result = await api.updateDid({
+      agentId: "agent-controller-4",
+      didDocument: "{}",
+    } as never);
+
+    expect(result.controller).toBe("mn_addr_cached_controller_4");
+  });
+
+  it("issueDid includes controller in the mergeDidMetadata patch and reflects opts.controller in the returned DidRecord when provided", async () => {
+    const cache = await import("../src/lib/did/cache");
+    const contractAddress = "57c84efb75" + "0".repeat(54);
+    (cache.mergeDidMetadata as Mock)(contractAddress, "agent-controller-5", {
+      didKeyHex: toHex(MOCK_DID_KEY),
+    });
+
+    const api = await buildAPI();
+    const result = await api.issueDid({
+      agentId: "agent-controller-5",
+      didDocument: '{"@context":"https://www.w3.org/ns/did/v1"}',
+      controller: "mn_addr_controller_5",
+    });
+
+    expect(cache.mergeDidMetadata).toHaveBeenCalledWith(
+      contractAddress,
+      "agent-controller-5",
+      expect.objectContaining({ controller: "mn_addr_controller_5" }),
+    );
+    expect(result.controller).toBe("mn_addr_controller_5");
+  });
+
+  it("issueDid falls back to the cached controller value when opts.controller is omitted", async () => {
+    const cache = await import("../src/lib/did/cache");
+    const contractAddress = "57c84efb75" + "0".repeat(54);
+    (cache.mergeDidMetadata as Mock)(contractAddress, "agent-controller-6", {
+      didKeyHex: toHex(MOCK_DID_KEY),
+      controller: "mn_addr_cached_controller_6",
+    });
+
+    const api = await buildAPI();
+    const result = await api.issueDid({
+      agentId: "agent-controller-6",
+      didDocument: '{"@context":"https://www.w3.org/ns/did/v1"}',
+    });
+
+    expect(result.controller).toBe("mn_addr_cached_controller_6");
+  });
+
+  it("issueDid does not add a new circuit argument for controller", async () => {
+    const cache = await import("../src/lib/did/cache");
+    const contractAddress = "57c84efb75" + "0".repeat(54);
+    (cache.mergeDidMetadata as Mock)(contractAddress, "agent-controller-7", {
+      didKeyHex: toHex(MOCK_DID_KEY),
+    });
+
+    const callTx = makeCallTx();
+    const api = await buildAPI(undefined, callTx);
+    await api.issueDid({
+      agentId: "agent-controller-7",
+      didDocument: "{}",
+      controller: "mn_addr_controller_7",
+    });
+
+    const args = (callTx.issue_did as Mock).mock.calls[0];
+    expect(args).toHaveLength(5); // coin + didKey + 3 commitments only — unchanged
+  });
+});
+
 // ════════════════════════════════════════════════════════════════════════
 // PART 2 — Contract-simulator tests (real @midnight-ntwrk/compact-runtime
 // execution against the compiled did-registry contract — no mocks).

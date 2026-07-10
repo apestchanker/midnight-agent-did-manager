@@ -316,6 +316,7 @@ export class UnifiedRegistryAPI {
     subjectNonce: Uint8Array;
     agentId: string;
     subjectWalletAddress?: string;
+    controller?: string;
     agentName?: string;
     organization?: string;
     organizationDisclosure?: "disclosed" | "undisclosed";
@@ -356,6 +357,7 @@ export class UnifiedRegistryAPI {
     const cached = mergeDidMetadata(this.contractAddress, opts.agentId, {
       didKeyHex,
       subjectWalletAddress: opts.subjectWalletAddress,
+      controller: opts.controller,
       agentName: opts.agentName,
       organization:
         opts.organizationDisclosure === "disclosed" ? opts.organization : undefined,
@@ -371,6 +373,7 @@ export class UnifiedRegistryAPI {
     return {
       agentId: opts.agentId,
       subjectWalletAddress: opts.subjectWalletAddress,
+      controller: opts.controller,
       agentName: cached.agentName,
       organization: cached.organization,
       organizationDisclosure: cached.organizationDisclosure,
@@ -448,6 +451,7 @@ export class UnifiedRegistryAPI {
     requesterWalletAddress?: string;
     agentId: string;
     subjectWalletAddress?: string;
+    controller?: string;
     agentName?: string;
     organization?: string;
     organizationDisclosure?: "disclosed" | "undisclosed";
@@ -460,6 +464,7 @@ export class UnifiedRegistryAPI {
       subjectNonce: nonce,
       agentId: input.agentId,
       subjectWalletAddress: input.subjectWalletAddress,
+      controller: input.controller,
       agentName: input.agentName,
       organization: input.organization,
       organizationDisclosure: input.organizationDisclosure,
@@ -494,6 +499,10 @@ export class UnifiedRegistryAPI {
       ) => Promise<TxResult>
     )(coin, nonce, docCommitment, capCommitment);
     const now = new Date().toISOString();
+    // Feature 006-clarify-did-controller-metadata: controller is only added
+    // to the cache patch when explicitly provided — omitting it must fall
+    // back to (not clobber) the previously cached value, unlike
+    // subjectWalletAddress above which is always overwritten unconditionally.
     const cached = mergeDidMetadata(this.contractAddress, input.agentId, {
       subjectWalletAddress: input.subjectWalletAddress,
       didKeyHex,
@@ -503,10 +512,12 @@ export class UnifiedRegistryAPI {
       didDocument: input.didDocument.trim(),
       documentHashHex: toHex(docCommitment),
       proofCommitmentHex: toHex(capCommitment),
+      ...(input.controller !== undefined ? { controller: input.controller } : {}),
     });
     return {
       agentId: input.agentId,
       subjectWalletAddress: input.subjectWalletAddress,
+      controller: input.controller ?? cached.controller,
       agentName: cached.agentName,
       organization: cached.organization,
       organizationDisclosure: cached.organizationDisclosure,
@@ -627,6 +638,9 @@ export class UnifiedRegistryAPI {
     )(coin, didKeyBytes, didCommitment, documentCommitment, proofCommitment);
 
     const now = new Date().toISOString();
+    // Feature 006-clarify-did-controller-metadata: same conditional-patch +
+    // cached-fallback treatment as updateDid — an issue call that omits
+    // controller must preserve the previously cached value, not null it out.
     const cached = mergeDidMetadata(this.contractAddress, input.agentId, {
       subjectWalletAddress: input.subjectWalletAddress,
       didKeyHex,
@@ -638,11 +652,13 @@ export class UnifiedRegistryAPI {
       didCommitmentHex: toHex(didCommitment),
       documentHashHex: toHex(documentCommitment),
       proofCommitmentHex: toHex(proofCommitment),
+      ...(input.controller !== undefined ? { controller: input.controller } : {}),
     });
 
     return {
       agentId: input.agentId,
       subjectWalletAddress: input.subjectWalletAddress,
+      controller: input.controller ?? cached.controller,
       agentName: cached.agentName,
       organization: cached.organization,
       organizationDisclosure: cached.organizationDisclosure,

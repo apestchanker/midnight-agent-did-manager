@@ -95,6 +95,7 @@ export async function requestDidWithSync(
     requesterWalletAddress: string;
     agentId: string;
     subjectWalletAddress: string;
+    controller?: string;
     agentName?: string;
     organization?: string;
     organizationDisclosure: "disclosed" | "undisclosed";
@@ -106,6 +107,7 @@ export async function requestDidWithSync(
   const now = new Date().toISOString();
   mergeDidMetadata(api.contractAddress, input.agentId, {
     subjectWalletAddress: input.subjectWalletAddress,
+    controller: input.controller,
     agentName: input.agentName,
     organization:
       input.organizationDisclosure === "disclosed"
@@ -144,6 +146,7 @@ export async function requestDidWithSync(
       requestedDid,
       onchainRequestTxId: record.txId,
       onchainRequestTxHash: record.txHash,
+      controller: input.controller,
     });
   } catch (error) {
     throw new Error(
@@ -182,6 +185,7 @@ export async function issueDidWithSync(
       proofCommitment: record.proofCommitmentHex,
       onchainIssueTxId: record.txId,
       onchainIssueTxHash: record.txHash,
+      controller: input.controller,
     });
   } catch (error) {
     throw new Error(
@@ -213,6 +217,7 @@ export async function updateDidWithSync(
       didDocument: JSON.parse(input.didDocument),
       documentCommitment: record.documentHashHex,
       proofCommitment: record.proofCommitmentHex,
+      controller: input.controller,
     });
   } catch (error) {
     throw new Error(
