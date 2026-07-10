@@ -91,18 +91,34 @@ export function WalletPanel({
               Storage mode is locked while connected. Reload or reconnect before switching modes so vault data does not appear to vanish across backends.
             </div>
             <div className="mt-3 grid gap-2">
-              <label className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
+              <label
+                className="rounded-lg border border-zinc-800 bg-zinc-950 p-3 cursor-not-allowed opacity-60"
+                title="Storage mode is locked while connected. Reload or reconnect before switching modes."
+              >
                 <div className="flex items-center gap-2">
-                  <input type="radio" checked={storageMode === "app_local"} readOnly />
+                  <input
+                    type="radio"
+                    checked={storageMode === "app_local"}
+                    disabled
+                    className="cursor-not-allowed"
+                  />
                   <span className="font-medium text-white">App local vault</span>
                 </div>
                 <div className="mt-1 text-zinc-400">
                   Safe default. Uses the app-managed browser local vault for private state storage.
                 </div>
               </label>
-              <label className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
+              <label
+                className="rounded-lg border border-zinc-800 bg-zinc-950 p-3 cursor-not-allowed opacity-60"
+                title="Storage mode is locked while connected. Reload or reconnect before switching modes."
+              >
                 <div className="flex items-center gap-2">
-                  <input type="radio" checked={storageMode === "sdk_level"} readOnly />
+                  <input
+                    type="radio"
+                    checked={storageMode === "sdk_level"}
+                    disabled
+                    className="cursor-not-allowed"
+                  />
                   <span className="font-medium text-white">Midnight SDK (LevelDB)</span>
                 </div>
                 <div className="mt-1 text-zinc-400">
