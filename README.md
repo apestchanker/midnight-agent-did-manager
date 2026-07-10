@@ -12,6 +12,186 @@ IT SHALL NOT USE NOR IT IS INTENDED FOR PRODUCTION USAGE.
 
 If you want to read more about what inspired me to build this repo, - Article: [Selective Disclosure & Self-Managing DIDs for AI Agents](https://dev.to/midnight-aliit/selective-disclosure-self-managing-dids-for-ai-agents-3kcl)
 
+## Requirements
+
+- Node.js 20+
+- PostgreSQL 16+ or compatible
+- Midnight Compact compiler installed as `compact`
+- a funded 1AM wallet on Midnight Preprod
+- wallet prover access through 1AM, or a local Midnight proof server if you explicitly choose that setup
+- both Compact contracts compiled (`npm run compile-all`) before deploying — this produces the ZK proving/verifier keys required by the admin deploy panel
+
+## Environment
+
+Copy `env.example` to `.env` and adjust values as needed.
+
+Key variables:
+
+```bash
+VITE_NETWORK_ID=preprod
+VITE_INDEXER_URI=https://indexer.preprod.midnight.network/api/v3/graphql
+VITE_INDEXER_WS_URI=wss://indexer.preprod.midnight.network/api/v3/graphql/ws
+VITE_NODE_URI=https://rpc.preprod.midnight.network
+VITE_PROVER_SERVER_URI=http://127.0.0.1:6300
+VITE_MANAGED_CONTRACT_PATH=/contracts/managed/did-registry
+VITE_DID_API_BASE_URL=http://localhost:8787
+DID_API_PORT=8787
+DATABASE_URL=postgresql://postgres:YOUR_DB_PASSWORD_HERE@127.0.0.1:5432/agent_registry_db
+VITE_ADMIN_WALLET_SHIELDED_ADDR=mn_shield-addr_XXXXXXXX
+
+# API auth hardening (local DID + MCP HTTP servers)
+# Private REST routes and the MCP /logs endpoint require this shared token.
+# DID_API_AUTH_TOKEN is read by the servers; VITE_DID_API_AUTH_TOKEN must match
+# so the frontend (admin Logs view included) can authenticate.
+DID_API_AUTH_TOKEN=replace-with-a-long-random-token
+VITE_DID_API_AUTH_TOKEN=replace-with-a-long-random-token
+
+# Loopback binding and CORS allowlist (defaults shown)
+DID_API_HOST=127.0.0.1
+DID_MCP_HOST=127.0.0.1
+DID_MCP_PORT=8788
+DID_CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+```
+
+The local DID REST service and the MCP HTTP server gate their private routes
+behind a shared token. Set `DID_API_AUTH_TOKEN` (server) and a matching
+`VITE_DID_API_AUTH_TOKEN` (frontend); requests may carry the token as
+`X-DID-API-Key: <token>` or `Authorization: Bearer <token>`. The admin Logs view
+needs the matching frontend token to load both the backend and MCP log streams.
+This token is a coarse local-development gate, not production access control.
+
+## Development
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+Recommended startup order for a fresh local setup:
+
+1. Install and connect the 1AM wallet.
+2. Install the Midnight toolchain following the official Midnight docs.
+3. Start PostgreSQL, either locally with Docker or through an external host.
+4. Set your `.env`.
+5. Compile the Compact contract artifacts.
+6. Start the local DID API.
+7. Start the frontend.
+8. Start a local proof server only if you are not using the wallet prover.
+
+Compile all contracts and refresh managed assets:
+
+```bash
+npm run compile-all        # recommended — compiles all contracts in order
+npm run compile-token-gating   # only token_gating.compact
+npm run compile-contract       # only did_registry.compact
+npm run compile-ownership-proof  # only native_ownership_proof.compact
+```
+
+`npm run compile-all` runs the three scripts in the correct order: token_gating → did_registry → ownership_proof. You must compile before deploying from the admin panel — the compile step generates the ZK proving/verifier keys (`.prover` and `.verifier` files). Full ZK compilation can take several minutes.
+
+You need the official Midnight Compact compiler installed as `compact` or `compactc`.
+
+Generated outputs are local build products and are intentionally ignored by Git. Each cloned or deployed instance must run the compile step and use its own generated artifacts.
+
+Outputs:
+
+- `contracts/managed/token-gating/` — token gating managed artifacts (keys, zkir, contract)
+- `public/contracts/managed/token-gating/` — browser-served token gating assets
+- `src/generated/tokenGatingContract.runtime.js` — token gating runtime JS
+- `contracts/managed/did-registry/` and `public/contracts/managed/did-registry/` — DID registry artifacts (unchanged location)
+- `contracts/compiled/did_registry.compiled.json` — local metadata snapshot
+
+Deploying from the admin panel (3-step flow):
+
+1. **Load Artifact** — validates compiled artifacts for both contracts.
+2. **Deploy Token Gating** — deploys `token_gating.compact`; displays and copies the contract address; persists it in localStorage. A warning banner appears if an address already exists (re-deploying invalidates existing DIDs).
+3. **Deploy DID Registry** — deploys `did_registry.compact`, passing the token gating address from step 2 as the constructor argument. Step 3 is gated — unavailable until step 2 is complete.
+
+Important:
+
+- the contract is initialized in its constructor, which also mints the genesis admin token in the same deploy transaction; there is no separate `initialize` or bootstrap step
+- authorization for admin-tier operations (`mint_capability_tokens`, `issue_did`, `grant_role`, `revoke_role`, `revoke_did`) requires presenting and consuming the on-chain admin token (`consumeAdminToken()`); `update`/`revoke` of a DID by its own controller is resolved from `ownPublicKey()` plus the DID's linked capability-token color — no local secret or vault backup required for either path
+- if you need a second admin, use `rotate_admin_tokens` to mint a fresh admin token to the new holder, or `grant_role` for non-admin roles, while connected as the current admin
+
+Validate local Preprod prerequisites:
+
+```bash
+npm run doctor:preprod
+```
+
+Start the DID service:
+
+```bash
+npm run dev:api
+```
+
+The local API starts on `http://localhost:8787` by default.
+On startup it:
+
+- connects to Postgres using `DATABASE_URL`
+- applies `server/schema.sql`
+- exposes the local DID service and MCP-oriented endpoints
+
+Start the frontend:
+
+```bash
+npm run dev
+```
+
+Build the app:
+
+```bash
+npm run build
+```
+
+Start the proof server:
+
+```bash
+npm run start-proof-server
+```
+
+This is optional when the connected wallet already provides prover access.
+
+## Database
+
+The backend schema is defined in `server/schema.sql`.
+
+You do not need to run a separate migration command for the normal local setup.
+The API server calls `initializeDatabase()` on startup and applies `server/schema.sql`
+automatically before it starts serving requests.
+
+For a local Docker database:
+
+```bash
+docker compose up -d postgres
+```
+
+Default local Docker credentials from `docker-compose.yml`:
+
+```bash
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/agent_registry_db
+```
+
+Then start the API:
+
+```bash
+npm run dev:api
+```
+
+Adjust `DATABASE_URL` if you use an external Postgres host.
+
+### External Postgres
+
+If you already have a running Postgres server, skip Docker and point the API to it:
+
+```bash
+DATABASE_URL=postgresql://postgres:YOUR_DB_PASSWORD_HERE@YOUR_DB_HOST:5432/agent_registry_db
+npm run dev:api
+```
+
+The API will still initialize the schema automatically on startup.
+
 ## Project Metadata
 
 - Contribution guidelines: [CONTRIBUTING.md](./CONTRIBUTING.md)
@@ -401,15 +581,6 @@ See:
 - `docs/identity-architecture.md`
 - `docs/w3c-compatibility-report.md`
 
-## Requirements
-
-- Node.js 20+
-- PostgreSQL 16+ or compatible
-- Midnight Compact compiler installed as `compact`
-- a funded 1AM wallet on Midnight Preprod
-- wallet prover access through 1AM, or a local Midnight proof server if you explicitly choose that setup
-- both Compact contracts compiled (`npm run compile-all`) before deploying — this produces the ZK proving/verifier keys required by the admin deploy panel
-
 ## Official Resources
 
 - 1AM Wallet beta installer: https://1am.xyz/install-beta
@@ -487,45 +658,6 @@ Note:
 
 - this repository references the official 1AM Beta installer, but does not pin a wallet version number in code
 - if 1AM publishes a specific public Beta version identifier, update this section accordingly
-
-## Environment
-
-Copy `env.example` to `.env` and adjust values as needed.
-
-Key variables:
-
-```bash
-VITE_NETWORK_ID=preprod
-VITE_INDEXER_URI=https://indexer.preprod.midnight.network/api/v3/graphql
-VITE_INDEXER_WS_URI=wss://indexer.preprod.midnight.network/api/v3/graphql/ws
-VITE_NODE_URI=https://rpc.preprod.midnight.network
-VITE_PROVER_SERVER_URI=http://127.0.0.1:6300
-VITE_MANAGED_CONTRACT_PATH=/contracts/managed/did-registry
-VITE_DID_API_BASE_URL=http://localhost:8787
-DID_API_PORT=8787
-DATABASE_URL=postgresql://postgres:YOUR_DB_PASSWORD_HERE@127.0.0.1:5432/agent_registry_db
-VITE_ADMIN_WALLET_SHIELDED_ADDR=mn_shield-addr_XXXXXXXX
-
-# API auth hardening (local DID + MCP HTTP servers)
-# Private REST routes and the MCP /logs endpoint require this shared token.
-# DID_API_AUTH_TOKEN is read by the servers; VITE_DID_API_AUTH_TOKEN must match
-# so the frontend (admin Logs view included) can authenticate.
-DID_API_AUTH_TOKEN=replace-with-a-long-random-token
-VITE_DID_API_AUTH_TOKEN=replace-with-a-long-random-token
-
-# Loopback binding and CORS allowlist (defaults shown)
-DID_API_HOST=127.0.0.1
-DID_MCP_HOST=127.0.0.1
-DID_MCP_PORT=8788
-DID_CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
-```
-
-The local DID REST service and the MCP HTTP server gate their private routes
-behind a shared token. Set `DID_API_AUTH_TOKEN` (server) and a matching
-`VITE_DID_API_AUTH_TOKEN` (frontend); requests may carry the token as
-`X-DID-API-Key: <token>` or `Authorization: Bearer <token>`. The admin Logs view
-needs the matching frontend token to load both the backend and MCP log streams.
-This token is a coarse local-development gate, not production access control.
 
 ## Coin-Gated Authorization (v0.9)
 
@@ -635,138 +767,6 @@ Subject nonce:
 
 - the default subject nonce is `SHA-256("didmn:default-slot:v1")` = `ba3649522b461286f41043ca6548f1d5dcd2c3e74e1d59fa74102fc1eb1ce531`
 - custom nonces can be supplied to create multiple DID slots per wallet
-
-## Development
-
-Install dependencies:
-
-```bash
-npm install
-```
-
-Recommended startup order for a fresh local setup:
-
-1. Install and connect the 1AM wallet.
-2. Install the Midnight toolchain following the official Midnight docs.
-3. Start PostgreSQL, either locally with Docker or through an external host.
-4. Set your `.env`.
-5. Compile the Compact contract artifacts.
-6. Start the local DID API.
-7. Start the frontend.
-8. Start a local proof server only if you are not using the wallet prover.
-
-Compile all contracts and refresh managed assets:
-
-```bash
-npm run compile-all        # recommended — compiles all contracts in order
-npm run compile-token-gating   # only token_gating.compact
-npm run compile-contract       # only did_registry.compact
-npm run compile-ownership-proof  # only native_ownership_proof.compact
-```
-
-`npm run compile-all` runs the three scripts in the correct order: token_gating → did_registry → ownership_proof. You must compile before deploying from the admin panel — the compile step generates the ZK proving/verifier keys (`.prover` and `.verifier` files). Full ZK compilation can take several minutes.
-
-You need the official Midnight Compact compiler installed as `compact` or `compactc`.
-
-Generated outputs are local build products and are intentionally ignored by Git. Each cloned or deployed instance must run the compile step and use its own generated artifacts.
-
-Outputs:
-
-- `contracts/managed/token-gating/` — token gating managed artifacts (keys, zkir, contract)
-- `public/contracts/managed/token-gating/` — browser-served token gating assets
-- `src/generated/tokenGatingContract.runtime.js` — token gating runtime JS
-- `contracts/managed/did-registry/` and `public/contracts/managed/did-registry/` — DID registry artifacts (unchanged location)
-- `contracts/compiled/did_registry.compiled.json` — local metadata snapshot
-
-Deploying from the admin panel (3-step flow):
-
-1. **Load Artifact** — validates compiled artifacts for both contracts.
-2. **Deploy Token Gating** — deploys `token_gating.compact`; displays and copies the contract address; persists it in localStorage. A warning banner appears if an address already exists (re-deploying invalidates existing DIDs).
-3. **Deploy DID Registry** — deploys `did_registry.compact`, passing the token gating address from step 2 as the constructor argument. Step 3 is gated — unavailable until step 2 is complete.
-
-Important:
-
-- the contract is initialized in its constructor, which also mints the genesis admin token in the same deploy transaction; there is no separate `initialize` or bootstrap step
-- authorization for admin-tier operations (`mint_capability_tokens`, `issue_did`, `grant_role`, `revoke_role`, `revoke_did`) requires presenting and consuming the on-chain admin token (`consumeAdminToken()`); `update`/`revoke` of a DID by its own controller is resolved from `ownPublicKey()` plus the DID's linked capability-token color — no local secret or vault backup required for either path
-- if you need a second admin, use `rotate_admin_tokens` to mint a fresh admin token to the new holder, or `grant_role` for non-admin roles, while connected as the current admin
-
-Validate local Preprod prerequisites:
-
-```bash
-npm run doctor:preprod
-```
-
-Start the DID service:
-
-```bash
-npm run dev:api
-```
-
-The local API starts on `http://localhost:8787` by default.
-On startup it:
-
-- connects to Postgres using `DATABASE_URL`
-- applies `server/schema.sql`
-- exposes the local DID service and MCP-oriented endpoints
-
-Start the frontend:
-
-```bash
-npm run dev
-```
-
-Build the app:
-
-```bash
-npm run build
-```
-
-Start the proof server:
-
-```bash
-npm run start-proof-server
-```
-
-This is optional when the connected wallet already provides prover access.
-
-## Database
-
-The backend schema is defined in `server/schema.sql`.
-
-You do not need to run a separate migration command for the normal local setup.
-The API server calls `initializeDatabase()` on startup and applies `server/schema.sql`
-automatically before it starts serving requests.
-
-For a local Docker database:
-
-```bash
-docker compose up -d postgres
-```
-
-Default local Docker credentials from `docker-compose.yml`:
-
-```bash
-DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/agent_registry_db
-```
-
-Then start the API:
-
-```bash
-npm run dev:api
-```
-
-Adjust `DATABASE_URL` if you use an external Postgres host.
-
-### External Postgres
-
-If you already have a running Postgres server, skip Docker and point the API to it:
-
-```bash
-DATABASE_URL=postgresql://postgres:YOUR_DB_PASSWORD_HERE@YOUR_DB_HOST:5432/agent_registry_db
-npm run dev:api
-```
-
-The API will still initialize the schema automatically on startup.
 
 ## Local DID Service and MCP
 
