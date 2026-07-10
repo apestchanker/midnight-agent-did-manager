@@ -192,4 +192,121 @@ describe("serviceApi Task 6", () => {
       expect((serviceApi as Record<string, unknown>).verifyMidnightProofRequest).toBeUndefined();
     });
   });
+
+  // Task 7 (feature 006-clarify-did-controller-metadata): controller propagated
+  // as its own optional field in the POST body of the three wallet-sync
+  // endpoints — never derived from didDocument JSON.
+  describe("createWalletDidRequest — controller propagation", () => {
+    it("POSTs controller in the body when provided", async () => {
+      const mockRow = { id: "req-1" };
+      const fetchMock = mockFetch(mockRow, 201);
+      vi.stubGlobal("fetch", fetchMock);
+
+      const { createWalletDidRequest } = await import("../src/utils/serviceApi.js");
+      await createWalletDidRequest({
+        walletAddress: "mn_addr_wallet",
+        agentId: "agent-1",
+        subjectWalletAddress: "mn_addr_subject",
+        contractAddress: "contract-1",
+        networkId: "Undeployed",
+        organizationDisclosure: "undisclosed",
+        requestPayload: { agentId: "agent-1" },
+        controller: "mn_addr_controller",
+      });
+
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toContain("/api/wallet/did-requests");
+      const body = JSON.parse(init.body as string);
+      expect(body.controller).toBe("mn_addr_controller");
+    });
+
+    it("omits controller from the body when not provided", async () => {
+      const mockRow = { id: "req-2" };
+      const fetchMock = mockFetch(mockRow, 201);
+      vi.stubGlobal("fetch", fetchMock);
+
+      const { createWalletDidRequest } = await import("../src/utils/serviceApi.js");
+      await createWalletDidRequest({
+        walletAddress: "mn_addr_wallet",
+        agentId: "agent-2",
+        subjectWalletAddress: "mn_addr_subject",
+        contractAddress: "contract-1",
+        networkId: "Undeployed",
+        organizationDisclosure: "undisclosed",
+        requestPayload: { agentId: "agent-2" },
+      });
+
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const body = JSON.parse(init.body as string);
+      expect(body.controller).toBeUndefined();
+    });
+  });
+
+  describe("syncWalletIssuedDid — controller propagation", () => {
+    it("POSTs controller in the body when provided", async () => {
+      const mockRecord = { did: "did:midnight:test" };
+      const fetchMock = mockFetch(mockRecord, 200);
+      vi.stubGlobal("fetch", fetchMock);
+
+      const { syncWalletIssuedDid } = await import("../src/utils/serviceApi.js");
+      await syncWalletIssuedDid({
+        issuerWalletAddress: "mn_addr_issuer",
+        agentId: "agent-3",
+        subjectWalletAddress: "mn_addr_subject",
+        contractAddress: "contract-1",
+        networkId: "Undeployed",
+        did: "did:midnight:test",
+        organizationDisclosure: "undisclosed",
+        requestPayload: { agentId: "agent-3" },
+        didDocument: { "@context": "https://www.w3.org/ns/did/v1" },
+        controller: "mn_addr_controller_issue",
+      });
+
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toContain("/api/wallet/dids/issue-sync");
+      const body = JSON.parse(init.body as string);
+      expect(body.controller).toBe("mn_addr_controller_issue");
+    });
+  });
+
+  describe("syncWalletUpdatedDid — controller propagation", () => {
+    it("POSTs controller in the body when provided", async () => {
+      const mockRecord = { did: "did:midnight:test" };
+      const fetchMock = mockFetch(mockRecord, 200);
+      vi.stubGlobal("fetch", fetchMock);
+
+      const { syncWalletUpdatedDid } = await import("../src/utils/serviceApi.js");
+      await syncWalletUpdatedDid({
+        did: "did:midnight:test",
+        didDocument: { "@context": "https://www.w3.org/ns/did/v1" },
+        controller: "mn_addr_controller_update",
+      });
+
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toContain("/api/wallet/dids/update-sync");
+      const body = JSON.parse(init.body as string);
+      expect(body.controller).toBe("mn_addr_controller_update");
+    });
+
+    it("omits controller from the body when not provided (no clobbering)", async () => {
+      const mockRecord = { did: "did:midnight:test" };
+      const fetchMock = mockFetch(mockRecord, 200);
+      vi.stubGlobal("fetch", fetchMock);
+
+      const { syncWalletUpdatedDid } = await import("../src/utils/serviceApi.js");
+      await syncWalletUpdatedDid({
+        did: "did:midnight:test",
+        didDocument: { "@context": "https://www.w3.org/ns/did/v1" },
+      });
+
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const body = JSON.parse(init.body as string);
+      expect(body.controller).toBeUndefined();
+    });
+  });
 });
