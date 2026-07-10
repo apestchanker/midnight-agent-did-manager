@@ -1,0 +1,321 @@
+{
+  "feature": "005-coin-gated-admin-access",
+  "generated_at": "2026-07-09",
+  "spec_refs": [
+    "1-functional/spec.md",
+    "2-technical/spec.md"
+  ],
+  "tasks": [
+    {
+      "id": "1",
+      "title": "Verify kernel.self() legality inside a Compact constructor",
+      "description": "Pure verification task — no production code is written. Use /midnight-verify:verify (or an equivalent minimal spike-compile via `compact compile --skip-zk` of a throwaway, uncommitted test contract) to determine whether `kernel.self()` and `tokenType(domainSep, kernel.self())` are legal and functional when called inside a Compact `constructor(...)`. This is the highest-priority open question in 2-technical/spec.md ADR-003: a prior PoC in this project already confirmed `mintShieldedToken()` works inside a constructor, but that PoC used a domain separator computed WITHOUT `kernel.self()` — the specific `kernel.self()` call inside a constructor remains untested. Write a minimal spike `.compact` contract (not placed under `contracts/`, not committed) whose constructor calls `kernel.self()` and `tokenType(...)`, compile it with `compact compile --skip-zk`, and if possible execute it via `@midnight-ntwrk/compact-runtime` to confirm a real token-color value is produced (not just a type-check pass). Record the exact command, output, and PASS/FAIL verdict in 2-technical/spec.md under ADR-003 as a 'Verification Result' addendum.",
+      "files": [
+        "sdd/wip/005-coin-gated-admin-access/2-technical/spec.md"
+      ],
+      "acceptance_criteria": [
+        "A minimal spike Compact contract with `kernel.self()` called inside a `constructor` is compiled via `compact compile --skip-zk` (or verified via /midnight-verify:verify), and the exact command plus its exit code/output are captured.",
+        "The verification verdict (PASS: kernel.self() is legal and functional in a constructor, or FAIL: the fallback applies) is appended to 2-technical/spec.md under ADR-003 as a 'Verification Result' note.",
+        "If the verdict is FAIL, the documented note explicitly states that Task 2 must implement the fallback instead (move `admin_token_color = tokenType(adminDomainSep(), kernel.self())` out of the constructor into a separate internal circuit invoked on the first post-deploy admin-gated call), and Task 2's description/acceptance criteria must be treated as amended accordingly before implementation begins.",
+        "No file under contracts/, src/, or scripts/ is created or modified by this task."
+      ],
+      "spec_refs": ["#ADR-003"],
+      "depends_on": [],
+      "status": "done",
+      "tdd": false,
+      "notes": "CONFIRMADO: kernel.self() y tokenType(domainSep, kernel.self()) son legales y funcionales dentro de un constructor. Spike compilado (compact compile --skip-zk, compiler v0.31.1, exit 0) y ejecutado via @midnight-ntwrk/compact-runtime: admin_token_color calculado en el constructor coincide byte-a-byte con el color del output Zswap real minteado en la misma llamada (cfb3b670a3eb4a54fe3f718fa3fa745ca2e1913ef78da3f0adbfc24bfb135d9a, value 2n). Ver 2-technical/spec.md ADR-003 'Verification Result'. Fallback NO requerido; Task 2 procede con el diseño happy-path sin modificaciones. Archivos temporales del spike eliminados post-verificación."
+    },
+    {
+      "id": "2",
+      "title": "Add admin_token_color, consumeAdminToken(), and genesis mint in constructor",
+      "description": "In contracts/did_registry.compact.template: add new ledger field `admin_token_color: Bytes<32>`; add new pure circuit `adminDomainSep(): Bytes<32>` returning `pad(32, \"didmn:admin-token:v1\")`; add new internal (non-exported) circuit `consumeAdminToken(coin: ShieldedCoinInfo): []` per ADR-001 — a structural near-clone of the existing `consumeToken()` that asserts `disclose(coin.color) == admin_token_color` (exact equality) instead of `valid_colors` membership, and shares the existing `used_capability_nullifiers` map (no separate nullifier map); change the constructor signature to `constructor(salt: Bytes<32>, admin_recipient: ZswapCoinPublicKey, admin_coin_nonce: Bytes<32>, admin_supply: Uint<64>)` per ADR-003, atomically minting `admin_supply + 1` admin-colored units directly to `admin_recipient` via `mintShieldedToken()`, setting `admin_token_color = tokenType(adminDomainSep(), kernel.self())`, and retaining the existing `role_by_key`/`admin_registered`/`initial_admin` writes as a read-model-only signal for `deriveRegistryAccess()` (not an authorization source); delete the `register_initial_admin()` exported circuit entirely — no post-deploy bootstrap step remains. If Task 1's verification found `kernel.self()` illegal in a constructor, apply the documented fallback (compute `admin_token_color` in a separate internal circuit invoked on the first post-deploy admin-gated call) instead of the happy-path implementation described above.",
+      "files": [
+        "contracts/did_registry.compact.template"
+      ],
+      "acceptance_criteria": [
+        "contracts/did_registry.compact.template compiles without errors via `compact compile` after these changes.",
+        "The generated contract exposes `admin_token_color: Bytes<32>` as a ledger field and no longer exposes an exported `register_initial_admin` circuit.",
+        "`consumeAdminToken()` exists as a non-exported circuit that asserts exact equality against `admin_token_color` and reads/writes `used_capability_nullifiers`.",
+        "The constructor, invoked with `(salt, admin_recipient, admin_coin_nonce, admin_supply)`, mints `admin_supply + 1` admin-colored units directly to `admin_recipient` within the same transaction as deployment, with no separate bootstrap circuit call required."
+      ],
+      "spec_refs": ["#REQ-01", "#ADR-001", "#ADR-003"],
+      "depends_on": ["1"],
+      "status": "done",
+      "tdd": false,
+      "notes": "contracts/did_registry.compact.template modificado: ledger admin_token_color agregado; pure circuit adminDomainSep() agregado; circuit consumeAdminToken(coin) agregado (near-clone de consumeToken, comparte used_capability_nullifiers); constructor cambia a (salt, admin_recipient, admin_coin_nonce, admin_supply) y mintea admin_supply+1 unidades atómicamente vía mintShieldedToken; register_initial_admin() eliminado. compact compile --skip-zk exit 0. Verificado en el .d.ts generado."
+    },
+    {
+      "id": "3",
+      "title": "Add rotate_admin_tokens circuit for atomic admin token replacement",
+      "description": "In contracts/did_registry.compact.template, add the exported circuit `rotate_admin_tokens(coin: ShieldedCoinInfo, new_recipient: ZswapCoinPublicKey, new_coin_nonce: Bytes<32>): []` per ADR-003: assert the presented coin's color equals `admin_token_color` and its value is sufficient, assert its nullifier is unused in `used_capability_nullifiers`, burn it via `receiveShielded` + nullifier insert, then mint a fresh 2-unit admin coin to `new_recipient` via `mintShieldedToken` — all within the single circuit body so the burn and the mint execute as one atomic unit of the transaction (REQ-04), with no code path that commits the burn without also committing the mint.",
+      "files": [
+        "contracts/did_registry.compact.template"
+      ],
+      "acceptance_criteria": [
+        "contracts/did_registry.compact.template compiles without errors via `compact compile` after adding rotate_admin_tokens.",
+        "rotate_admin_tokens asserts the presented coin's color equals admin_token_color and rejects an already-used nullifier before performing the burn.",
+        "The burn (receiveShielded + used_capability_nullifiers insert) and the mint (mintShieldedToken of a fresh 2-unit admin coin to new_recipient) both occur within the single rotate_admin_tokens circuit body."
+      ],
+      "spec_refs": ["#REQ-04", "#ADR-003"],
+      "depends_on": ["2"],
+      "status": "done",
+      "tdd": false,
+      "notes": "contracts/did_registry.compact.template modificado: export circuit rotate_admin_tokens(coin, new_recipient, new_coin_nonce) agregado — assert color==admin_token_color, assert value>=1, assert nullifier no usado, burn (receiveShielded + insert nullifier) y mint (mintShieldedToken 2 unidades) en el mismo cuerpo de circuit. compact compile --skip-zk exit 0. Verificado en el .d.ts generado (presente en ImpureCircuits/PureCircuits/Circuits con la firma esperada)."
+    },
+    {
+      "id": "4",
+      "title": "Migrate 5 admin circuits to consumeAdminToken(); remove ISSUER role",
+      "description": "In contracts/did_registry.compact.template, per ADR-004: (a) add `coin: ShieldedCoinInfo` as the first parameter to `mint_capability_tokens` and `issue_did`, and make `consumeAdminToken(coin)` the first instruction in each body, replacing `mint_capability_tokens`'s existing `assertRole(adminRole())` call and `issue_did`'s inline `is_admin || is_issuer` check; (b) delete the `issuerRole()` pure circuit and the `admin_lookup_key`/`issuer_lookup_key`/`is_admin`/`is_issuer` block entirely; (c) in `grant_role`, `revoke_role`, and `revoke_did` (signatures unchanged — these already take `coin` as a parameter), replace the existing `assertRole(adminRole())` + later `consumeToken(coin)` pair with a single `consumeAdminToken(coin)` call as the first instruction.",
+      "files": [
+        "contracts/did_registry.compact.template"
+      ],
+      "acceptance_criteria": [
+        "contracts/did_registry.compact.template compiles without errors via `compact compile` after these changes.",
+        "No circuit in the contract calls assertRole(adminRole()) or checks ownPublicKey() against role_by_key for authorization purposes; a grep for `issuerRole` and `is_issuer` across the template returns zero matches.",
+        "issue_did's exported signature is `issue_did(coin: ShieldedCoinInfo, did_key, did_commitment, doc_commitment, proof_commitment)` with consumeAdminToken(coin) as its first instruction.",
+        "mint_capability_tokens, grant_role, revoke_role, and revoke_did each call consumeAdminToken(coin) as their first instruction."
+      ],
+      "spec_refs": ["#REQ-02", "#REQ-03", "#ADR-004"],
+      "depends_on": ["3"],
+      "status": "done",
+      "tdd": false,
+      "notes": "contracts/did_registry.compact.template modificado: mint_capability_tokens e issue_did ganan coin: ShieldedCoinInfo como primer parámetro y consumeAdminToken(coin) como primera instrucción; grant_role/revoke_role/revoke_did (firmas sin cambios) reemplazan assertRole(adminRole())+consumeToken(coin) por un único consumeAdminToken(coin) como primera instrucción; issuerRole() pure circuit eliminado. grep -n 'issuerRole|is_issuer|assertRole' sobre el template solo matchea la definición de assertRole (sin callers, retenida per housekeeping note — el compilador no la flaggea como no usada) y un comentario. compact compile --skip-zk exit 0. Verificado en el .d.ts generado: issue_did tiene la firma exacta (coin, did_key, did_commitment, doc_commitment, proof_commitment); mint_capability_tokens tiene coin como primer parámetro."
+    },
+    {
+      "id": "5",
+      "title": "Add DID-linked color assert to request_update_did",
+      "description": "In contracts/did_registry.compact.template, per ADR-005, insert one assert immediately after the existing did_controller/party_status preconditions and immediately before consumeToken(coin) in request_update_did: `assert(disclose(coin.color) == did_token_color.lookup(did_key), \"Token does not match this DID\")`. No `did_token_color.member(did_key)` guard is needed beforehand — the preceding asserts already establish the DID is registered and active, and `did_token_color` is guaranteed to have an entry by that point.",
+      "files": [
+        "contracts/did_registry.compact.template"
+      ],
+      "acceptance_criteria": [
+        "contracts/did_registry.compact.template compiles without errors via `compact compile` after this change.",
+        "request_update_did rejects a coin whose color does not equal did_token_color.lookup(did_key), before reaching consumeToken(coin).",
+        "request_update_did still accepts a coin whose color matches the DID's linked color, unchanged from prior behavior."
+      ],
+      "spec_refs": ["#REQ-05", "#ADR-005"],
+      "depends_on": ["4"],
+      "status": "done",
+      "tdd": false,
+      "notes": "contracts/did_registry.compact.template modificado: en request_update_did se agregó `assert(disclose(coin.color) == did_token_color.lookup(did_key), \"Token does not match this DID\")` inmediatamente después de los 4 asserts existentes (did_controller.member, did_controller.lookup==controller, party_status.member, party_status.lookup==2) y antes de consumeToken(coin), sin `did_token_color.member()` guard previo (justificado en ADR-005: los asserts previos ya garantizan la entrada). `compact compile --skip-zk contracts/did_registry.compact.template <tmp-dir>` → exit 0. Firma de request_update_did sin cambios (verificado en el .d.ts generado: mismos 4 parámetros que antes)."
+    },
+    {
+      "id": "6",
+      "title": "Update compile-contract.js CIRCUITS list for rotate_admin_tokens",
+      "description": "In scripts/compile-contract.js, update the CIRCUITS array (currently ~lines 31-41): remove \"register_initial_admin\", add \"rotate_admin_tokens\". Do not add consumeAdminToken — it is an internal, non-exported circuit, consistent with consumeToken's current exclusion from this list.",
+      "files": [
+        "scripts/compile-contract.js"
+      ],
+      "acceptance_criteria": [
+        "Running the project's contract compile pipeline regenerates contracts/did_registry.compact and produces circuit keys for rotate_admin_tokens with zero errors.",
+        "The CIRCUITS array in scripts/compile-contract.js no longer contains \"register_initial_admin\" and contains \"rotate_admin_tokens\"."
+      ],
+      "spec_refs": ["#ADR-003"],
+      "depends_on": ["5"],
+      "status": "done",
+      "tdd": false,
+      "notes": "scripts/compile-contract.js: CIRCUITS array editado — \"register_initial_admin\" removido, \"rotate_admin_tokens\" agregado (consumeAdminToken NO agregado, consistente con la exclusión de consumeToken). Se corrió `npm run compile-contract` completo (pipeline real, con generación de claves ZK, sin --skip-zk) en background — terminó con exit 0: `✅ Compiled: contracts/did_registry.compact`, managed output + browser assets + metadata regenerados. Confirmado en contracts/managed/did-registry/keys/ y /zkir/: existen did-registry#rotate_admin_tokens.{prover,verifier} y .{bzkir,zkir}; cero archivos register_initial_admin.* remanentes."
+    },
+    {
+      "id": "7",
+      "title": "Update UnifiedRegistryAPI.deploy() and add _buildAdminCoin()",
+      "description": "In src/lib/registry/unified-registry-api.ts: update deploy() to derive admin_recipient from providers.shieldedCoinPublicKeyHex, generate a random 32-byte admin_coin_nonce, use a fixed admin_supply default (5n, matching mint_capability_tokens's existing default batch size), and pass [salt, { bytes: adminRecipientBytes }, adminCoinNonce, adminSupply] as the deploy args instead of a bare salt, matching the new constructor signature from Task 2; add a new private helper `_buildAdminCoin(): Promise<{ coin: ShieldedCoin; colorHex: string }>` mirroring `_buildCoin()` but filtering the caller's shielded balances against `ledger.admin_token_color` (single-value equality) instead of `fetchVerifiedTokenColors()` (multi-color valid_colors membership), throwing a \"No spendable admin credits found...\" error if none found; remove the `registerInitialAdmin()` method entirely — no longer a valid circuit call once register_initial_admin is removed from the contract.",
+      "files": [
+        "src/lib/registry/unified-registry-api.ts"
+      ],
+      "acceptance_criteria": [
+        "npm run build succeeds with zero TypeScript errors for unified-registry-api.ts.",
+        "deploy() calls the contract constructor with 4 arguments (salt, admin_recipient, admin_coin_nonce, admin_supply) matching the contract signature from Task 2.",
+        "_buildAdminCoin() exists and filters spendable coins by exact equality against ledger.admin_token_color.",
+        "registerInitialAdmin() no longer exists as a method on UnifiedRegistryAPI."
+      ],
+      "spec_refs": ["#REQ-01", "#ADR-003"],
+      "depends_on": ["6"],
+      "status": "done",
+      "tdd": false,
+      "notes": "4 de 4 acceptance criteria cumplidos (actualizado tras Task 8): deploy() actualizado con los 4 args del constructor (salt, {bytes: adminRecipientBytes}, adminCoinNonce, adminSupply=5n) derivando admin_recipient de providers.shieldedCoinPublicKeyHex; _buildAdminCoin() agregado (mirror de _buildCoin(), filtra por igualdad exacta contra ledger.admin_token_color leído vía queryContractState + module.ledger(), value>=2n); registerInitialAdmin() eliminado por completo del archivo. Collateral fix aplicado en src/lib/did/app-api.ts: deployUnifiedRegistry() ya no llama a api.registerInitialAdmin() (bootstrap en dos pasos eliminado), usa deployed?.public directamente para initializeTxHash/txId. El bloqueante original (criterio 1, 'zero TypeScript errors' — TS6133 sobre _buildAdminCoin() sin caller) quedó resuelto como efecto colateral de Task 8: al cablear _buildAdminCoin() en mintTokens/issueDid/grantRole/revokeRole/revokeDid, el método pasó a tener callers reales y `npx tsc --noEmit` corre limpio (0 errores). Task 7 se marca done en esta misma invocación (task_ids=[8]) porque su único criterio pendiente se resolvió mecánicamente por Task 8, no por trabajo adicional sobre el propio Task 7 — ver progress.md."
+    },
+    {
+      "id": "8",
+      "title": "Wire admin coin into 5 gated methods; add rotateAdminTokens()",
+      "description": "In src/lib/registry/unified-registry-api.ts: update mintTokens and issueDid to call _buildAdminCoin() and pass the resulting coin as the new first callTx argument, matching the updated mint_capability_tokens/issue_did circuit signatures from Task 4; update grantRole/revokeRole/revokeDid (which already build a coin via _buildCoin() today) to call _buildAdminCoin() instead, so the presented coin is specifically admin-colored rather than any valid capability color; add a new public method `rotateAdminTokens(opts: { newRecipientBytes: Uint8Array }): Promise<{ txHash: string; txId?: string }>` that builds an admin coin via _buildAdminCoin(), generates a new coin nonce, and calls contract.callTx.rotate_admin_tokens, returning the same { txHash, txId } shape as sibling methods.",
+      "files": [
+        "src/lib/registry/unified-registry-api.ts"
+      ],
+      "acceptance_criteria": [
+        "npm run build succeeds with zero TypeScript errors for unified-registry-api.ts.",
+        "mintTokens and issueDid pass an admin coin obtained from _buildAdminCoin() as the first argument to their respective contract.callTx calls.",
+        "grantRole, revokeRole, and revokeDid obtain their coin via _buildAdminCoin() instead of _buildCoin().",
+        "rotateAdminTokens() is exported and returns { txHash, txId } on a successful contract.callTx.rotate_admin_tokens call."
+      ],
+      "spec_refs": ["#REQ-02", "#REQ-04", "#ADR-001", "#ADR-004"],
+      "depends_on": ["7"],
+      "status": "done",
+      "tdd": false,
+      "notes": "src/lib/registry/unified-registry-api.ts: mintTokens gana `coin` como primer callTx arg (via _buildAdminCoin()), matching mint_capability_tokens' nueva firma (coin, subscription_key, recipient, coin_nonce, amount) confirmada en el .d.ts generado. issueDid gana `coin` como primer callTx arg (via _buildAdminCoin()), matching issue_did's nueva firma (coin, did_key, did_commitment, doc_commitment, proof_commitment). grantRole/revokeRole/revokeDid cambian su llamada de _buildCoin() a _buildAdminCoin() (firmas de circuit sin cambios — coin ya era su primer parámetro). Nuevo método público rotateAdminTokens(opts: { newRecipientBytes: Uint8Array }) agregado — construye admin coin via _buildAdminCoin(), genera newCoinNonce fresco, llama contract.callTx.rotate_admin_tokens, retorna { txHash, txId }. NOTA sobre la firma de rotateAdminTokens: la invocación del orquestador para esta task mencionó `opts: { newRecipientBytes; newSupply: bigint }`, pero tasks.json/2-technical/spec.md (Component Design, sección Client) especifican explícitamente `opts: { newRecipientBytes: Uint8Array }` sin newSupply, y el circuit rotate_admin_tokens del .d.ts generado confirma solo 3 parámetros (coin, new_recipient, new_coin_nonce) — no acepta supply; ADR-002 documenta que rotate_admin_tokens siempre mintea exactamente 2 unidades (1 anchor + 1 credit) por diseño, no un batch configurable. Se implementó la firma sin newSupply per tasks.json/spec (fuente de verdad), documentando la discrepancia aquí en vez de agregar un parámetro no usado que además rompería la compilación (tsconfig tiene noUnusedParameters:true). gatedSelfRegisterDid/requestUpdateDid/updateDid quedaron intencionalmente SIN cambios (siguen usando _buildCoin()) — no son admin-gated, consumen capability tokens vía consumeToken(), consistente con ADR-005. Verificación: `npx tsc --noEmit` → exit 0, 0 errores (incluyendo la resolución del TS6133 previo de Task 7). `npm test` (suite completa, 32 archivos) → 265 passed, 6 failed — los 6 fallos son 100% en tests/unified-registry.test.ts y corresponden exactamente a los tests desactualizados que Tasks 9/10 deben reescribir (1 test llama a api.registerInitialAdmin(), que ya no existe desde Task 7; 5 tests mockean estado de ledger sin admin_token_color, causando que _buildAdminCoin() falle al leer `ledger.admin_token_color` — mock desactualizado, no bug real). Los otros 31 archivos de test (265 tests) pasan sin cambios, confirmando que el wiring de Task 8 no rompió nada fuera del alcance esperado de tasks 9/10."
+    },
+    {
+      "id": "9",
+      "title": "Add unit/simulator tests for genesis mint and admin-token consumption",
+      "description": "In tests/unified-registry.test.ts, add contract-simulator (@midnight-ntwrk/compact-runtime) test cases covering: deploy sets admin_token_color and mints the expected admin coin value to the recipient (REQ-01 Scenario 01); no register_initial_admin circuit exists post-compile (REQ-01 Scenario 02); consumeAdminToken accepts a correctly admin-colored coin and rejects a wrong-colored one (exercised indirectly via an admin-gated circuit call); rotate_admin_tokens success path (old token burned, new token minted, exactly one valid admin token afterward, REQ-04 Scenario 01); rotate_admin_tokens forced-failure path (e.g. reused nullifier or insufficient value) confirming the original token remains valid and unconsumed with no partial state committed (REQ-04 Scenario 02).",
+      "files": [
+        "tests/unified-registry.test.ts"
+      ],
+      "acceptance_criteria": [
+        "npm test passes for all new test cases added by this task in tests/unified-registry.test.ts.",
+        "A test confirms the deploy transaction's ledger state has admin_token_color set and the deployer's admin coin balance equals admin_supply + 1.",
+        "A test confirms an admin-gated circuit rejects a coin whose color does not equal admin_token_color.",
+        "A test confirms rotate_admin_tokens's forced-failure path leaves the original admin token valid and unconsumed, with no intermediate state where zero valid admin tokens exist."
+      ],
+      "spec_refs": ["#REQ-01", "#REQ-04"],
+      "depends_on": ["8"],
+      "status": "done",
+      "tdd": true,
+      "notes": "tests/unified-registry.test.ts reescrito. Descubrimiento clave durante TDD: receiveShielded()+sendImmediateShielded() (usados por consumeToken/consumeAdminToken/rotate_admin_tokens) producen Zswap outputs adicionales de custodia/residuo propiedad del CONTRATO (recipient.is_left===false), intercalados con el output realmente gastable por el caller (recipient.is_left===true) — confirmado empíricamente corriendo el contrato compilado y volcando outputs[].recipient.is_left. El helper run() de test filtra por recipient.is_left para exponer solo los coins gastables por el caller, evitando reusar por error el coin de custodia (que comparte nonce con el original y dispara falsos 'Admin token already used'). PARTE 1 (TS API-layer, mocks): agregado MOCK_ADMIN_COLOR distinto de MOCK_COLOR; makeModule() ahora expone ledger.admin_token_color; makeProviders() da balance en ambos colores; makeCallTx() reemplaza register_initial_admin por rotate_admin_tokens. Se removió el describe 'REQ-03 registerInitialAdmin' (método eliminado en Task 7) y se agregó 'REQ-01/S02 — no separate bootstrap operation exists' verificando que UnifiedRegistryAPI ya no expone registerInitialAdmin(). Se corrigieron REQ-02 mintTokens/REQ-06 revokeDid/REQ-07 grantRole-revokeRole (assertions de color MOCK_COLOR→MOCK_ADMIN_COLOR + destructuring de 5 args en mintTokens) y se reescribió REQ-04 issueDid completo (issue_did ahora SÍ recibe coin como primer arg — el test viejo afirmaba explícitamente 'no coin'). Se agregó REQ-04 rotateAdminTokens (2 tests nuevos, cobertura de la capa API que no existía). PARTE 2 (contract-simulator real, @midnight-ntwrk/compact-runtime, sin mocks — mismo patrón que usaba el token-gating.test.ts pre-unificación, ahora eliminado): describe 'REQ-01 — genesis admin token minted atomically at deploy' (3 tests: value=admin_supply+1 y color coincide con ledger.admin_token_color; admin_supply=0 rechazado; register_initial_admin ausente en circuits/impureCircuits); describe 'consumeAdminToken — accepts admin color, rejects any other color' (2 tests, exercised vía mint_capability_tokens); describe 'REQ-04 — rotate_admin_tokens atomic replacement' (S01 success — burn+remint atómico, coin viejo ya no gastable, coin nuevo sí; S02 forced-failure — reusar un coin ya nullificado falla sin estado parcial, el coin legítimamente rotado sigue gastable después). npm test sobre este archivo solo: 37/37 passing.",
+      "acceptance_criteria_status": {
+        "npm test passes for all new test cases added by this task in tests/unified-registry.test.ts": "PASS — 37/37 en el archivo",
+        "A test confirms the deploy transaction's ledger state has admin_token_color set and the deployer's admin coin balance equals admin_supply + 1": "PASS — describe 'REQ-01 — genesis admin token minted atomically at deploy'",
+        "A test confirms an admin-gated circuit rejects a coin whose color does not equal admin_token_color": "PASS — describe 'consumeAdminToken' + describe.each 'REQ-02/S02'",
+        "A test confirms rotate_admin_tokens's forced-failure path leaves the original admin token valid and unconsumed, with no intermediate state where zero valid admin tokens exist": "PASS — 'REQ-04 — rotate_admin_tokens atomic replacement' S02"
+      }
+    },
+    {
+      "id": "10",
+      "title": "Add integration tests for full admin lifecycle and DID color check",
+      "description": "In tests/unified-registry.test.ts, add full deploy-then-call integration test cases using the new coin-gated signatures: deploy -> mint_capability_tokens -> issue_did -> grant_role -> revoke_role -> revoke_did -> rotate_admin_tokens; each of the five admin-gated circuits (mint_capability_tokens, issue_did, grant_role, revoke_role, revoke_did) tested for both success (valid admin coin presented) and rejection (no admin coin, or a wrong-colored coin, presented) per REQ-02; a case confirming issue_did requires only admin-token consumption with no separate ISSUER-role check, and that a caller holding only a legacy-shaped non-admin role and no admin coin is rejected (REQ-03); a case confirming request_update_did accepts a coin whose color matches did_token_color.lookup(did_key) and rejects a differently-colored, otherwise-valid coin (REQ-05).",
+      "files": [
+        "tests/unified-registry.test.ts"
+      ],
+      "acceptance_criteria": [
+        "npm test passes for all new integration test cases added by this task.",
+        "The full deploy -> mint_capability_tokens -> issue_did -> grant_role -> revoke_role -> revoke_did -> rotate_admin_tokens lifecycle test passes end to end against the simulator.",
+        "A test confirms each of the five admin-gated circuits rejects invocation when no valid admin coin is presented.",
+        "A test confirms request_update_did rejects an update presented with a token whose color does not match did_token_color.lookup(did_key)."
+      ],
+      "spec_refs": ["#REQ-02", "#REQ-03", "#REQ-05"],
+      "depends_on": ["9"],
+      "status": "done",
+      "tdd": true,
+      "notes": "Agregado en la misma reescritura de tests/unified-registry.test.ts que Task 9 (mismo archivo, mismo describe.each infra). describe.each 'REQ-02/S02 — the five admin-gated circuits reject a non-admin-colored coin' cubre mint_capability_tokens/issue_did/grant_role/revoke_role/revoke_did, cada uno rechazando un coin de color arbitrario con 'Invalid admin token color' — sin necesitar preconditions de DID registrado, porque consumeAdminToken(coin) es la PRIMERA instrucción en los 5 circuits (falla antes de cualquier chequeo de did_controller). describe 'REQ-03 — ISSUER role removed' agrega un caso más fuerte: issue_did rechaza un coin de capability-token LEGÍTIMAMENTE minteado (no arbitrario) — prueba que no existe bypass vía rol ISSUER/ADMIN legado en role_by_key (el deployer SÍ tiene role_by_key[ADMIN]=true por el bookkeeping del constructor, pero eso no alcanza sin el coin correcto). describe 'REQ-05 — request_update_did requires the DID's own linked token color' — mintea 2 colores de capability distintos, registra el DID con el color A, activa el DID vía issue_did, confirma que el color B (válido pero no vinculado) es rechazado con 'Token does not match this DID' y que el color A (change coin) es aceptado, moviendo party_status a 4 (pending_update). describe 'Full lifecycle integration' — cadena completa deploy -> mint_capability_tokens -> gated_self_register_did -> issue_did -> grant_role -> revoke_role -> revoke_did -> rotate_admin_tokens sobre una única instancia de contrato, verificando en cada paso el valor decreciente del admin coin (11->10->9->8->7->6->7 tras rotar con new_supply=6) y las transiciones de party_status/total_active_dids. npm test sobre el archivo: 37/37 passing (incluye los tests de Task 9).",
+      "acceptance_criteria_status": {
+        "npm test passes for all new integration test cases added by this task": "PASS — 37/37 en el archivo",
+        "The full deploy -> mint_capability_tokens -> issue_did -> grant_role -> revoke_role -> revoke_did -> rotate_admin_tokens lifecycle test passes end to end against the simulator": "PASS — describe 'Full lifecycle integration' (incluye gated_self_register_did antes de issue_did, no explícito en el título de la task pero necesario para que issue_did tenga un DID pending real que activar)",
+        "A test confirms each of the five admin-gated circuits rejects invocation when no valid admin coin is presented": "PASS — describe.each 'REQ-02/S02'",
+        "A test confirms request_update_did rejects an update presented with a token whose color does not match did_token_color.lookup(did_key)": "PASS — describe 'REQ-05'"
+      }
+    },
+    {
+      "id": "11",
+      "title": "Delete the 5 pre-unification test files",
+      "description": "Delete src/tests/did-registry-gated.test.ts, src/tests/token-gating.test.ts, src/tests/token-gating-integration.test.ts, src/tests/token-subscription.test.ts, and src/tests/token-api-layer.test.ts in full. These exercise self_register_did/register_initial_admin/ownPublicKey() behavior that no longer exists in the contract after Tasks 2 and 4. Not ported forward, per explicit user decision (REQ-08; functional spec Out of Scope).",
+      "files": [
+        "src/tests/did-registry-gated.test.ts",
+        "src/tests/token-gating.test.ts",
+        "src/tests/token-gating-integration.test.ts",
+        "src/tests/token-subscription.test.ts",
+        "src/tests/token-api-layer.test.ts"
+      ],
+      "acceptance_criteria": [
+        "All 5 listed files no longer exist in the repository.",
+        "npm test runs with zero failures caused by the removal — no other test file imports or references these deleted files."
+      ],
+      "spec_refs": ["#REQ-08"],
+      "depends_on": ["10"],
+      "status": "done",
+      "tdd": false,
+      "notes": "Los 5 archivos eliminados vía `git rm`: src/tests/did-registry-gated.test.ts, src/tests/token-gating.test.ts, src/tests/token-gating-integration.test.ts, src/tests/token-subscription.test.ts, src/tests/token-api-layer.test.ts. Grep de sus nombres de archivo sobre todo el repo (excluyendo sdd/) confirma cero referencias remanentes salvo prosa descriptiva en comentarios de tests/unified-registry.test.ts (documentando de qué patrón se derivó su Parte 2 real-execution), ajustada para no nombrar el archivo eliminado como si aún existiera. `npm test` completo post-borrado: 27 archivos, 222 passing, 0 failing (antes de esta task + tasks 9/10: 32 archivos, 265 passing, 6 failing).",
+      "acceptance_criteria_status": {
+        "All 5 listed files no longer exist in the repository": "PASS — confirmado vía git rm + ls",
+        "npm test runs with zero failures caused by the removal — no other test file imports or references these deleted files": "PASS — npm test: 27 files, 222 passed, 0 failed"
+      }
+    },
+    {
+      "id": "12",
+      "title": "Delete src/lib/did/api.ts and prune dead exports from app-api.ts",
+      "description": "Delete src/lib/did/api.ts in full (orphaned DidRegistryAPI class exercising the forgeable ownPublicKey() bootstrap pattern being eliminated on-chain). In src/lib/did/app-api.ts: remove deployDidRegistry, updateDidOrchestrated, revokeDidOrchestrated (the only three functions typed against DidRegistryAPI); remove the `import { DidRegistryAPI } from \"./api\"` statement; narrow `type AnyRegistryAPI = DidRegistryAPI | UnifiedRegistryAPI` to `type AnyRegistryAPI = UnifiedRegistryAPI`. Keep compileDidRegistry, deployUnifiedRegistry, requestDidWithSync, issueDidWithSync, updateDidWithSync, revokeDidWithSync, getTokenBalance, and the mergeDidMetadata/syncWallet*Storage sync helpers unchanged.",
+      "files": [
+        "src/lib/did/api.ts",
+        "src/lib/did/app-api.ts"
+      ],
+      "acceptance_criteria": [
+        "src/lib/did/api.ts no longer exists in the repository.",
+        "npm run build succeeds with zero errors referencing DidRegistryAPI, deployDidRegistry, updateDidOrchestrated, or revokeDidOrchestrated.",
+        "AnyRegistryAPI in app-api.ts is typed as UnifiedRegistryAPI only."
+      ],
+      "spec_refs": ["#REQ-08"],
+      "depends_on": ["11"],
+      "status": "done",
+      "tdd": false,
+      "notes": "src/lib/did/api.ts eliminado por completo (git rm equivalente vía Bash rm; el archivo no está tracked como modificado, se borró directamente). En src/lib/did/app-api.ts: removido `import { DidRegistryAPI } from \"./api\"`; removidas `deployDidRegistry`, `updateDidOrchestrated`, `revokeDidOrchestrated` (único caller de cada una era este mismo archivo — confirmado vía grep antes de editar, ningún otro archivo del repo las importaba); `type AnyRegistryAPI = DidRegistryAPI | UnifiedRegistryAPI` angostado a `type AnyRegistryAPI = UnifiedRegistryAPI`. Efecto colateral necesario: el import `executeGatedAction` de `../token/token-witness.js` quedó sin caller tras borrar las dos funciones orquestadas que lo usaban — se cambió a `import type { TokenProviders }` (el único símbolo de ese módulo que sigue en uso, por `getTokenBalance`). `compileDidRegistry`, `deployUnifiedRegistry`, `requestDidWithSync`, `issueDidWithSync`, `updateDidWithSync`, `revokeDidWithSync`, `getTokenBalance`, y los sync helpers quedaron sin cambios, tal como especificaba la task. Verificado en conjunto con Task 13 (ver su nota) porque `src/lib/didContract.ts`, que todavía importaba `./did/api` y `deployDidRegistry`, generaba 2 errores de `tsc` residuales hasta que Task 13 lo eliminó — ambas tasks se implementaron y verificaron como una unidad de build, consistente con su dependencia directa 12→13."
+    },
+    {
+      "id": "13",
+      "title": "Delete didContract.ts and repoint App.tsx/OwnerVaultPanel.tsx imports",
+      "description": "Delete src/lib/didContract.ts in full. In src/App.tsx, repoint the getSavedContractAddress/getSavedDeployment import from ./lib/didContract to ./lib/did/cache. In src/components/OwnerVaultPanel.tsx, repoint the getOwnerVaultStatus import from ../lib/didContract to ../lib/did/vault, and the OwnerVaultStatus type import to ../types/did.",
+      "files": [
+        "src/lib/didContract.ts",
+        "src/App.tsx",
+        "src/components/OwnerVaultPanel.tsx"
+      ],
+      "acceptance_criteria": [
+        "src/lib/didContract.ts no longer exists in the repository.",
+        "npm run build succeeds with zero errors, with no remaining import from ./lib/didContract or ../lib/didContract anywhere in src/.",
+        "src/App.tsx imports getSavedContractAddress/getSavedDeployment from ./lib/did/cache; src/components/OwnerVaultPanel.tsx imports getOwnerVaultStatus from ./lib/did/vault and OwnerVaultStatus from ../types/did."
+      ],
+      "spec_refs": ["#REQ-08"],
+      "depends_on": ["12"],
+      "status": "done",
+      "tdd": false,
+      "notes": "src/lib/didContract.ts eliminado por completo. src/App.tsx: import de `getSavedContractAddress`/`getSavedDeployment` repuntado de `./lib/didContract` a `./lib/did/cache` (confirmado que ambos exports existen ahí, líneas 70/74 de cache.ts). src/components/OwnerVaultPanel.tsx: import de `getOwnerVaultStatus` repuntado de `../lib/didContract` a `../lib/did/vault` (confirmado export en vault.ts línea 33); import de `OwnerVaultStatus` (type) repuntado a `../types/did` (confirmado en types/did.ts línea 99) — se separó en dos statements de import ya que uno es valor y el otro es solo-tipo. Verificación conjunta 12+13: `npx tsc --noEmit` → exit 0, 0 errores; `npm run build` (tsc && vite build) → exit 0 (solo warnings preexistentes de code-splitting de Vite, no relacionados); `npm test` → 27 archivos, 222 tests, 0 fallos. Grep de `DidRegistryAPI|didContract|registerInitialAdmin|deployDidRegistry|updateDidOrchestrated|revokeDidOrchestrated` sobre src/+tests/+scripts/ confirma cero referencias funcionales remanentes (solo comentarios históricos en unified-registry-api.ts y un test que afirma la ausencia de registerInitialAdmin)."
+    },
+    {
+      "id": "14",
+      "title": "Rewrite README sections for the coin-gated admin model",
+      "description": "In README.md: rewrite the \"On-chain\" section (~lines 203-244) to reflect the unified v3 contract and the new coin-gated admin model (genesis admin token, consumeAdminToken, rotate_admin_tokens, ISSUER removal); rewrite or remove \"Controller Model (v2)\" (~472-484) and \"Token Gating (v0.8)\" (~486-544), since they document pre-unification architecture; remove the residual \"owner witness secret\" mention (~line 315), which contradicts the zero-long-lived-secret constraint; add a Release Notes entry documenting this security fix (forgeable ownPublicKey() replaced with coin-gated authorization); correct the Contract Directory Notes (~905-921) that still list contracts/token_gating.compact as active when it is archived.",
+      "files": [
+        "README.md"
+      ],
+      "acceptance_criteria": [
+        "README.md contains zero remaining references to 'owner witness secret' or any witness-secret-based ownership mechanism.",
+        "The On-chain section describes the genesis admin token, consumeAdminToken() consumption for privileged operations, rotate_admin_tokens, and the removal of the ISSUER role.",
+        "The Controller Model (v2) and Token Gating (v0.8) sections either no longer exist or are rewritten to describe only the shipped v3 architecture, with no dangling references to removed contracts or the previous bootstrap flow.",
+        "A new Release Notes entry documents this security fix, and the Contract Directory Notes section no longer lists contracts/token_gating.compact as active."
+      ],
+      "spec_refs": ["#REQ-07"],
+      "depends_on": ["13"],
+      "status": "done",
+      "tdd": false,
+      "notes": "IMPORTANTE — corrección de un dato desactualizado en la instrucción del orquestador: la invocación de esta task afirmaba que 2-technical/spec.md documenta rotate_admin_tokens con una firma de 3 parámetros fija (2 unidades, no configurable) como 'firma final vigente'. Se verificó leyendo tanto contracts/did_registry.compact.template (código real, fuente de verdad) como 2-technical/spec.md ANTES de escribir el README: ambos documentan la firma de 4 parámetros `(coin, new_recipient, new_coin_nonce, new_supply: Uint<64>)` con remint configurable — ver el bloque 'Post-implementation correction (2026-07-09)' al final de ADR-003 en spec.md, que registra explícitamente la reconciliación posterior a la corrección de diseño de las tasks 3/8 documentada en progress.md. El README se escribió reflejando la firma de 4 parámetros real y actualmente compilada/testeada, no la de 3 parámetros mencionada en la instrucción del orquestador (que citaba un estado ya superado del propio spec.md). No se inventó contenido: todo lo escrito se verificó contra contracts/did_registry.compact.template real y contra src/lib/registry/unified-registry-api.ts. Secciones reescritas: 'On-chain' (contrato único v3, constructor de 4 params, consumeAdminToken, rotate_admin_tokens, ISSUER eliminado); 'Controller Model (v2)' + 'Token Gating (v0.8)' fusionadas y reemplazadas por una nueva sección única 'Coin-Gated Authorization (v0.9)' que describe capability tokens + admin token en el contrato unificado; mención de 'owner witness secret' (línea ~315) corregida; Release Notes v0.9.0 agregada documentando el fix de seguridad; Contract Directory Notes corregida (token_gating.compact ahora listado como archivado bajo contracts/archived/, contracts/did_registry.compact.template listado como fuente editable). Fixes adicionales de bajo riesgo aplicados fuera de las secciones explícitamente listadas pero directamente contradictorias con el fix de esta feature: el diagrama Mermaid de 'Agent Identity Flow' (rol list 'ADMIN·ISSUER·USER·AGENT' corregido), el diagrama de secuencia (removida la referencia a un contrato TokenContract separado y a consume_token_for_action/self_register_did viejos, reemplazados por gated_self_register_did/issue_did con coin inline), y la nota de autorización en la sección de deploy panel (ownPublicKey()-only → consumeAdminToken()). NO se tocó el flujo de deploy de 3 pasos ('Deploy Token Gating' como paso separado) ni el script `compile-token-gating` en la sección Development — eso es deuda de documentación preexistente de la unificación v3 (anterior a esta feature), fuera del scope explícito de esta task; flaggeado como sugerencia de background task separada (no bloqueante) para el usuario. Verificación: grep final sobre README.md confirma cero menciones de 'owner witness secret'; npm run build/test siguen en verde tras los cambios (README no afecta build)."
+    },
+    {
+      "id": "15",
+      "title": "Final wiring/smoke test: full build, tests, and legacy sweep",
+      "description": "Run the project's full verification gate as the final integration step: npm run build (TypeScript compilation across the whole project) and npm test (full vitest suite) must both pass with zero errors, covering every file touched by this feature (contract template, generated contract, compile-contract.js, unified-registry-api.ts, unified-registry.test.ts, and all legacy-removal changes). Perform a manual grep sweep across the repository for DidRegistryAPI, didContract, registerInitialAdmin, issuerRole, and 'owner witness secret' to confirm zero remaining references anywhere in contract, client, test, or documentation source files. This is the feature's final smoke test — no further code changes are expected unless this sweep or the build/test run surfaces a gap.",
+      "files": [
+        "contracts/did_registry.compact.template",
+        "scripts/compile-contract.js",
+        "src/lib/registry/unified-registry-api.ts",
+        "tests/unified-registry.test.ts",
+        "README.md"
+      ],
+      "acceptance_criteria": [
+        "npm run build completes with zero errors.",
+        "npm test completes with zero failing tests.",
+        "grep -r for DidRegistryAPI, didContract, registerInitialAdmin, issuerRole, and 'owner witness secret' across contract, client, test, and documentation source files (excluding sdd/ planning artifacts and git history) returns zero matches.",
+        "All Success Criteria checkboxes in proposal.md are satisfied based on this run's results."
+      ],
+      "spec_refs": ["#REQ-06", "#REQ-08"],
+      "depends_on": ["14"],
+      "status": "done",
+      "tdd": false,
+      "notes": "Los 4 pasos del gate final, ejecutados en orden y re-verificados tras cada cambio: (1) `npm run build` (tsc && vite build) → exit 0, 3184-3188 módulos transformados, solo warnings preexistentes de code-splitting de Vite (no relacionados a esta feature). (2) `npm test` → 27 archivos, 222 tests, 0 fallos (repetido 3 veces en distintos puntos de la invocación, siempre estable). (3) `npm run compile-contract` (pipeline completo, SIN --skip-zk) → exit 0; confirmado en contracts/managed/did-registry/keys/: `rotate_admin_tokens.{prover,verifier}` presentes con tamaño real (~9.96MB el .prover, evidencia de generación ZK genuina, no placeholder); `register_initial_admin.*` ausente; los 8 circuits esperados (contract_version implícito + 7 exportados) todos presentes. (4) Grep final sobre src/, tests/, scripts/, contracts/*.compact(.template), README.md para los 5 términos + los 5 test files eliminados + DidRegistryAPI + 'did/api': cero referencias funcionales/rotas — todos los hits restantes son (a) comentarios históricos, (b) prosa de README documentando la migración, o (c) un test que afirma explícitamente la AUSENCIA de register_initial_admin. Hallazgo colateral durante el sweep: `src/generated/did-registry/` y `src/generated/token-gating/` eran subdirectorios gitignored (no trackeados, confirmado vía `git ls-files`), no referenciados por ningún archivo fuente (grep de 'generated/did-registry/' y 'generated/token-gating/' sobre src/scripts/tests dio cero resultados), con fecha de modificación de un compile mucho más viejo (27 jun, pre-unificación) — contenían los nombres de circuit viejos (`register_initial_admin`, `self_register_did` ungated, `issuerRole`, `is_issuer`) y contaminaban el grep sweep con falsos positivos. Se eliminaron (`rm -rf`) por higiene ya que son build output local puro, no código fuente ni artefacto trackeado; se re-verificó `tsc --noEmit` y `npm test` después del borrado, ambos siguieron en verde. Hallazgo adicional fuera de scope, flaggeado vía spawn_task (no ejecutado en esta invocación): `src/lib/token/token-gating-api.ts` (clase `TokenGatingAPI`) no tiene ningún caller vivo en todo el repo — es huérfano de la misma naturaleza que `src/lib/did/api.ts` (Task 12), pero no estaba en el scope de tasks.json de esta feature; no se tocó."
+    }
+  ],
+  "summary": {
+    "total": 15,
+    "completed": 15,
+    "in_progress": 0,
+    "pending": 0,
+    "tdd_tasks": 2
+  }
+}

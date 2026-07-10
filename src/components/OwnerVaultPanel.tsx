@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AppProviders } from "../../lib/providers";
-import { getOwnerVaultStatus, type OwnerVaultStatus } from "../lib/didContract";
+import { getOwnerVaultStatus } from "../lib/did/vault";
+import type { OwnerVaultStatus } from "../types/did";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 

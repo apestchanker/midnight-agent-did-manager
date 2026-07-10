@@ -112,9 +112,16 @@ export class UnifiedRegistryAPI {
     const compiledContract = await UnifiedRegistryAPI._makeCompiled(module);
 
     const salt = randomBytes(32);
+    // Feature 005-coin-gated-admin-access (ADR-003): the constructor mints the
+    // genesis admin token atomically in the same deploy tx. admin_recipient is
+    // derived from the deploying wallet's own shielded coin public key;
+    // admin_supply mirrors mint_capability_tokens's existing default batch size.
+    const adminRecipientBytes = fromHex(providers.shieldedCoinPublicKeyHex);
+    const adminCoinNonce = crypto.getRandomValues(new Uint8Array(32));
+    const adminSupply = 5n;
     const deployed = await deployContract(providers as never, {
       compiledContract: compiledContract as never,
-      args: [salt],
+      args: [salt, { bytes: adminRecipientBytes }, adminCoinNonce, adminSupply],
     });
 
     const contractAddress = extractContractAddress(deployed);
@@ -210,16 +217,45 @@ export class UnifiedRegistryAPI {
     );
   }
 
-  // ─── Admin bootstrap ────────────────────────────────────────────────────────
-
-  async registerInitialAdmin(): Promise<{ txHash: string; txId?: string }> {
-    const tx = await (
-      this.contract.callTx.register_initial_admin as () => Promise<TxResult>
-    )();
-    return {
-      txHash: String(tx.public.txHash || ""),
-      txId: String(tx.public.txId || ""),
+  // Feature 005-coin-gated-admin-access (ADR-001/ADR-003): mirrors _buildCoin()
+  // but filters the caller's shielded balances against the single
+  // ledger.admin_token_color value (exact equality) instead of
+  // fetchVerifiedTokenColors()'s multi-color valid_colors membership. Used by
+  // every admin-gated circuit call (consumeAdminToken() is the sole
+  // authorization path for those circuits — see 2-technical/spec.md).
+  private async _buildAdminCoin(): Promise<{ coin: ShieldedCoin; colorHex: string }> {
+    const state = await this.providers.publicDataProvider.queryContractState(
+      this.contractAddress as never,
+    );
+    if (!state) throw new Error("Could not read unified registry ledger state");
+    const ledger = this.module.ledger((state as { data: unknown }).data as never) as {
+      admin_token_color: Uint8Array | { bytes: Uint8Array };
     };
+    const rawColor = ledger.admin_token_color;
+    const adminColorBytes =
+      rawColor instanceof Uint8Array ? rawColor : (rawColor as { bytes: Uint8Array }).bytes;
+    const adminColorHex = toHex(adminColorBytes);
+
+    const rawBalances = (await this.providers.connectedAPI.getShieldedBalances()) as Record<
+      string,
+      bigint
+    >;
+    const bal = rawBalances[adminColorHex];
+    if (bal !== undefined && BigInt(bal) >= 2n) {
+      // value: 2n = 1 credit spent + 1 permanent anchor retained by the contract,
+      // matching consumeAdminToken()'s value check (mirrors _buildCoin()).
+      return {
+        coin: {
+          nonce: crypto.getRandomValues(new Uint8Array(32)),
+          color: adminColorBytes,
+          value: 2n,
+        },
+        colorHex: adminColorHex,
+      };
+    }
+    throw new Error(
+      "No spendable admin credits found. Your wallet needs an admin-colored shielded token with at least 2 units in a single coin.",
+    );
   }
 
   // ─── Token minting ──────────────────────────────────────────────────────────
@@ -233,17 +269,45 @@ export class UnifiedRegistryAPI {
 
     const subscriptionKey = generateSubscriptionKey(opts.userId, Date.now());
     const coinNonce = crypto.getRandomValues(new Uint8Array(32));
+    // Feature 005-coin-gated-admin-access (ADR-004): mint_capability_tokens is
+    // now admin-token-gated; consumeAdminToken(coin) is the circuit's first
+    // instruction, replacing the old assertRole(adminRole()) identity check.
+    const { coin } = await this._buildAdminCoin();
 
     const tx = await (
       this.contract.callTx.mint_capability_tokens as (
+        coin: ShieldedCoin,
         subscriptionKey: Uint8Array,
         recipient: { bytes: Uint8Array },
         coinNonce: Uint8Array,
         amount: bigint,
       ) => Promise<TxResult>
-    )(subscriptionKey, { bytes: opts.recipientBytes }, coinNonce, opts.credits);
+    )(coin, subscriptionKey, { bytes: opts.recipientBytes }, coinNonce, opts.credits);
 
     return { txHash: String(tx.public.txHash || ""), subscriptionKey };
+  }
+
+  // Feature 005-coin-gated-admin-access (ADR-002/ADR-003, restored per
+  // explicit user-approved design fix 2026-07-09 on top of tasks 3/8):
+  // rotates the caller's admin token — burns the presented admin coin and
+  // mints a fresh new_supply+1-unit admin coin (1 anchor + new_supply
+  // credits) to new_recipient, atomically in one circuit call. Mirrors how
+  // mintTokens()/mint_capability_tokens handles its own amount parameter.
+  async rotateAdminTokens(opts: {
+    newRecipientBytes: Uint8Array;
+    newSupply: bigint;
+  }): Promise<{ txHash: string; txId?: string }> {
+    const { coin } = await this._buildAdminCoin();
+    const newCoinNonce = crypto.getRandomValues(new Uint8Array(32));
+    const tx = await (
+      this.contract.callTx.rotate_admin_tokens as (
+        coin: ShieldedCoin,
+        newRecipient: { bytes: Uint8Array },
+        newCoinNonce: Uint8Array,
+        newSupply: bigint,
+      ) => Promise<TxResult>
+    )(coin, { bytes: opts.newRecipientBytes }, newCoinNonce, opts.newSupply);
+    return { txHash: String(tx.public.txHash || ""), txId: String(tx.public.txId || "") };
   }
 
   // ─── Gated DID operations ───────────────────────────────────────────────────
@@ -348,7 +412,10 @@ export class UnifiedRegistryAPI {
     didKey: Uint8Array;
     role: Uint8Array;
   }): Promise<{ txHash: string; txId?: string }> {
-    const { coin } = await this._buildCoin();
+    // Feature 005-coin-gated-admin-access (ADR-001/ADR-004): grant_role now
+    // requires a specifically admin-colored coin, not any valid capability
+    // color.
+    const { coin } = await this._buildAdminCoin();
     const tx = await (
       this.contract.callTx.grant_role as (
         coin: ShieldedCoin,
@@ -363,7 +430,10 @@ export class UnifiedRegistryAPI {
     didKey: Uint8Array;
     role: Uint8Array;
   }): Promise<{ txHash: string; txId?: string }> {
-    const { coin } = await this._buildCoin();
+    // Feature 005-coin-gated-admin-access (ADR-001/ADR-004): revoke_role now
+    // requires a specifically admin-colored coin, not any valid capability
+    // color.
+    const { coin } = await this._buildAdminCoin();
     const tx = await (
       this.contract.callTx.revoke_role as (
         coin: ShieldedCoin,
@@ -470,7 +540,10 @@ export class UnifiedRegistryAPI {
       did,
       reason: input.reason,
     });
-    const { coin } = await this._buildCoin();
+    // Feature 005-coin-gated-admin-access (ADR-001/ADR-004): revoke_did now
+    // requires a specifically admin-colored coin, not any valid capability
+    // color.
+    const { coin } = await this._buildAdminCoin();
     const tx = await (
       this.contract.callTx.revoke_did as (
         coin: ShieldedCoin,
@@ -538,14 +611,20 @@ export class UnifiedRegistryAPI {
       didDocument: input.didDocument,
     });
 
+    // Feature 005-coin-gated-admin-access (ADR-004): issue_did is now
+    // admin-token-gated; consumeAdminToken(coin) is the circuit's first
+    // instruction, replacing the old inline is_admin || is_issuer check
+    // (ISSUER role removed entirely).
+    const { coin } = await this._buildAdminCoin();
     const tx = await (
       this.contract.callTx.issue_did as (
+        coin: ShieldedCoin,
         didKeyArg: Uint8Array,
         didCommitmentArg: Uint8Array,
         documentCommitmentArg: Uint8Array,
         proofCommitmentArg: Uint8Array,
       ) => Promise<TxResult>
-    )(didKeyBytes, didCommitment, documentCommitment, proofCommitment);
+    )(coin, didKeyBytes, didCommitment, documentCommitment, proofCommitment);
 
     const now = new Date().toISOString();
     const cached = mergeDidMetadata(this.contractAddress, input.agentId, {

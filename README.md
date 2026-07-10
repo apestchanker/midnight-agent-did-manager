@@ -62,7 +62,7 @@ flowchart TD
 
     MCP["🤖 MCP Server — :8788\n─────────────────────────────\n• AI agent interface (stdio · HTTP)\n• DID requests and proof flows\n• agent authentication via MCP keys"]
 
-    CC["⛓️ Midnight Compact Contract\n─────────────────────────────\n• DID registry of record\n• party_status · role_by_key · did_controller\n• ADMIN · ISSUER · USER · AGENT roles\n• controller binding via ownPublicKey()"]
+    CC["⛓️ Midnight Compact Contract\n─────────────────────────────\n• unified DID registry + token gating (v3)\n• party_status · role_by_key · did_controller\n• coin-gated admin token + capability tokens\n• controller binding via ownPublicKey()"]
 
     IDX["🌐 Midnight Network + Indexer\n─────────────────────────────\n• Preprod · Preview · Mainnet\n• contract state via indexer GraphQL/WS\n• transaction submission via node RPC"]
 
@@ -144,16 +144,15 @@ sequenceDiagram
     DApp->>API: Approve request
     API->>DB: Mark holder-approved
 
-    DApp->>Wallet: Spend action credit, then register controller-bound DID
-    Wallet->>TokenContract: consume_token_for_action(color, nullifier, commitment)
-    Wallet->>Contract: self_register_did(subject_nonce, color, nullifier, commitment)
-    Contract->>Contract: did_controller[did_key] = ownPublicKey()
+    DApp->>Wallet: Spend capability-token coin, then register controller-bound DID
+    Wallet->>Contract: gated_self_register_did(coin, subject_nonce)
+    Contract->>Contract: consumeToken(coin); did_controller[did_key] = ownPublicKey()
     Contract-->>Wallet: DID slot registered
 
-    Human->>DApp: Admin or issuer issues DID
+    Human->>DApp: Admin issues DID
     DApp->>Wallet: Sign issue transaction
-    Wallet->>Contract: issue_did(did_key, commitments)
-    Contract->>Contract: Set DID active
+    Wallet->>Contract: issue_did(coin, did_key, commitments)
+    Contract->>Contract: consumeAdminToken(coin); set DID active
     Contract-->>Wallet: DID issued
 
     API->>DB: Persist issued DID and VC metadata
@@ -202,37 +201,87 @@ Admin proof review and verification package management view:
 
 ### On-chain
 
-Two Compact contracts form the on-chain layer (v0.8+):
+A single unified Compact contract, `did_registry.compact` (v3.0.0, generated from
+`contracts/did_registry.compact.template`), forms the on-chain layer. It collapses what
+used to be two separate contracts — a standalone `token_gating.compact` and a
+`did_registry.compact` — into one: the action-credit token is no longer an off-chain
+reconstructible commitment, it is a real `ShieldedCoinInfo` consumed inline by an
+internal `consumeToken`/`consumeAdminToken` helper. The pre-unification
+`token_gating.compact` source is kept only for historical reference under
+`contracts/archived/` and is not part of the active build.
 
-**`token_gating.compact`** — manages shielded token allocation and spend:
+Constructor:
 
-- admin mints tokens per user from the Action Credits panel through `mint_capability_tokens`
-- users spend tokens via `consume_token_for_action`, producing a ZK proof
-- tokens are shielded: balances and spend history are private
-- `did_token_color` map binds a DID key to its token contract color
-- anchor token (value=1) cannot be spent; it is the permanent ownership anchor
-- anti-replay: commitment includes `nullifier_proxy = persistentHash(coin.nonce)`
+```
+constructor(
+  salt: Bytes<32>,
+  admin_recipient: ZswapCoinPublicKey,
+  admin_coin_nonce: Bytes<32>,
+  admin_supply: Uint<64>
+)
+```
 
-**`did_registry.compact`** (v2, `ownPublicKey()` controller model) — the DID registry of record. Constructor takes `token_contract: ZswapCoinPublicKey`. It stores:
+Deployment is a single atomic transaction. The constructor mints the genesis admin
+token — `admin_supply + 1` shielded units (1 permanent anchor + `admin_supply`
+spendable credits) — directly to `admin_recipient` in the same transaction that
+deploys the contract, and records the resulting color as `admin_token_color` (a
+single, contract-wide `Bytes<32>` ledger value, set once and never reassigned). There
+is no separate post-deploy bootstrap step: the previous `register_initial_admin()`
+circuit, which let the first caller self-claim the ADMIN role via a bare
+`ownPublicKey()` comparison with no proof of possession, has been removed entirely.
 
-- controller binding through `ZswapCoinPublicKey` — the connected wallet's public key is the sole authority, no local secret
-- DID key derived on-chain from `hash(domain, registry_salt, controller_public_key, subject_nonce)`
+Authorization model — coin-gated, not identity-gated:
+
+Every privileged operation is authorized by presenting and consuming a real shielded
+coin of the correct color, not by comparing `ownPublicKey()` against a role recorded
+in the ledger. `ownPublicKey()` is not cryptographically bound to a transaction's
+actual signer, so a role check built only on it can be forged by any caller; a
+coin-gated check instead requires holding a genuinely minted coin with an unused
+nullifier, which is a materially stronger, cryptographically-rooted guarantee. No
+long-lived secret, witness, or local vault is introduced anywhere in this model.
+
+- `consumeToken(coin)` — internal (non-exported) helper; validates `coin.color`
+  against the `valid_colors` set, checks `coin.value >= 2`, enforces single-use via a
+  `(color, nonce)`-namespaced nullifier in `used_capability_nullifiers`, takes custody
+  of the coin, and returns change to the caller. Gates `gated_self_register_did` and
+  `request_update_did`.
+- `consumeAdminToken(coin)` — internal (non-exported) helper; a structural near-clone
+  of `consumeToken()` that asserts **exact** equality against the single
+  `admin_token_color` instead of `valid_colors` set membership, sharing the same
+  `used_capability_nullifiers` map (no separate admin nullifier map). It is the sole
+  authorization path for every admin-tier circuit: `mint_capability_tokens`,
+  `issue_did`, `grant_role`, `revoke_role`, and `revoke_did` each call
+  `consumeAdminToken(coin)` as their first instruction, before touching any other
+  state.
+- `rotate_admin_tokens(coin, new_recipient, new_coin_nonce, new_supply)` — exported,
+  self-service circuit a holder calls to replace a lost/compromised admin token,
+  hand admin capability to a new recipient, or replenish spendable credits. It burns
+  the presented coin (`receiveShielded` + nullifier insert) and mints a fresh
+  `new_supply + 1`-unit admin coin to `new_recipient` — both in the same circuit body,
+  so the burn and the mint execute as one atomic unit of the transaction. There is no
+  intermediate committed state where the old token is spent but no replacement exists,
+  which rules out permanent lockout even under a forced-failure retry.
+
+The ISSUER role has been removed entirely. `issue_did` used to check
+`is_admin || is_issuer` via `role_by_key` lookups; it is now gated purely by
+`consumeAdminToken(coin)`, the same as the other four admin-tier circuits — there is
+one admin-tier gate, not two overlapping ones.
+
+`role_by_key` (ADMIN/USER role bookkeeping) is still written by the constructor and
+read by `deriveRegistryAccess()` to populate the UI's admin-badge display, but it is
+purely a **read-model signal** now — no circuit consults it to authorize an operation.
+
+Beyond authorization, the contract stores:
+
+- DID key derived on-chain from `hash("didmn:did:v1", registry_salt, ownPublicKey(), subject_nonce)`
 - DID lifecycle state via `party_status` map
 - DID, document, proof, capability, and revocation commitments
-- role-based access control (`role_by_key` map) with on-chain roles: ADMIN, ISSUER, USER, AGENT
-- initial admin bootstrap as the first registered role in the contract
+- `did_token_color` — binds each DID key to the specific capability-token color it was
+  registered with; `request_update_did` asserts the presented coin's color matches
+  this DID-linked color exactly, so a caller cannot authorize an update to a DID with
+  an unrelated (but otherwise valid) capability token
 
 The registry is intentionally not the full Agent MultiPass payload. Mandates, limits, capabilities, authorization levels, detailed profile claims, and credential JWTs are represented off-chain and selectively disclosed through credentials, presentations, and proof material.
-
-Authorization model (v2, v0.8+):
-
-- `self_register_did(subject_nonce, token_color, nullifier, commitment)` — any wallet with a valid token can register a DID slot; the wallet's `ownPublicKey()` is the controller; requires TX1 token spend
-- `register_initial_admin()` — first caller claims the ADMIN role; only callable once; no token required
-- `grant_role`, `revoke_role`, `revoke_did` — ADMIN or ISSUER authorized via `ownPublicKey()` check; require TX1 token spend
-- `issue_did` — ADMIN or ISSUER authorized via `ownPublicKey()`; no token required
-- no `issuerSecret` witness; no local private state needed for authorization
-
-Privileged operations follow a two-TX sequence: TX1 calls `consume_token_for_action` on the token gating contract; TX2 calls the registry operation.
 
 It does not store:
 
@@ -312,7 +361,7 @@ In this repository, Admin mode should be enabled through `VITE_ADMIN_WALLET_SHIE
 Important distinction:
 
 - UI admin access is gated by the configured admin wallet/shielded address
-- contract owner authorization for `issue/update/revoke` is gated by the owner witness secret described below
+- contract owner authorization for admin-tier operations (`mint_capability_tokens`, `issue_did`, `grant_role`, `revoke_role`, `revoke_did`) is gated by possession and consumption of the on-chain admin token described in [On-chain](#on-chain) above — there is no witness secret or local vault involved
 
 ### Registry
 
@@ -370,6 +419,15 @@ See:
 
 ## Release Notes
 
+### v0.8.3
+
+- **Security fix: forgeable `ownPublicKey()` admin authorization replaced with coin-gated authorization** — every admin-tier operation on `did_registry.compact` (`mint_capability_tokens`, `issue_did`, `grant_role`, `revoke_role`, `revoke_did`) used to be authorized by comparing `ownPublicKey()` against a role recorded in `role_by_key`. `ownPublicKey()` is not cryptographically bound to a transaction's actual signer, so that check was forgeable — any caller could potentially claim admin authority under the previous model. It is replaced by `consumeAdminToken()`, rooting authorization in possession-and-consumption of a real shielded coin of a single dedicated `admin_token_color`, the same mechanism already used for capability-token gating. No long-lived secret, witness, or local vault is introduced.
+- **Genesis admin token minted atomically at deploy** — the constructor now takes `(salt, admin_recipient, admin_coin_nonce, admin_supply)` and mints the genesis admin token directly to `admin_recipient` in the same transaction that deploys the contract. The previous two-step bootstrap — deploy, then a separate `ownPublicKey()`-gated `register_initial_admin()` call — is gone; `register_initial_admin()` no longer exists, so the forgeable bootstrap window it created is structurally impossible to reintroduce.
+- **New `rotate_admin_tokens` circuit** — lets a holder atomically burn their admin token and mint a fresh one to a chosen recipient (self or delegate) with a caller-chosen spendable-credit count, without ever passing through a zero-valid-admin-token state. Both the burn and the mint execute in the same circuit body as one atomic unit of the transaction.
+- **ISSUER role removed** — `issue_did` used to accept `is_admin || is_issuer`; it is now gated purely by `consumeAdminToken()`, collapsing to a single admin-tier authorization gate. The `issuerRole()` circuit is deleted.
+- **`request_update_did` gains a DID-linked token check** — the presented capability-token coin must match the color originally bound to that DID in `did_token_color`; a different, otherwise-valid capability-token color is now rejected, closing a gap where any valid token could authorize an update to any DID.
+- **Legacy pre-unification code removed** — `src/lib/did/api.ts` (the orphaned `DidRegistryAPI` class exercising the old two-step, `ownPublicKey()`-gated bootstrap) and `src/lib/didContract.ts` are deleted; the 5 test files exercising that pre-unification architecture are removed rather than ported forward. See [Contract Directory Notes](#contract-directory-notes) for the now-archived `token_gating.compact`.
+
 ### v0.8.2
 
 - **Wallet token metadata clarified** — 1AM `Kind: unknown` / `Verified: No` are wallet metadata labels, while didMN validates action-credit colors through the active token-gating contract.
@@ -406,7 +464,7 @@ See git log for prior release notes.
 
 ## Tested Versions
 
-- Application version: `0.8.2`
+- Application version: `0.8.3`
 - Compact compiler: `v0.31.0` (`pragma language_version >= 0.23 && <= 0.23`)
 - Midnight JS SDK family: `4.0.2`
 - Midnight DApp connector API: `4.0.1`
@@ -469,73 +527,109 @@ behind a shared token. Set `DID_API_AUTH_TOKEN` (server) and a matching
 needs the matching frontend token to load both the backend and MCP log streams.
 This token is a coarse local-development gate, not production access control.
 
-## Controller Model (v2)
+## Coin-Gated Authorization (v0.9)
 
-As of v0.7, the registry contract uses Midnight's `ownPublicKey()` built-in for authorization. There is no owner secret, no witness, and no local vault backup required.
+As of v0.9, all access control on `did_registry.compact` — both the capability-token
+gating that previously lived in a separate `token_gating.compact` contract and the
+registry's own admin authorization — is unified into one coin-gated model on a single
+contract. There is no owner secret, no witness, and no local vault backup required
+anywhere in this design; see [On-chain](#on-chain) above for the full circuit-level
+description of `consumeToken()`, `consumeAdminToken()`, and `rotate_admin_tokens`.
 
-How it works:
+### Why shielded coins, not identity checks
 
-- the connected wallet's `ZswapCoinPublicKey` is the controller for any DID it registers
-- `self_register_did(subject_nonce, token_color, nullifier, commitment)` derives the DID key on-chain from `hash("didmn:did:v1", registry_salt, ownPublicKey(), subject_nonce)` after the token-gating contract records the matching TX1 spend
-- the same wallet can call `register_initial_admin()` once to claim the ADMIN role
-- `issue_did`, `grant_role`, `revoke_role`, `revoke_did` check `ownPublicKey()` against the stored role map at circuit execution time
-- no local secret is generated, stored, or needed for recovery
+A naive design would authorize privileged calls by comparing `ownPublicKey()` against
+a role recorded on-chain. That check is forgeable: `ownPublicKey()` is not
+cryptographically bound to a transaction's actual signer, so any caller could
+potentially claim a role under that model. This repository instead roots every
+privileged operation in possession-and-consumption of a real shielded coin: the caller
+must present a `ShieldedCoinInfo` of the expected color with an unused nullifier, which
+the circuit burns (or partially spends, returning change) as part of the same
+transaction that performs the state change. Forging that requires either holding a
+genuinely minted coin or breaking the underlying shielded-coin cryptography — a
+materially stronger guarantee than a self-reported public key.
 
-As of v0.8, privileged operations (`self_register_did`, `grant_role`, `revoke_role`, `revoke_did`) also require the caller to hold a valid shielded token from the token gating contract. See [Token Gating (v0.8)](#token-gating-v08) below.
+### Two token colors, one contract
 
-## Token Gating (v0.8)
+- **Capability tokens** — minted per-recipient by `mint_capability_tokens`, colored by
+  `persistentHash(subscription_key)`. Gate `gated_self_register_did` and
+  `request_update_did` via `consumeToken(coin)`, which checks `coin.color` against the
+  `valid_colors` set (many colors, one per subscription).
+- **The admin token** — a single dedicated color, `admin_token_color =
+  tokenType(pad(32, "didmn:admin-token:v1"), kernel.self())`, fixed for the life of the
+  contract and distinct by domain separator from every capability-token color. Gates
+  `mint_capability_tokens`, `issue_did`, `grant_role`, `revoke_role`, and `revoke_did`
+  via `consumeAdminToken(coin)`, which checks **exact equality** against
+  `admin_token_color` (one color, not a set).
 
-Starting in v0.8, access to privileged DID registry operations is gated by shielded tokens issued through a separate `token_gating.compact` contract. Tokens are private: the user proves possession without revealing their balance on-chain.
+Both helpers share the same `used_capability_nullifiers` replay-protection map,
+namespaced by `(coin.color, coin.nonce)` so an admin-coin nullifier can never collide
+with a capability-coin nullifier that happens to reuse the same nonce.
 
-### Why shielded tokens
+### Admin: granting capability tokens
 
-The `ownPublicKey()` check proves which wallet is calling. The token gating adds a credit layer on top: the admin controls who has access (by minting tokens) independently of wallet identity. Users can hold tokens, consume them privately, and the registry verifies a ZK proof of valid spend — without the indexer or any observer learning the token balance or history.
+The admin grants capability tokens to users via the admin panel:
 
-### Two-TX flow
+- the admin Action Credits panel calls `mint_capability_tokens` (itself admin-token
+  gated) to mint a new shielded capability allocation for a user
+- internal `grantSubscription` / `renewSubscription` helpers remain available for
+  service-layer grant and top-up flows
 
-Every privileged registry operation requires two transactions in sequence:
+Each capability-gated action on the registry consumes exactly 1 credit.
 
-1. **TX1 — `consume_token_for_action`** (token gating contract): spends one token unit, produces a ZK proof of valid spend with anti-replay nullifier. The commitment is a 5-element tuple that includes `nullifier_proxy = persistentHash(coin.nonce)`, binding the commitment to a specific spend.
-2. **TX2 — registry operation** (`self_register_did`, `grant_role`, `revoke_role`, or `revoke_did`): the DID registry verifies the proof from TX1 before executing the state change.
+### Anchor unit
 
-### Admin: granting tokens
-
-The admin grants tokens to users via the admin panel:
-
-- the admin Action Credits panel calls `mint_capability_tokens` to mint a new shielded allocation for a user
-- internal `grantSubscription` / `renewSubscription` helpers remain available for service-layer grant and top-up flows
-
-Each action on the registry consumes exactly 1 credit.
-
-### Anchor token
-
-The last token (when remaining value = 1) is the permanent ownership anchor. It cannot be spent. This ensures a user's wallet always retains a non-zero proof of their token allocation, which serves as the ownership binding for the DID.
+Every mint — capability tokens via `mint_capability_tokens`, and the admin token via
+the constructor or `rotate_admin_tokens` — follows the same `amount + 1` shape: 1
+permanent anchor unit plus `amount` spendable credits. The anchor cannot be spent
+(`consumeToken`/`consumeAdminToken` require `coin.value >= 2` and always return 1 unit
+as change), so a holder's wallet always retains a non-zero proof of their token
+allocation.
 
 ### DID-color binding
 
-When a user first interacts with the token gating contract, the token color (the contract's coin type identifier) is stored in the `did_token_color` map, keyed by the DID key. This binds the specific token contract deployment to that DID for its lifetime.
+When a wallet first self-registers a DID via `gated_self_register_did`, the capability
+token's color is stored in the `did_token_color` map, keyed by the DID key. Later
+calls to `request_update_did` for that DID must present a coin of that exact color —
+any other valid-but-unrelated capability-token color is rejected — binding the
+specific token allocation to that DID for its lifetime.
 
 ### Wallet token metadata
 
-Wallets may display newly minted didMN action-credit tokens with generic metadata such as `Kind: unknown` and `Verified: No`. Those labels are wallet-local token metadata labels, not DID registry authorization results.
+Wallets may display newly minted didMN action-credit or admin tokens with generic
+metadata such as `Kind: unknown` and `Verified: No`. Those are wallet-local token
+metadata labels, not DID registry authorization results.
 
-didMN verifies action-credit tokens in the app and contracts:
+didMN verifies tokens in the app and contract:
 
-- the token-gating contract records every minted token color in `valid_colors`
-- `consume_token_for_action` rejects any shielded coin whose color is not in `valid_colors`
-- the app classifies wallet balances as `Action credit` / `Verified` when the color is recognized by the active token-gating contract
-- raw balance includes the permanent anchor unit; spendable credits are `rawBalance - 1` when `rawBalance > 1`
+- the contract records every minted capability-token color in `valid_colors`, and the
+  single admin color in `admin_token_color`
+- `consumeToken`/`consumeAdminToken` reject any shielded coin whose color is not
+  recognized (set membership for capability tokens, exact match for the admin token)
+- the app classifies wallet balances as `Action credit` / `Verified` when the color is
+  recognized by the active registry contract
+- raw balance includes the permanent anchor unit; spendable credits are
+  `rawBalance - 1` when `rawBalance > 1`
 
 For example, a raw balance of `6` means `5` spendable registry actions plus `1` permanent anchor.
 
 ### Operations that require a token
 
-- `self_register_did`
+Capability-token gated (`consumeToken`):
+
+- `gated_self_register_did`
+- `request_update_did` (must be the DID's own linked color)
+
+Admin-token gated (`consumeAdminToken`):
+
+- `mint_capability_tokens`
+- `issue_did`
 - `grant_role`
 - `revoke_role`
 - `revoke_did`
 
-`register_initial_admin` and `issue_did` are not in this list (admin bootstrap and issuance remain role-gated only).
+There is no operation gated by role identity alone — every privileged circuit consumes
+a coin.
 
 Subject nonce:
 
@@ -592,9 +686,9 @@ Deploying from the admin panel (3-step flow):
 
 Important:
 
-- the contract is initialized in its constructor; there is no separate `initialize` step
-- authorization for `issue/update/revoke` is resolved on-chain from `ownPublicKey()` — no local secret or vault backup required
-- if you need a second admin, use `grant_role` while connected as the current admin
+- the contract is initialized in its constructor, which also mints the genesis admin token in the same deploy transaction; there is no separate `initialize` or bootstrap step
+- authorization for admin-tier operations (`mint_capability_tokens`, `issue_did`, `grant_role`, `revoke_role`, `revoke_did`) requires presenting and consuming the on-chain admin token (`consumeAdminToken()`); `update`/`revoke` of a DID by its own controller is resolved from `ownPublicKey()` plus the DID's linked capability-token color — no local secret or vault backup required for either path
+- if you need a second admin, use `rotate_admin_tokens` to mint a fresh admin token to the new holder, or `grant_role` for non-admin roles, while connected as the current admin
 
 Validate local Preprod prerequisites:
 
@@ -906,10 +1000,19 @@ This repository intentionally excludes local-only working notes, generated local
 
 The repository tracks Compact source files, not generated Compact build outputs. Generated managed runtimes, proving/verifier keys, ZKIR assets, and metadata snapshots are local products of `npm run compile-all` and are ignored by Git.
 
-- [contracts/token_gating.compact](/Users/alex/Documents/Developer/didMN/contracts/token_gating.compact)
-  Compact source for the shielded token gating contract (new in v0.8)
-- [contracts/did_registry.compact](/Users/alex/Documents/Developer/didMN/contracts/did_registry.compact)
-  Compact source for the DID registry
+- [contracts/did_registry.compact.template](./contracts/did_registry.compact.template)
+  Editable Compact source for the unified gated DID registry (v3.0.0). This is the
+  file to change — `contracts/did_registry.compact` is generated from it by
+  `scripts/compile-contract.js`, which substitutes `__CONTRACT_VERSION__` before
+  compiling.
+- [contracts/did_registry.compact](./contracts/did_registry.compact)
+  Generated Compact source actually compiled and deployed. Regenerated by
+  `npm run compile-contract` / `npm run compile-all` — do not hand-edit.
+- [contracts/archived/token_gating.compact](./contracts/archived/token_gating.compact)
+  **Archived, not active.** Pre-unification token gating contract, kept for
+  historical reference only. Its functionality was folded into
+  `did_registry.compact.template` as of v3.0.0; there is no standalone compile step
+  for it, and `npm run compile-all` does not touch it.
 
 Local compile outputs:
 

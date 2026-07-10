@@ -7,7 +7,7 @@ import type {
   UpdateDidInput,
 } from "../../types/did";
 import type { CapabilityProof, TokenBalance } from "../token/token-types.js";
-import { executeGatedAction, type TokenProviders } from "../token/token-witness.js";
+import type { TokenProviders } from "../token/token-witness.js";
 import {
   createWalletDidRequest,
   syncWalletIssuedDidStorage,
@@ -15,10 +15,7 @@ import {
   syncWalletUpdatedDidStorage,
 } from "./service-sync";
 import { createDidIdentifier } from "./commitments";
-import { DidRegistryAPI } from "./api";
 import type { UnifiedRegistryAPI } from "../registry/unified-registry-api";
-
-type AnyRegistryAPI = DidRegistryAPI | UnifiedRegistryAPI;
 import {
   getSavedCompileArtifact,
   mergeDidMetadata,
@@ -27,6 +24,8 @@ import {
 } from "./cache";
 import { MANAGED_CONTRACT_BASE_PATH, type CompileResult } from "./types";
 import { loadManagedContractModule } from "./runtime";
+
+type AnyRegistryAPI = UnifiedRegistryAPI;
 
 export async function compileDidRegistry(
   providers: AppProviders,
@@ -50,46 +49,6 @@ export async function compileDidRegistry(
 }
 
 
-export async function deployDidRegistry(
-  providers: AppProviders,
-  tokenContractAddress: string,
-): Promise<DeployResult> {
-  if (!tokenContractAddress) {
-    throw new Error("Token gating contract must be deployed first (Step 2)");
-  }
-
-  const compileData = getSavedCompileArtifact();
-  if (!compileData) {
-    throw new Error(
-      "Managed contract assets have not been validated yet. Load the compiled contract first.",
-    );
-  }
-
-  const api = await DidRegistryAPI.deploy(providers, { tokenContractAddress });
-  const deployed = api.getDeployMetadata();
-  const initializeTx = await api.registerInitialAdmin();
-  const result: DeployResult = {
-    contractAddress: api.contractAddress,
-    txHash: String(deployed?.deployTxData?.public?.txHash || ""),
-    txId: String(deployed?.deployTxData?.public?.txId || ""),
-    initializeTxHash: initializeTx.txHash,
-    initializeTxId: initializeTx.txId,
-    txStatus: "confirmed",
-    mode: "onchain",
-    deployedAt: new Date().toISOString(),
-    networkId: providers.networkId,
-    message:
-      "Contract deployed to Midnight and the connected wallet was registered as the initial registry admin.",
-  };
-
-  saveDeployment({
-    ...result,
-    networkId: providers.networkId,
-    deployedAt: result.deployedAt || new Date().toISOString(),
-  });
-  return result;
-}
-
 /**
  * Deploy the unified DID registry + token-gating contract (v3).
  * No separate token-gating contract needed — everything is in one contract.
@@ -107,19 +66,19 @@ export async function deployUnifiedRegistry(
   const { UnifiedRegistryAPI } = await import("../registry/unified-registry-api");
   const api = await UnifiedRegistryAPI.deploy(providers);
   const deployed = api.getDeployMetadata();
-  const initializeTx = await api.registerInitialAdmin();
+  // Feature 005-coin-gated-admin-access (ADR-003): the constructor mints the
+  // genesis admin token atomically in the same deploy tx — there is no more
+  // separate registerInitialAdmin() bootstrap step to call here.
   const result: DeployResult = {
     contractAddress: api.contractAddress,
     txHash: String(deployed?.public?.txHash || ""),
     txId: String(deployed?.public?.txId || ""),
-    initializeTxHash: initializeTx.txHash,
-    initializeTxId: initializeTx.txId,
     txStatus: "confirmed",
     mode: "onchain",
     deployedAt: new Date().toISOString(),
     networkId: providers.networkId,
     message:
-      "Unified DID registry deployed to Midnight. Token gating and DID operations share this single contract. The connected wallet is registered as the initial registry admin.",
+      "Unified DID registry deployed to Midnight. Token gating and DID operations share this single contract. The connected wallet's genesis admin token was minted atomically in the same deploy transaction.",
   };
 
   saveDeployment({
@@ -241,84 +200,6 @@ export async function issueDidWithSync(
  */
 export function getTokenBalance(tokenProviders: TokenProviders): TokenBalance {
   return tokenProviders.stateManager.getBalance();
-}
-
-/**
- * Orchestrated update: auto-consumes a capability token (TX1) then calls
- * request_update_did (TX2). Handles pending proof retry if TX2 fails (REQ-11).
- *
- * @param didKey - The 32-byte on-chain DID key obtained from a prior selfRegisterDid call.
- */
-export async function updateDidOrchestrated(
-  api: DidRegistryAPI,
-  tokenProviders: TokenProviders,
-  input: UpdateDidInput,
-  didKey: Uint8Array,
-): Promise<DidRecord> {
-  let record: DidRecord | undefined;
-
-  await executeGatedAction(
-    tokenProviders,
-    'request_update_did',
-    didKey,
-    async (p) => {
-      record = await api.updateDid({ ...input, capabilityProof: p });
-      return { txHash: record.txHash ?? '' };
-    },
-  );
-
-  const confirmedRecord = record!;
-  try {
-    await syncWalletUpdatedDidStorage({
-      did: confirmedRecord.did || "",
-      didDocument: JSON.parse(input.didDocument),
-      documentCommitment: confirmedRecord.documentHashHex,
-      proofCommitment: confirmedRecord.proofCommitmentHex,
-    });
-  } catch (error) {
-    throw new Error(
-      `DID update confirmed on-chain but persistence failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  return confirmedRecord;
-}
-
-/**
- * Orchestrated revoke: auto-consumes a capability token (TX1) then calls
- * revoke_did (TX2). Handles pending proof retry if TX2 fails (REQ-11).
- *
- * @param didKey - The 32-byte on-chain DID key obtained from a prior selfRegisterDid call.
- */
-export async function revokeDidOrchestrated(
-  api: DidRegistryAPI,
-  tokenProviders: TokenProviders,
-  input: RevokeDidInput,
-  didKey: Uint8Array,
-): Promise<DidRecord> {
-  let record: DidRecord | undefined;
-
-  await executeGatedAction(
-    tokenProviders,
-    'revoke_did',
-    didKey,
-    async (p) => {
-      record = await api.revokeDid({ ...input, capabilityProof: p });
-      return { txHash: record.txHash ?? '' };
-    },
-  );
-
-  const confirmedRecord = record!;
-  try {
-    await syncWalletRevokedDidStorage({
-      did: confirmedRecord.did || "",
-      revocationCommitment: confirmedRecord.revocationCommitmentHex,
-    });
-  } catch (error) {
-    throw new Error(
-      `DID revocation confirmed on-chain but persistence failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  return confirmedRecord;
 }
 
 export async function updateDidWithSync(
