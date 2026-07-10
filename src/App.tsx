@@ -1583,7 +1583,7 @@ export default function App() {
           <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
             <div className="space-y-2">
               <h1 className="text-3xl md:text-4xl font-bold">
-                {versionedAppTitle}
+                {appTitle}
               </h1>
               <p className="text-zinc-400 text-sm md:text-base">
                 Connect wallet, register a DID, and track registry state from one
@@ -1619,16 +1619,6 @@ export default function App() {
                 </p>
               </div>
             </div>
-            {status !== "connected" && (
-              <div className="flex justify-end">
-                <a
-                  href="/wallet-testing.html"
-                  className="inline-flex items-center rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-200 transition hover:border-zinc-500 hover:bg-zinc-800"
-                >
-                  Open Wallet Testing
-                </a>
-              </div>
-            )}
             <WalletPanel
               status={status}
               address={address}
@@ -2196,6 +2186,21 @@ export default function App() {
                     </p>
                   </div>
                 </div>
+                <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+                  <h3 className="text-sm font-semibold text-white">Debug Tools</h3>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    1AM Proof Debug — inspects the raw call/response sequence between this app and
+                    the connected 1AM wallet's proving bridge (proof requests, witness data,
+                    generated proofs). For diagnosing wallet-connector or proof-generation issues,
+                    not part of the normal DID workflow.
+                  </p>
+                  <a
+                    href="/wallet-testing.html"
+                    className="mt-3 inline-flex items-center rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs font-medium text-zinc-200 transition hover:border-zinc-500 hover:bg-zinc-800"
+                  >
+                    Open 1AM Proof Debug
+                  </a>
+                </div>
                 {logsError && (
                   <div className="rounded-lg border border-red-800 bg-red-950/40 p-3 text-sm text-red-200">
                     {logsError}
@@ -2279,6 +2284,9 @@ export default function App() {
             )}
           </div>
         )}
+        <footer className="mt-10 border-t border-zinc-800 pt-4 pb-6 text-center text-xs text-zinc-600">
+          {appTitle} v{APP_VERSION}
+        </footer>
         </main>
       </div>
     </div>
