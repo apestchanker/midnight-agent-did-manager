@@ -25,7 +25,7 @@ import { APP_VERSION } from "./lib/version";
 import {
   getSavedContractAddress,
   getSavedDeployment,
-} from "./lib/didContract";
+} from "./lib/did/cache";
 import { UnifiedRegistryAPI } from "./lib/registry";
 import {
   requestDidWithSync,

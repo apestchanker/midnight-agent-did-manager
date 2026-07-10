@@ -49,12 +49,49 @@ export ledger registry_nonce: Counter;
 
 export ledger did_token_color: Map<Bytes<32>, Bytes<32>>;
 
+// Color único del admin token (feature 005-coin-gated-admin-access, ADR-003).
+// Valor único, fijado una vez en el constructor, nunca reasignado.
+export ledger admin_token_color: Bytes<32>;
+
 // === CONSTRUCTOR ===
-// Solo salt — el contrato es su propio emisor de tokens (ADR-005). Sin token_contract.
-constructor(salt: Bytes<32>) {
+// Feature 005-coin-gated-admin-access (ADR-003): el constructor mintea el
+// admin token génesis atómicamente en la misma tx de deploy. Reemplaza el
+// bootstrap en dos pasos anterior (register_initial_admin, eliminado).
+constructor(
+  salt: Bytes<32>,
+  admin_recipient: ZswapCoinPublicKey,
+  admin_coin_nonce: Bytes<32>,
+  admin_supply: Uint<64>
+  ) {
   registry_salt = disclose(salt);
-  admin_registered = false;
   total_active_dids = 0 as Uint<64>;
+
+  // Fix post-quality-gate (task 2-4 review): admin_supply debe ser >= 1 antes
+  // de usarlo para calcular total/mintear (evita génesis con solo el 1
+  // anchor unit y ningún admin token utilizable).
+  assert(disclose(admin_supply) >= (1 as Uint<64>), "admin_supply must be at least 1");
+
+  const public_recipient = disclose(admin_recipient);
+  const public_nonce = disclose(admin_coin_nonce);
+  const public_supply = disclose(admin_supply);
+  const total = (public_supply + (1 as Uint<64>)) as Uint<64>;
+
+  admin_token_color = tokenType(adminDomainSep(), kernel.self());
+
+  mintShieldedToken(
+    adminDomainSep(),
+    total,
+    public_nonce,
+    left<ZswapCoinPublicKey, ContractAddress>(public_recipient)
+    );
+
+  // Bookkeeping de solo-lectura para deriveRegistryAccess() (no es fuente de
+  // autorización — consumeAdminToken() es el único gate para operaciones
+  // admin-tier a partir de esta feature).
+  admin_registered = true;
+  initial_admin = public_recipient;
+  role_by_key.insert(roleKey(public_recipient, adminRole()), true);
+  role_by_key.insert(roleKey(public_recipient, userRole()), true);
 }
 
 // === HELPERS PURE ===
@@ -72,23 +109,16 @@ pure circuit adminRole(): Bytes<32> {
   return pad(32, "ADMIN");
 }
 
-pure circuit issuerRole(): Bytes<32> {
-  return pad(32, "ISSUER");
+// Domain separator fijo, contract-wide, del admin token (feature
+// 005-coin-gated-admin-access, ADR-001/ADR-003). Distinto de los domain
+// separators per-subscription usados por mint_capability_tokens, así que
+// admin_token_color no puede colisionar con ningún color de capability token.
+pure circuit adminDomainSep(): Bytes<32> {
+  return pad(32, "didmn:admin-token:v1");
 }
 
 pure circuit userRole(): Bytes<32> {
   return pad(32, "USER");
-}
-
-pure circuit agentRole(): Bytes<32> {
-  return pad(32, "AGENT");
-}
-
-circuit assertRole(role: Bytes<32>): [] {
-  const caller = ownPublicKey();
-  const key = roleKey(caller, role);
-  assert(role_by_key.member(key), "Missing role");
-  assert(role_by_key.lookup(key), "Missing role");
 }
 
 // === HELPER INTERNO: consumeToken (ADR-003) ===
@@ -98,7 +128,11 @@ circuit assertRole(role: Bytes<32>): [] {
 circuit consumeToken(coin: ShieldedCoinInfo): [] {
   assert(valid_colors.member(disclose(coin.color)), "Invalid token color");
   assert(disclose(coin.value) >= (2 as Uint<128>), "Insufficient token value");
-  const nullifier_proxy = persistentHash<Bytes<32>>(disclose(coin.nonce));
+  // Nullifier namespaced por color (fix post-quality-gate) para que el mismo
+  // nonce en dos colores distintos no colisione en used_capability_nullifiers.
+  const nullifier_proxy = persistentHash<Vector<2, Bytes<32>>>(
+                             [disclose(coin.color), disclose(coin.nonce)]
+                             );
   assert(!used_capability_nullifiers.member(nullifier_proxy), "Token already used");
   receiveShielded(disclose(coin));
   const remaining = (disclose(coin.value) - (1 as Uint<128>)) as Uint<128>;
@@ -110,26 +144,43 @@ circuit consumeToken(coin: ShieldedCoinInfo): [] {
   used_capability_nullifiers.insert(nullifier_proxy, true);
 }
 
-// === NO GATEADO: bootstrap del admin ===
-export circuit register_initial_admin(): [] {
-  assert(!admin_registered, "Admin already registered");
-  const caller = ownPublicKey();
-  initial_admin = caller;
-  role_by_key.insert(roleKey(caller, adminRole()), true);
-  role_by_key.insert(roleKey(caller, userRole()), true);
-  admin_registered = true;
+// === HELPER INTERNO: consumeAdminToken (feature 005-coin-gated-admin-access, ADR-001) ===
+// Near-clone estructural de consumeToken(): misma mecánica de posesión y
+// consumo (single-use vía nullifier, custodia del coin, devuelve change),
+// pero valida igualdad EXACTA contra admin_token_color (un solo color) en
+// vez de membership en el set valid_colors (muchos colores de capability
+// token). Comparte el mismo used_capability_nullifiers map — no existe un
+// used_admin_nullifiers separado (ver ADR-001). No exportado, no pure.
+circuit consumeAdminToken(coin: ShieldedCoinInfo): [] {
+  assert(disclose(coin.color) == admin_token_color, "Invalid admin token color");
+  assert(disclose(coin.value) >= (2 as Uint<128>), "Insufficient admin token value");
+  // Nullifier namespaced por color (fix post-quality-gate), consistente con
+  // consumeToken() — mismo mapa compartido used_capability_nullifiers.
+  const nullifier_proxy = persistentHash<Vector<2, Bytes<32>>>(
+                             [disclose(coin.color), disclose(coin.nonce)]
+                             );
+  assert(!used_capability_nullifiers.member(nullifier_proxy), "Admin token already used");
+  receiveShielded(disclose(coin));
+  const remaining = (disclose(coin.value) - (1 as Uint<128>)) as Uint<128>;
+  sendImmediateShielded(
+    disclose(coin),
+    left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey()),
+    remaining
+    );
+  used_capability_nullifiers.insert(nullifier_proxy, true);
 }
 
-// === NO GATEADO: mint de tokens (solo Admin, ADR-008) ===
+// === GATEADO: mint de tokens (solo Admin, feature 005-coin-gated-admin-access, ADR-001/ADR-004) ===
 export circuit mint_capability_tokens(
+                 coin: ShieldedCoinInfo,
                  subscription_key: Bytes<32>,
                  recipient: ZswapCoinPublicKey,
                  coin_nonce: Bytes<32>,
                  amount: Uint<64>
                  ): [] {
-  // ADR-008: chequeo de rol ADMIN como PRIMERA instrucción (mejora de
-  // seguridad — el token_gating.compact original NO lo verificaba).
-  assertRole(adminRole());
+  // consumeAdminToken(coin) como PRIMERA instrucción — reemplaza
+  // assertRole(adminRole()) (forgeable vía ownPublicKey(), ver 005 ADR-001/ADR-004).
+  consumeAdminToken(coin);
 
   assert(amount >= (1 as Uint<64>), "Amount must be >= 1");
 
@@ -199,6 +250,13 @@ export circuit request_update_did(
   assert(did_controller.lookup(did_key) == controller, "Caller is not DID controller");
   assert(party_status.member(did_key), "DID not registered");
   assert(party_status.lookup(did_key) == (2 as Uint<8>), "DID is not active");
+  // DID-linked color check (feature 005-coin-gated-admin-access, ADR-005):
+  // el coin presentado debe ser específicamente el vinculado a ESTE DID, no
+  // cualquier color válido de valid_colors. No requiere member() guard previo:
+  // los tres asserts de arriba ya garantizan que did_token_color tiene una
+  // entrada para este did_key (se inserta unconditionally en
+  // gated_self_register_did en la misma tx que crea did_controller[did_key]).
+  assert(disclose(coin.color) == did_token_color.lookup(did_key), "Token does not match this DID");
 
   consumeToken(coin);
 
@@ -207,19 +265,15 @@ export circuit request_update_did(
   party_status.insert(did_key, 4 as Uint<8>);
 }
 
-// === NO GATEADO: emisión de DID (solo Issuer/Admin, ADR-009) ===
+// === GATEADO: emisión de DID (solo Admin, feature 005-coin-gated-admin-access, ADR-004 — ISSUER eliminado) ===
 export circuit issue_did(
+                 coin: ShieldedCoinInfo,
                  did_key: Bytes<32>,
                  did_commitment: Bytes<32>,
                  doc_commitment: Bytes<32>,
                  proof_commitment: Bytes<32>
                  ): [] {
-  const caller = ownPublicKey();
-  const admin_lookup_key = roleKey(caller, adminRole());
-  const issuer_lookup_key = roleKey(caller, issuerRole());
-  const is_admin = role_by_key.member(admin_lookup_key) && role_by_key.lookup(admin_lookup_key);
-  const is_issuer = role_by_key.member(issuer_lookup_key) && role_by_key.lookup(issuer_lookup_key);
-  assert(is_admin || is_issuer, "Missing role");
+  consumeAdminToken(coin);
 
   const public_did_key = disclose(did_key);
   const public_did_commitment = disclose(did_commitment);
@@ -236,36 +290,72 @@ export circuit issue_did(
   total_active_dids = (total_active_dids + (1 as Uint<64>)) as Uint<64>;
 }
 
-// === GATEADO: grant role (Admin + token, REQ-07) ===
+// === GATEADO: grant role (feature 005-coin-gated-admin-access, ADR-004) ===
 export circuit grant_role(coin: ShieldedCoinInfo, did_key: Bytes<32>, role: Bytes<32>): [] {
-  assertRole(adminRole());
+  consumeAdminToken(coin);
   const public_did_key = disclose(did_key);
   assert(did_controller.member(public_did_key), "DID not registered");
-  consumeToken(coin);
   const public_role = disclose(role);
   const target = did_controller.lookup(public_did_key);
   role_by_key.insert(roleKey(target, public_role), true);
 }
 
-// === GATEADO: revoke role (Admin + token, REQ-07) ===
+// === GATEADO: revoke role (feature 005-coin-gated-admin-access, ADR-004) ===
 export circuit revoke_role(coin: ShieldedCoinInfo, did_key: Bytes<32>, role: Bytes<32>): [] {
-  assertRole(adminRole());
+  consumeAdminToken(coin);
   const public_did_key = disclose(did_key);
   assert(did_controller.member(public_did_key), "DID not registered");
-  consumeToken(coin);
   const public_role = disclose(role);
   const target = did_controller.lookup(public_did_key);
   role_by_key.insert(roleKey(target, public_role), false);
 }
 
-// === GATEADO: revoke DID (Admin + token, REQ-06) ===
+// === GATEADO: rotación atómica del admin token (feature 005-coin-gated-admin-access, ADR-003, REQ-04) ===
+// Burn-then-remint en una única tx: el holder actual quema su admin token
+// (o el de otro holder que le fue delegado) y mintea uno nuevo para el
+// recipient elegido (puede ser el mismo caller u otra parte). El burn y el
+// mint ocurren en el mismo cuerpo de circuit, por lo que se ejecutan como
+// una unidad atómica de la transacción — no existe estado intermedio donde
+// el token viejo esté quemado pero ninguno nuevo exista todavía.
+export circuit rotate_admin_tokens(
+                 coin: ShieldedCoinInfo,
+                 new_recipient: ZswapCoinPublicKey,
+                 new_coin_nonce: Bytes<32>,
+                 new_supply: Uint<64>
+                 ): [] {
+  assert(disclose(coin.color) == admin_token_color, "Invalid admin token color");
+  assert(disclose(coin.value) >= (1 as Uint<128>), "Insufficient admin token value");
+  // Fix de diseño (post-tasks 3/8, 2026-07-09): new_supply debe ser >= 1 antes
+  // de usarlo para calcular total/mintear — mismo patrón que admin_supply en
+  // el constructor. Evita un remint degenerado con solo el 1 anchor unit y
+  // ningún admin credit utilizable tras la rotación.
+  assert(disclose(new_supply) >= (1 as Uint<64>), "new_supply must be at least 1");
+  // Nullifier namespaced por color (fix post-quality-gate), consistente con
+  // consumeToken()/consumeAdminToken() — mismo mapa compartido.
+  const nullifier_proxy = persistentHash<Vector<2, Bytes<32>>>(
+                             [disclose(coin.color), disclose(coin.nonce)]
+                             );
+  assert(!used_capability_nullifiers.member(nullifier_proxy), "Admin token already used");
+  receiveShielded(disclose(coin));
+  used_capability_nullifiers.insert(nullifier_proxy, true);
+
+  const total = (disclose(new_supply) + (1 as Uint<64>)) as Uint<64>;
+
+  mintShieldedToken(
+    adminDomainSep(),
+    total,
+    disclose(new_coin_nonce),
+    left<ZswapCoinPublicKey, ContractAddress>(disclose(new_recipient))
+    );
+}
+
+// === GATEADO: revoke DID (feature 005-coin-gated-admin-access, ADR-004) ===
 export circuit revoke_did(coin: ShieldedCoinInfo, did_key: Bytes<32>): [] {
-  assertRole(adminRole());
+  consumeAdminToken(coin);
   const public_did_key = disclose(did_key);
   assert(did_controller.member(public_did_key), "DID not registered");
   assert(party_status.member(public_did_key), "DID not registered");
   assert(party_status.lookup(public_did_key) == (2 as Uint<8>), "DID is not active");
-  consumeToken(coin);
   party_status.insert(public_did_key, 3 as Uint<8>);
   if (total_active_dids > (0 as Uint<64>)) {
     total_active_dids = (total_active_dids - (1 as Uint<64>)) as Uint<64>;
