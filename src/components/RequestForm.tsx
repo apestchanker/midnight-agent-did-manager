@@ -120,6 +120,11 @@ export function RequestForm({
         </CardDescription>
       </CardHeader>
       <CardContent>
+        {!contractAddress.trim() && (
+          <div className="mb-4 rounded-md border border-amber-800 bg-amber-950/40 px-3 py-2 text-xs font-medium text-amber-400">
+            No registry contract is deployed or selected yet. Deploy or paste a contract address before requesting a DID.
+          </div>
+        )}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <Label className="text-zinc-300">Human Wallet</Label>
@@ -226,7 +231,7 @@ export function RequestForm({
 
           <Button
             type="submit"
-            disabled={loading || !agentAddress.trim()}
+            disabled={loading || !agentAddress.trim() || !contractAddress.trim()}
             className="w-full bg-emerald-600 hover:bg-emerald-500 text-white"
           >
             {loading ? "Submitting..." : "Request DID"}
