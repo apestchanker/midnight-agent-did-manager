@@ -73,8 +73,6 @@ export async function deployUnifiedRegistry(
     contractAddress: api.contractAddress,
     txHash: String(deployed?.public?.txHash || ""),
     txId: String(deployed?.public?.txId || ""),
-    initializeTxHash: String(deployed?.public?.txHash || ""),
-    initializeTxId: String(deployed?.public?.txId || ""),
     txStatus: "confirmed",
     mode: "onchain",
     deployedAt: new Date().toISOString(),
