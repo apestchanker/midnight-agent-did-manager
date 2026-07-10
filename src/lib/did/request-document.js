@@ -10,7 +10,7 @@ export function buildDidDocumentForRequest(request) {
     : [];
   const didDocument = {
     id: request.requested_did || "",
-    controller: request.subject_wallet_address,
+    controller: request.controller || request.subject_wallet_address,
     agentName:
       typeof payload.agentName === "string" && payload.agentName.trim()
         ? payload.agentName.trim()

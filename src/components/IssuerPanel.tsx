@@ -10,6 +10,10 @@ import {
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import type { DidRecord } from "../types/did";
+import {
+  buildIssuerDidDocument,
+  computeIssuerDefaultController,
+} from "../lib/did/issuer-panel-state";
 
 interface IssuerPanelProps {
   contractAddress: string;
@@ -17,9 +21,11 @@ interface IssuerPanelProps {
   requestId?: string;
   targetAgentId: string;
   targetSubjectWalletAddress?: string;
+  walletAddress: string;
+  targetController?: string;
   record: DidRecord | null;
-  onIssue: (payload: { requestId?: string; agentId: string; subjectWalletAddress?: string; didDocument: string }) => Promise<DidRecord>;
-  onUpdate: (payload: { agentId: string; subjectWalletAddress?: string; didDocument: string }) => Promise<DidRecord>;
+  onIssue: (payload: { requestId?: string; agentId: string; subjectWalletAddress?: string; controller?: string; didDocument: string }) => Promise<DidRecord>;
+  onUpdate: (payload: { agentId: string; subjectWalletAddress?: string; controller?: string; didDocument: string }) => Promise<DidRecord>;
   onRevoke: (payload: { agentId: string; subjectWalletAddress?: string; reason: string }) => Promise<DidRecord>;
 }
 
@@ -29,47 +35,39 @@ export function IssuerPanel({
   requestId,
   targetAgentId,
   targetSubjectWalletAddress,
+  walletAddress,
+  targetController,
   record,
   onIssue,
   onUpdate,
   onRevoke,
 }: IssuerPanelProps) {
   const [agentId, setAgentId] = useState(targetAgentId);
+  const [controller, setController] = useState(
+    computeIssuerDefaultController(record?.controller, targetController, walletAddress),
+  );
   const [didDocument, setDidDocument] = useState("");
   const [revocationReason, setRevocationReason] = useState("");
   const [loadingAction, setLoadingAction] = useState<"issue" | "update" | "revoke" | "">("");
   const [message, setMessage] = useState("");
 
   const buildDefaultDidDocument = useCallback((): string => {
-    if (record?.didDocument?.trim()) {
-      return record.didDocument;
-    }
-    return JSON.stringify(
-        {
-          id:
-          record?.did ||
-          `did:midnight:${networkId}:${contractAddress || "contract"}:${agentId || "agent"}`,
-        controller: targetSubjectWalletAddress || record?.subjectWalletAddress || "",
-        agentName: record?.agentName || null,
-        organization:
-          record?.organizationDisclosure === "disclosed"
-            ? record?.organization || "Matrix Labs"
-            : "undisclosed",
-        service: [
-          {
-            id: "#agent-endpoint",
-            type: "AgentEndpoint",
-            serviceEndpoint: "https://agent.example.com",
-          },
-        ],
-        proofCommitment: record?.proofCommitmentHex || null,
-      },
-      null,
-      2,
-    );
+    return buildIssuerDidDocument({
+      existingDidDocument: record?.didDocument,
+      did: record?.did,
+      networkId,
+      contractAddress,
+      agentId,
+      controller,
+      agentName: record?.agentName,
+      organization: record?.organization,
+      organizationDisclosure: record?.organizationDisclosure,
+      proofCommitmentHex: record?.proofCommitmentHex,
+    });
   }, [
     agentId,
     contractAddress,
+    controller,
     networkId,
     record?.agentName,
     record?.did,
@@ -77,13 +75,17 @@ export function IssuerPanel({
     record?.organization,
     record?.organizationDisclosure,
     record?.proofCommitmentHex,
-    record?.subjectWalletAddress,
-    targetSubjectWalletAddress,
   ]);
 
   useEffect(() => {
     setAgentId(targetAgentId);
   }, [targetAgentId]);
+
+  useEffect(() => {
+    setController(
+      computeIssuerDefaultController(record?.controller, targetController, walletAddress),
+    );
+  }, [record?.controller, targetController, walletAddress]);
 
   useEffect(() => {
     setDidDocument(buildDefaultDidDocument());
@@ -106,7 +108,7 @@ export function IssuerPanel({
 
     setLoadingAction("issue");
     try {
-      const updated = await onIssue({ requestId, agentId, subjectWalletAddress: targetSubjectWalletAddress, didDocument });
+      const updated = await onIssue({ requestId, agentId, subjectWalletAddress: targetSubjectWalletAddress, controller, didDocument });
       setMessage(`DID issued on-chain. Tx: ${updated.txHash || "confirmed"}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Failed to issue DID");
@@ -132,7 +134,7 @@ export function IssuerPanel({
 
     setLoadingAction("update");
     try {
-      const updated = await onUpdate({ agentId, subjectWalletAddress: targetSubjectWalletAddress, didDocument });
+      const updated = await onUpdate({ agentId, subjectWalletAddress: targetSubjectWalletAddress, controller, didDocument });
       setMessage(`DID updated on-chain. Tx: ${updated.txHash || "confirmed"}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Failed to update DID");
@@ -192,10 +194,27 @@ export function IssuerPanel({
           />
         </div>
 
+        <div>
+          <Label htmlFor="issuerController" className="text-zinc-300">
+            Controller (DID Document metadata)
+          </Label>
+          <Input
+            id="issuerController"
+            value={controller}
+            onChange={(e) => setController(e.target.value)}
+            placeholder="mn_addr_preprod1..."
+            className="mt-1 bg-zinc-950 border-zinc-800 text-white"
+          />
+          <p className="mt-1 text-xs text-zinc-500">
+            Informative DID Document metadata — does not grant authorization. See README § DID Document `controller` Field.
+          </p>
+        </div>
+
         <div className="rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-400">
-          Issuance and revocation are authorized by on-chain roles bound to the
-          connected wallet controller. The registry no longer uses a browser
-          owner secret.
+          Issuance and revocation are authorized on-chain by possession and
+          consumption of the correct capability token — not by this
+          `controller` field, and not by a browser owner secret. See README §
+          DID Document `controller` Field.
         </div>
 
         <div>

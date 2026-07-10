@@ -599,6 +599,7 @@ export default function App() {
       walletAddress,
       agentId: selectedAgentId,
       subjectWalletAddress: selectedAgentAddress || didRecord.subjectWalletAddress || walletAddress,
+      controller: didRecord.controller || walletAddress,
       contractAddress,
       networkId: providers?.networkId || "preprod",
       organizationName: didRecord.organization,
@@ -664,6 +665,7 @@ export default function App() {
     organization?: string;
     organizationDisclosure: "disclosed" | "undisclosed";
     didDocument: string;
+    controller?: string;
   }) {
     if (!registryApi) throw new Error("Wallet providers not ready");
     if (!walletAddress) throw new Error("Connect wallet first");
@@ -674,6 +676,7 @@ export default function App() {
       requesterWalletAddress: walletAddress,
       agentId,
       subjectWalletAddress: payload.subjectWalletAddress,
+      controller: payload.controller,
       agentName: payload.agentName,
       organization: payload.organization,
       organizationDisclosure: payload.organizationDisclosure,
@@ -722,6 +725,7 @@ export default function App() {
     contractAddress?: string;
     agentId: string;
     subjectWalletAddress?: string;
+    controller?: string;
     didDocument: string;
   }) {
     if (!providers) throw new Error("Wallet providers not ready");
@@ -768,6 +772,7 @@ export default function App() {
       contractAddress: activeRegistryApi.contractAddress,
       agentId: payload.agentId,
       subjectWalletAddress: payload.subjectWalletAddress,
+      controller: payload.controller,
       didDocument: payload.didDocument,
       didKeyHex,
     });
@@ -842,6 +847,7 @@ export default function App() {
   async function handleUpdateDid(payload: {
     agentId: string;
     subjectWalletAddress?: string;
+    controller?: string;
     didDocument: string;
   }) {
     if (!registryApi) throw new Error("Wallet providers not ready");
@@ -852,6 +858,7 @@ export default function App() {
       contractAddress: registryApi.contractAddress,
       agentId: payload.agentId,
       subjectWalletAddress: payload.subjectWalletAddress,
+      controller: payload.controller,
       didDocument: payload.didDocument,
     });
 
@@ -2048,6 +2055,8 @@ export default function App() {
                     requestId={selectedAdminDid.id}
                     targetAgentId={selectedAdminDid.agent_id || ""}
                     targetSubjectWalletAddress={selectedAdminDid.subject_wallet_address}
+                    walletAddress={walletAddress}
+                    targetController={selectedAdminDid.controller ?? undefined}
                     record={didRecord}
                     onIssue={handleIssueDid}
                     onUpdate={handleUpdateDid}

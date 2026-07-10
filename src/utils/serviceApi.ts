@@ -232,6 +232,7 @@ export function createWalletDidRequest(payload: {
   requestedDid?: string;
   onchainRequestTxId?: string;
   onchainRequestTxHash?: string;
+  controller?: string;
 }) {
   return requestJson("/api/wallet/did-requests", {
     method: "POST",
@@ -290,6 +291,7 @@ export function getPersistedDidState(payload: {
     subject_wallet_address: string;
     subject_agent_key: string;
     issuer_wallet_address: string;
+    controller?: string | null;
     status: string;
     organization_name?: string | null;
     organization_disclosure: "disclosed" | "undisclosed";
@@ -485,6 +487,7 @@ export function syncWalletIssuedDid(payload: {
   proofCommitment?: string;
   onchainIssueTxId?: string;
   onchainIssueTxHash?: string;
+  controller?: string;
 }) {
   return requestJson("/api/wallet/dids/issue-sync", {
     method: "POST",
@@ -500,6 +503,7 @@ export function syncWalletUpdatedDid(payload: {
   didDocument: Record<string, unknown>;
   documentCommitment?: string;
   proofCommitment?: string;
+  controller?: string;
 }) {
   return requestJson("/api/wallet/dids/update-sync", {
     method: "POST",

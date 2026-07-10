@@ -33,6 +33,7 @@ export interface RequestDidInput {
   organization?: string;
   organizationDisclosure: "disclosed" | "undisclosed";
   didDocument: string;
+  controller?: string;
 }
 
 export interface IssueDidInput {
@@ -41,6 +42,7 @@ export interface IssueDidInput {
   subjectWalletAddress?: string;
   didDocument: string;
   didKeyHex?: string;
+  controller?: string;
 }
 
 export interface UpdateDidInput {
@@ -48,6 +50,7 @@ export interface UpdateDidInput {
   agentId: string;
   subjectWalletAddress?: string;
   didDocument: string;
+  controller?: string;
 }
 
 export interface RevokeDidInput {
@@ -61,6 +64,7 @@ export interface RevokeDidInput {
 export interface DidRecord {
   agentId: string;
   subjectWalletAddress?: string;
+  controller?: string;
   agentName?: string;
   organization?: string;
   organizationDisclosure?: "disclosed" | "undisclosed";

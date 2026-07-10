@@ -842,6 +842,7 @@ async function createOrUpdateDidRequestRecord(client, input) {
   const subjectWallet = normalizeWallet(
     input.subjectWalletAddress || input.requesterWalletAddress,
   );
+  const controller = input.controller || requesterWallet;
   const agentId = normalizeAgentId(input.agentId || generateAgentId());
   const requestedDid =
     input.requestedDid ||
@@ -885,6 +886,7 @@ async function createOrUpdateDidRequestRecord(client, input) {
                onchain_request_tx_id = $9,
                onchain_request_tx_hash = $10,
                agent_id = $11,
+               controller = coalesce($12, controller),
                updated_at = now()
            where id = $1
            returning *`,
@@ -900,6 +902,7 @@ async function createOrUpdateDidRequestRecord(client, input) {
             input.onchainRequestTxId || null,
             input.onchainRequestTxHash || null,
             agentId,
+            input.controller || null,
           ],
         )
       ).rows[0];
@@ -927,10 +930,11 @@ async function createOrUpdateDidRequestRecord(client, input) {
        onchain_request_tx_id,
        onchain_request_tx_hash,
        human_approved_at,
-       human_approved_by_wallet
+       human_approved_by_wallet,
+       controller
      )
      values (
-       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, $14, $15, $16, $17, $18
+       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, $14, $15, $16, $17, $18, $19
      )
      returning *`,
     [
@@ -952,6 +956,7 @@ async function createOrUpdateDidRequestRecord(client, input) {
       input.onchainRequestTxHash || null,
       input.humanApprovedAt || null,
       input.humanApprovedByWallet || null,
+      controller,
     ],
   );
 
@@ -973,6 +978,7 @@ async function upsertIssuedDidRecord(client, input) {
   const customer = await ensureCustomerForWallet(client, subjectWallet);
   const agentId = normalizeAgentId(input.agentId);
   const agentKey = deriveAgentKey(agentId);
+  const controller = input.controller || null;
   const organizationName =
     input.organizationDisclosure === "disclosed"
       ? input.organizationName || null
@@ -1012,11 +1018,12 @@ async function upsertIssuedDidRecord(client, input) {
            proof_commitment,
            did_document,
            claims_manifest,
+           controller,
            issued_at,
            updated_at
          )
          values (
-           $1, $2, $3, $4, $5, $6, $7, $8, 'active', $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb, now(), now()
+           $1, $2, $3, $4, $5, $6, $7, $8, 'active', $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb, $16, now(), now()
          )
          returning *`,
         [
@@ -1035,6 +1042,7 @@ async function upsertIssuedDidRecord(client, input) {
           input.proofCommitment || null,
           didDocument,
           claimsManifest,
+          controller,
         ],
       )
     ).rows[0];
@@ -1071,6 +1079,7 @@ async function upsertIssuedDidRecord(client, input) {
              did_document = $8::jsonb,
              claims_manifest = $9::jsonb,
              agent_id = $10,
+             controller = coalesce($11, controller),
              updated_at = now(),
              revoked_at = null
          where id = $1
@@ -1086,6 +1095,7 @@ async function upsertIssuedDidRecord(client, input) {
           didDocument,
           claimsManifest,
           agentId,
+          controller,
         ],
       )
     ).rows[0];
@@ -1126,6 +1136,9 @@ export async function createDidRequest(input) {
         // Today the subject wallet is the MCP owner's approved wallet. Later the
         // human approval step can expose this as an editable owned-address choice.
         subjectWalletAddress: holderWallet,
+        // controller is server-derived for the MCP flow — the caller never
+        // supplies it (see platformGeneratedDidFields in server/mcp-core.js).
+        controller: holderWallet,
         requestStatus: "pending_human_approval",
         organizationName: input.organizationName,
         organizationDisclosure: input.organizationDisclosure,
@@ -1165,6 +1178,7 @@ export async function createWalletDidRequest(input) {
         requesterWalletAddress: walletAddress,
         agentId: input.agentId,
         subjectWalletAddress: input.subjectWalletAddress || walletAddress,
+        controller: input.controller,
         requestStatus: "pending_admin_review",
         organizationName: input.organizationName,
         organizationDisclosure: input.organizationDisclosure,
@@ -1382,6 +1396,7 @@ export async function issueApprovedDidRequest(input) {
       organizationName: request.organization_name,
       organizationDisclosure: request.organization_disclosure,
       requestPayload: request.request_payload,
+      controller: request.controller,
       didDocument,
       didCommitment: input.didCommitment || didCommitment,
       documentCommitment: input.documentCommitment || documentCommitment,
@@ -1466,6 +1481,7 @@ export async function syncWalletIssuedDid(input) {
       organizationName: input.organizationName,
       organizationDisclosure: input.organizationDisclosure,
       requestPayload: input.requestPayload,
+      controller: input.controller,
       didDocument: input.didDocument,
       didCommitment: input.didCommitment,
       documentCommitment: input.documentCommitment,
@@ -1505,6 +1521,7 @@ export async function syncWalletUpdatedDid(input) {
        set did_document = $2::jsonb,
            document_commitment = $3,
            proof_commitment = $4,
+           controller = coalesce($5, controller),
            updated_at = now()
        where did = $1
        returning *`,
@@ -1513,6 +1530,7 @@ export async function syncWalletUpdatedDid(input) {
         JSON.stringify(input.didDocument || {}),
         input.documentCommitment || null,
         input.proofCommitment || null,
+        input.controller || null,
       ],
     );
     if (!result.rows[0]) {
@@ -1658,6 +1676,7 @@ export async function listRegistryDidRecords(contractAddress) {
        dr.proof_commitment,
        dr.revocation_commitment,
        dr.did_document,
+       dr.controller,
        dr.created_at,
        dr.issued_at,
        dr.updated_at,
@@ -1695,7 +1714,7 @@ export async function resolveDid(did) {
         "https://www.w3.org/ns/did/v1",
       ],
       id: record.did,
-      controller: record.did,
+      controller: record.controller || record.did,
       service: [
         {
           id: `${record.did}#resolver`,
