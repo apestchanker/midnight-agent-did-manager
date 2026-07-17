@@ -7,8 +7,14 @@ const DATABASE_URL =
   process.env.DATABASE_URL ||
   "postgresql://postgres:postgres@127.0.0.1:5432/agent_registry_db";
 
+// Supabase (and most managed Postgres hosts) require TLS; local/LAN Postgres
+// instances used in dev typically don't have it configured at all, so only
+// request SSL when the connection target is a managed host that needs it.
+const requiresSsl = /supabase\.(co|com)/.test(DATABASE_URL);
+
 export const pool = new Pool({
   connectionString: DATABASE_URL,
+  ssl: requiresSsl ? { rejectUnauthorized: false } : false,
 });
 
 export async function query(text, params = []) {

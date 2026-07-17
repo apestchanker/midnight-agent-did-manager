@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.8.5
+
+### Changed
+- Bumped the application version to `0.8.5` while keeping the contract version at `3.0.0`.
+  Reason/impact: marks the first release intended for a public online deployment (Render + Supabase), as opposed to local-only development.
+
+### Fixed
+- The API and MCP HTTP servers now honor the platform-assigned `PORT` environment variable ahead of the local-only `DID_API_PORT`/`DID_MCP_PORT` defaults.
+  Reason/impact: PaaS hosts like Render assign a dynamic port at runtime; without this, the deployed service would never receive traffic.
+- The Postgres connection pool now enables TLS automatically when the connection target is a managed Supabase host, while leaving local/LAN Postgres connections untouched.
+  Reason/impact: Supabase requires TLS on external connections; forcing it unconditionally would have broken existing local development against a non-TLS Postgres instance.
+- The issuer signing keypair can now be pinned via the `DID_ISSUER_JWK_JSON` environment variable instead of always being generated on first use and persisted to the local filesystem.
+  Reason/impact: hosts with an ephemeral filesystem (e.g. Render's free tier) wipe local files on every redeploy or spin-down/spin-up cycle, which would silently rotate the issuer key and invalidate previously issued credentials.
+
 ## v0.5.2
 
 ### Changed

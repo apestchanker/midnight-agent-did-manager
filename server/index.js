@@ -65,7 +65,7 @@ import {
   setCorsHeaders,
 } from "./utils.js";
 
-const PORT = Number(process.env.DID_API_PORT || 8787);
+const PORT = Number(process.env.PORT || process.env.DID_API_PORT || 8787);
 const HOST = (process.env.DID_API_HOST || "127.0.0.1").trim();
 const DB_INIT_ATTEMPTS = Number(process.env.DID_API_DB_INIT_ATTEMPTS || 12);
 const DB_INIT_RETRY_MS = Number(process.env.DID_API_DB_INIT_RETRY_MS || 2500);

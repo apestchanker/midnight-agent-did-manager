@@ -13,6 +13,24 @@ function ensureDir(path) {
 }
 
 export async function getIssuerKeys() {
+  // On hosts with an ephemeral filesystem (e.g. Render free tier), the local
+  // JWK file is wiped on every redeploy/spin-down, which would rotate the
+  // issuer signing key and invalidate previously issued credentials. Allow
+  // pinning a stable keypair via env var for those deployments.
+  const pinned = process.env.DID_ISSUER_JWK_JSON;
+  if (pinned) {
+    const raw = JSON.parse(pinned);
+    const privateKey = await importJWK(raw.privateJwk, "EdDSA");
+    const publicKey = await importJWK(raw.publicJwk, "EdDSA");
+    return {
+      issuerId: raw.issuerId || ISSUER_ID,
+      publicJwk: raw.publicJwk,
+      privateJwk: raw.privateJwk,
+      publicKey,
+      privateKey,
+    };
+  }
+
   ensureDir(KEYS_PATH);
 
   if (!existsSync(KEYS_PATH)) {

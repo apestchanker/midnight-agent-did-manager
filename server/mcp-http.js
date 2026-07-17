@@ -6,7 +6,7 @@ import { getRecentLogs, installProcessLogger } from "./log-store.js";
 import { createDidMcpApp } from "./mcp-app.js";
 import { readJson, RequestBodyError, sendJson, sendText, setCorsHeaders } from "./utils.js";
 
-const PORT = Number(process.env.DID_MCP_PORT || 8788);
+const PORT = Number(process.env.PORT || process.env.DID_MCP_PORT || 8788);
 const HOST = (process.env.DID_MCP_HOST || "127.0.0.1").trim();
 const app = createDidMcpApp();
 
