@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.8.7
+
+### Changed
+- Bumped `@midnight-ntwrk/ledger-v8` (`^8.0.3` → `^8.1.0`) and the eight `@midnight-ntwrk/midnight-js-*` packages (`^4.0.2`/`^4.0.4` → `^4.1.1`) to match the official Midnight support matrix after Mainnet aligned with Preprod's infrastructure versions (Node 1.0.0, Ledger 8.1.0, Indexer 4.3.3, Proof Server 8.1.0).
+  Reason/impact: keeps the client SDK compatible with the infrastructure this project targets (preprod, and mainnet going forward). Verified non-breaking for this codebase against the official release notes before applying.
+- Added `@midnight-ntwrk/midnight-js-types` as an explicit direct dependency (`^4.1.1`); it was previously an undeclared transitive dependency resolving inconsistently across the lockfile.
+- Updated the local `start-proof-server` script's Docker tag to `midnightntwrk/proof-server:8.1.0` (confirmed published before applying).
+
+### Fixed
+- Fixed a stale-deployment display bug: the "last deployed contract" cache (`src/lib/did/cache.ts`, and the `LAST_CONTRACT_KEY`/`LAST_AGENT_KEY`/`LAST_AGENT_SELECTION_KEY` keys in `src/App.tsx`) was not scoped by network, so a contract deployed while connected to one network (e.g. preview) would incorrectly be shown as already deployed after switching networks (e.g. preprod).
+  Reason/impact: found during the pre-deploy manual smoke test — surfaced as a misleading "Deployment confirmed on-chain" banner for a contract that was never deployed on the currently-connected network.
+- Split the DID registry's genesis admin-token bootstrap from one atomic constructor call into two separate transactions (deploy, then `register_initial_admin()`), per an explicit, documented project-owner decision (see `sdd/wip/005-coin-gated-admin-access/decision-log-2026-07-21.md` and the extensive inline comments in `contracts/did_registry.compact.template`). The root of trust remains coin-based, not `ownPublicKey()`-based — only the atomicity with deployment was removed, after it was found to interfere with wallet-side transaction balancing during live preprod testing. The project owner explicitly accepted the resulting bootstrap race-condition risk.
+
 ## v0.8.6
 
 ### Changed

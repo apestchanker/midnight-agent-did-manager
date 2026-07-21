@@ -173,6 +173,7 @@ function makeCallTx(overrides: Record<string, unknown> = {}) {
     revoke_role: vi.fn(async () => MOCK_TX),
     revoke_did: vi.fn(async () => MOCK_TX),
     rotate_admin_tokens: vi.fn(async () => MOCK_TX),
+    register_initial_admin: vi.fn(async () => MOCK_TX),
     ...overrides,
   };
 }
@@ -291,16 +292,26 @@ describe("REQ-01 fetchVerifiedTokenColors", () => {
   });
 });
 
-// ─── REQ-01: no client-side bootstrap method exists ──────────────────────────
-// register_initial_admin() was removed from the contract (Task 2) and
-// registerInitialAdmin() from UnifiedRegistryAPI (Task 7) — the genesis admin
-// token is now minted atomically in the constructor. Locks in REQ-01
-// Scenario 02 ("no separate bootstrap operation exists") at the client layer.
+// ─── REQ-01: client-side bootstrap is a separate, second transaction ────────
+// Owner decision, 2026-07-21 (see did_registry.compact.template constructor
+// comment — do not revert without the project owner's explicit sign-off):
+// deploy() no longer mints the genesis admin token. registerInitialAdmin()
+// is a second, explicit call the client makes right after deploy succeeds
+// (see deployUnifiedRegistry() in src/lib/did/app-api.ts).
 
-describe("REQ-01/S02 — no separate bootstrap operation exists (client layer)", () => {
-  it("UnifiedRegistryAPI no longer exposes registerInitialAdmin()", async () => {
-    const api = await buildAPI();
-    expect((api as unknown as Record<string, unknown>).registerInitialAdmin).toBeUndefined();
+describe("REQ-01/S02 — registerInitialAdmin() is a separate client-layer call", () => {
+  it("calls register_initial_admin with the wallet's own shielded coin public key, a fresh nonce, and supply=5n", async () => {
+    const callTx = makeCallTx();
+    const api = await buildAPI(undefined, callTx);
+
+    const result = await api.registerInitialAdmin();
+
+    expect(callTx.register_initial_admin).toHaveBeenCalledOnce();
+    const [recipient, coinNonce, supply] = (callTx.register_initial_admin as Mock).mock.calls[0];
+    expect(toHex(recipient.bytes)).toBe("cc".repeat(32)); // providers.shieldedCoinPublicKeyHex
+    expect(coinNonce).toHaveLength(32);
+    expect(supply).toBe(5n);
+    expect(result.txHash).toBe(MOCK_TX.public.txHash);
   });
 });
 
@@ -741,7 +752,20 @@ function seedBytes(seed: number): Uint8Array {
   return b;
 }
 
-/** Deploys a fresh contract instance with the given (or default) constructor args. */
+/**
+ * Deploys a fresh contract and bootstraps its admin.
+ *
+ * Owner decision, 2026-07-21 (see the extensive comment on the Compact
+ * constructor in did_registry.compact.template — do not revert without the
+ * project owner's explicit sign-off): deploy and the genesis admin token
+ * mint are now two separate transactions, not one atomic constructor call.
+ * This helper chains them (deploy via `initialState()`, then
+ * `register_initial_admin` via `run()`) so the rest of this file's tests —
+ * which assume "deploy() gives me a contract with an admin coin ready to
+ * use" — keep working unchanged. Tests that care about the two-step
+ * boundary itself use `deployOnly()` / call `register_initial_admin`
+ * directly instead (see the "REQ-01" describe block below).
+ */
 function deploy(
   opts: {
     adminSupply?: bigint;
@@ -750,15 +774,32 @@ function deploy(
     salt?: Uint8Array;
   } = {},
 ) {
-  const contract = new Contract({});
-  const ctorCtx = rt.createConstructorContext({}, COIN_PK);
-  const init = contract.initialState(
-    ctorCtx,
-    opts.salt ?? seedBytes(9001),
+  const { contract, init: deployedInit } = deployOnly(opts.salt);
+  const registered = run(
+    contract,
+    deployedInit.currentContractState.data,
+    "register_initial_admin",
     opts.recipient ?? COIN_PK,
     opts.coinNonce ?? seedBytes(9002),
     opts.adminSupply ?? 10n,
   );
+  const init = {
+    currentContractState: { data: registered.state },
+    currentZswapLocalState: {
+      outputs: registered.outputs.map((coinInfo) => ({
+        coinInfo,
+        recipient: { is_left: true },
+      })),
+    },
+  };
+  return { contract, init };
+}
+
+/** Deploys a fresh contract WITHOUT bootstrapping an admin (constructor-only step). */
+function deployOnly(salt?: Uint8Array) {
+  const contract = new Contract({});
+  const ctorCtx = rt.createConstructorContext({}, COIN_PK);
+  const init = contract.initialState(ctorCtx, salt ?? seedBytes(9001));
   return { contract, init };
 }
 
@@ -820,30 +861,62 @@ function run(
 
 // ─── REQ-01: genesis admin token minted at deploy ────────────────────────────
 
-describe("REQ-01 — genesis admin token minted atomically at deploy", () => {
-  it("S01: mints admin_supply + 1 units directly to admin_recipient and sets admin_token_color", () => {
-    const { init } = deploy({ adminSupply: 7n });
+// Owner decision, 2026-07-21 (see did_registry.compact.template constructor
+// comment — do not revert without the project owner's explicit sign-off):
+// deploy and the genesis admin token mint are two separate transactions.
+// The constructor only deploys; register_initial_admin() is a second,
+// ungated call that mints the admin coin. This is an intentional,
+// owner-accepted race-condition risk (first caller after deploy wins) — the
+// mechanism is still coin-based, not ownPublicKey()-based.
+describe("REQ-01 — genesis admin token minted via a second, separate transaction", () => {
+  it("S01: deploy alone does not mint an admin token or set admin_registered", () => {
+    const { init } = deployOnly();
     const l = ledgerFn(init.currentContractState.data);
 
+    expect(l.admin_registered).toBe(false);
     expect(l.admin_token_color).toBeInstanceOf(Uint8Array);
     expect(l.admin_token_color).toHaveLength(32);
-    expect(l.admin_registered).toBe(true);
-
-    const genesisCoin = init.currentZswapLocalState.outputs[0].coinInfo;
-    expect(genesisCoin.value).toBe(8n); // 7 + 1 anchor
-    expect(toHex(genesisCoin.color)).toBe(toHex(l.admin_token_color));
+    // No spendable output exists yet — the constructor mints nothing.
+    expect(init.currentZswapLocalState.outputs.filter((o) => o.recipient.is_left)).toHaveLength(0);
   });
 
-  it("rejects admin_supply = 0 at deploy (no degenerate zero-credit genesis)", () => {
+  it("S02: register_initial_admin mints admin_supply + 1 units to admin_recipient, matching the color fixed at deploy", () => {
+    const { contract, init: deployedInit } = deployOnly();
+    const preRegColor = ledgerFn(deployedInit.currentContractState.data).admin_token_color;
+
+    const registered = run(
+      contract,
+      deployedInit.currentContractState.data,
+      "register_initial_admin",
+      COIN_PK,
+      seedBytes(9002),
+      7n,
+    );
+    const l = ledgerFn(registered.state);
+
+    expect(l.admin_registered).toBe(true);
+    expect(toHex(l.admin_token_color)).toBe(toHex(preRegColor)); // fixed at deploy, unchanged
+    expect(registered.outputs[0].value).toBe(8n); // 7 + 1 anchor
+    expect(toHex(registered.outputs[0].color)).toBe(toHex(l.admin_token_color));
+  });
+
+  it("rejects admin_supply = 0 at registration (no degenerate zero-credit genesis)", () => {
     expect(() => deploy({ adminSupply: 0n })).toThrow("admin_supply must be at least 1");
   });
 
-  it("S02: no register_initial_admin circuit exists on the compiled contract", () => {
-    const { contract } = deploy();
-    expect((contract.circuits as Record<string, unknown>).register_initial_admin).toBeUndefined();
-    expect(
-      (contract.impureCircuits as Record<string, unknown>).register_initial_admin,
-    ).toBeUndefined();
+  it("S03: register_initial_admin can only succeed once — a second call after admin_registered is already true fails", () => {
+    const { contract, init } = deploy({ adminSupply: 5n });
+
+    expect(() =>
+      run(
+        contract,
+        init.currentContractState.data,
+        "register_initial_admin",
+        COIN_PK,
+        seedBytes(9003),
+        3n,
+      ),
+    ).toThrow("Admin already registered");
   });
 });
 

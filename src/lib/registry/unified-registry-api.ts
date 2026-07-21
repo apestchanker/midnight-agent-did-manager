@@ -112,16 +112,15 @@ export class UnifiedRegistryAPI {
     const compiledContract = await UnifiedRegistryAPI._makeCompiled(module);
 
     const salt = randomBytes(32);
-    // Feature 005-coin-gated-admin-access (ADR-003): the constructor mints the
-    // genesis admin token atomically in the same deploy tx. admin_recipient is
-    // derived from the deploying wallet's own shielded coin public key;
-    // admin_supply mirrors mint_capability_tokens's existing default batch size.
-    const adminRecipientBytes = fromHex(providers.shieldedCoinPublicKeyHex);
-    const adminCoinNonce = crypto.getRandomValues(new Uint8Array(32));
-    const adminSupply = 5n;
+    // Owner decision, 2026-07-21 (see the extensive comment on the Compact
+    // constructor in did_registry.compact.template — do not revert without
+    // the project owner's explicit sign-off): the constructor no longer
+    // mints the genesis admin token atomically. It only deploys. The admin
+    // token mint now happens in a second, separate transaction via
+    // registerInitialAdmin() below, called right after deploy succeeds.
     const deployed = await deployContract(providers as never, {
       compiledContract: compiledContract as never,
-      args: [salt, { bytes: adminRecipientBytes }, adminCoinNonce, adminSupply],
+      args: [salt],
     });
 
     const contractAddress = extractContractAddress(deployed);
@@ -140,6 +139,27 @@ export class UnifiedRegistryAPI {
     // The SDK stores deploy TX metadata at contract.deployTxData (same pattern as DidRegistryAPI)
     api.deployTxData = (deployed as unknown as { deployTxData?: { public?: { txHash?: string; txId?: string } } }).deployTxData ?? null;
     return api;
+  }
+
+  // Owner decision, 2026-07-21: second step of the two-transaction bootstrap
+  // (see the constructor comment in did_registry.compact.template). Mints
+  // the genesis admin token to the deploying wallet's own shielded coin
+  // public key. Ungated — first caller to invoke this after deploy becomes
+  // admin, a race-condition risk the project owner explicitly accepted
+  // (mitigation: discard and redeploy if lost). Still coin-based, not
+  // ownPublicKey()-based — only the atomicity with deploy was removed.
+  async registerInitialAdmin(): Promise<{ txHash: string; txId?: string }> {
+    const adminRecipientBytes = fromHex(this.providers.shieldedCoinPublicKeyHex);
+    const adminCoinNonce = crypto.getRandomValues(new Uint8Array(32));
+    const adminSupply = 5n;
+    const tx = await (
+      this.contract.callTx.register_initial_admin as (
+        recipient: { bytes: Uint8Array },
+        coinNonce: Uint8Array,
+        supply: bigint,
+      ) => Promise<TxResult>
+    )({ bytes: adminRecipientBytes }, adminCoinNonce, adminSupply);
+    return { txHash: String(tx.public.txHash || ""), txId: tx.public.txId };
   }
 
   getDeployMetadata(): { public?: { txHash?: string; txId?: string } } | null {

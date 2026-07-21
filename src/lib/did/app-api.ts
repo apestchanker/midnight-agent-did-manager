@@ -66,9 +66,18 @@ export async function deployUnifiedRegistry(
   const { UnifiedRegistryAPI } = await import("../registry/unified-registry-api");
   const api = await UnifiedRegistryAPI.deploy(providers);
   const deployed = api.getDeployMetadata();
-  // Feature 005-coin-gated-admin-access (ADR-003): the constructor mints the
-  // genesis admin token atomically in the same deploy tx — there is no more
-  // separate registerInitialAdmin() bootstrap step to call here.
+
+  // Owner decision, 2026-07-21 (see the extensive comment on the Compact
+  // constructor in did_registry.compact.template — do not revert without the
+  // project owner's explicit sign-off): deploy and the genesis admin token
+  // mint are now two separate transactions instead of one atomic tx. This is
+  // the second step, run immediately after deploy succeeds. If it fails, the
+  // contract is deployed but has no admin yet — surface the deploy tx info
+  // regardless and let the error propagate so the caller knows to retry
+  // registerInitialAdmin() (or redeploy, per the owner's accepted
+  // race-condition mitigation) rather than silently reporting full success.
+  const adminRegistration = await api.registerInitialAdmin();
+
   const result: DeployResult = {
     contractAddress: api.contractAddress,
     txHash: String(deployed?.public?.txHash || ""),
@@ -77,8 +86,10 @@ export async function deployUnifiedRegistry(
     mode: "onchain",
     deployedAt: new Date().toISOString(),
     networkId: providers.networkId,
+    initializeTxHash: adminRegistration.txHash,
+    initializeTxId: adminRegistration.txId,
     message:
-      "Unified DID registry deployed to Midnight. Token gating and DID operations share this single contract. The connected wallet's genesis admin token was minted atomically in the same deploy transaction.",
+      "Unified DID registry deployed to Midnight. Token gating and DID operations share this single contract. The genesis admin token was minted in a second, separate transaction right after deploy (owner-approved two-step bootstrap, 2026-07-21).",
   };
 
   saveDeployment({

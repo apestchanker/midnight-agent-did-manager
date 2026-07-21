@@ -4,6 +4,48 @@
   "runtime-version": "0.16.0",
   "circuits": [
     {
+      "name": "register_initial_admin",
+      "pure": false,
+      "proof": true,
+      "arguments": [
+        {
+          "name": "admin_recipient",
+          "type": {
+            "type-name": "Struct",
+            "name": "ZswapCoinPublicKey",
+            "elements": [
+              {
+                "name": "bytes",
+                "type": {
+                  "type-name": "Bytes",
+                  "length": 32
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin_coin_nonce",
+          "type": {
+            "type-name": "Bytes",
+            "length": 32
+          }
+        },
+        {
+          "name": "admin_supply",
+          "type": {
+            "type-name": "Uint",
+            "maxval": 18446744073709551615
+          }
+        }
+      ],
+      "result-type": {
+        "type-name": "Tuple",
+        "types": [
+        ]
+      }
+    },
+    {
       "name": "mint_capability_tokens",
       "pure": false,
       "proof": true,

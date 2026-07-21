@@ -4,6 +4,10 @@ export type Witnesses<PS> = {
 }
 
 export type ImpureCircuits<PS> = {
+  register_initial_admin(context: __compactRuntime.CircuitContext<PS>,
+                         admin_recipient_0: { bytes: Uint8Array },
+                         admin_coin_nonce_0: Uint8Array,
+                         admin_supply_0: bigint): __compactRuntime.CircuitResults<PS, []>;
   mint_capability_tokens(context: __compactRuntime.CircuitContext<PS>,
                          coin_0: { nonce: Uint8Array,
                                    color: Uint8Array,
@@ -55,6 +59,10 @@ export type ImpureCircuits<PS> = {
 }
 
 export type ProvableCircuits<PS> = {
+  register_initial_admin(context: __compactRuntime.CircuitContext<PS>,
+                         admin_recipient_0: { bytes: Uint8Array },
+                         admin_coin_nonce_0: Uint8Array,
+                         admin_supply_0: bigint): __compactRuntime.CircuitResults<PS, []>;
   mint_capability_tokens(context: __compactRuntime.CircuitContext<PS>,
                          coin_0: { nonce: Uint8Array,
                                    color: Uint8Array,
@@ -110,6 +118,10 @@ export type PureCircuits = {
 }
 
 export type Circuits<PS> = {
+  register_initial_admin(context: __compactRuntime.CircuitContext<PS>,
+                         admin_recipient_0: { bytes: Uint8Array },
+                         admin_coin_nonce_0: Uint8Array,
+                         admin_supply_0: bigint): __compactRuntime.CircuitResults<PS, []>;
   mint_capability_tokens(context: __compactRuntime.CircuitContext<PS>,
                          coin_0: { nonce: Uint8Array,
                                    color: Uint8Array,
@@ -258,10 +270,7 @@ export declare class Contract<PS = any, W extends Witnesses<PS> = Witnesses<PS>>
   provableCircuits: ProvableCircuits<PS>;
   constructor(witnesses: W);
   initialState(context: __compactRuntime.ConstructorContext<PS>,
-               salt_0: Uint8Array,
-               admin_recipient_0: { bytes: Uint8Array },
-               admin_coin_nonce_0: Uint8Array,
-               admin_supply_0: bigint): __compactRuntime.ConstructorResult<PS>;
+               salt_0: Uint8Array): __compactRuntime.ConstructorResult<PS>;
 }
 
 export declare function ledger(state: __compactRuntime.StateValue | __compactRuntime.ChargedState): Ledger;

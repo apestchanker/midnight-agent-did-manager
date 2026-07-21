@@ -104,11 +104,11 @@ Outputs:
 Deploying from the admin panel (2-step flow):
 
 1. **Step 1: Load Artifacts** — validates the compiled `did_registry` and `native-ownership-proof` artifacts.
-2. **Step 2: Deploy Unified Registry** — deploys `did_registry.compact` as a single atomic transaction. The constructor takes `(salt, admin_recipient, admin_coin_nonce, admin_supply)` and mints the genesis admin token in the same transaction (see below). Step 2 is gated — unavailable until step 1 is complete.
+2. **Step 2: Deploy Unified Registry** — deploys `did_registry.compact`, then immediately mints the genesis admin token in a **second, separate transaction** (`register_initial_admin()`). This is a deliberate, project-owner-approved design decision (2026-07-21) — see [Constructor](#constructor) below and `sdd/wip/005-coin-gated-admin-access/decision-log-2026-07-21.md` for the full rationale, including the accepted bootstrap race-condition tradeoff. Step 2 is gated — unavailable until step 1 is complete.
 
 Important:
 
-- the contract is initialized in its constructor, which also mints the genesis admin token in the same deploy transaction; there is no separate `initialize` or bootstrap step
+- the contract's constructor only deploys — it fixes `admin_token_color` and does not mint anything. The genesis admin token is minted by a second, explicit `register_initial_admin()` call immediately after deploy (two separate transactions, not one atomic step; see [Constructor](#constructor))
 - authorization for admin-tier operations (`mint_capability_tokens`, `issue_did`, `grant_role`, `revoke_role`, `revoke_did`) requires presenting and consuming the on-chain admin token (`consumeAdminToken()`); `update`/`revoke` of a DID by its own controller is resolved from `ownPublicKey()` plus the DID's linked capability-token color — no local secret or vault backup required for either path
 - if you need a second admin, use `rotate_admin_tokens` to mint a fresh admin token to the new holder, or `grant_role` for non-admin roles, while connected as the current admin
 
@@ -391,22 +391,46 @@ internal `consumeToken`/`consumeAdminToken` helper. The pre-unification
 Constructor:
 
 ```
-constructor(
-  salt: Bytes<32>,
+constructor(salt: Bytes<32>)
+```
+
+> **Owner decision, 2026-07-21 — do not revert without the project owner's
+> explicit sign-off.** Deployment and the genesis admin token mint are two
+> **separate** transactions, not one atomic step. This is the second time
+> this tradeoff has been decided explicitly, in different directions, by the
+> project owner — see the extensive inline comments on the constructor and
+> on `register_initial_admin` in `contracts/did_registry.compact.template`,
+> and `sdd/wip/005-coin-gated-admin-access/decision-log-2026-07-21.md` for
+> the full history and rationale. The atomic version (bundling deploy + mint
+> in the constructor, as this README described in earlier revisions) was
+> found to interfere with wallet-side transaction balancing during live
+> preprod testing.
+
+The constructor only deploys. It sets `registry_salt`, `total_active_dids = 0`,
+`admin_registered = false`, and fixes `admin_token_color` (deterministic, from
+`kernel.self()`) — a single, contract-wide `Bytes<32>` ledger value, set once and
+never reassigned. It mints nothing.
+
+```
+export circuit register_initial_admin(
   admin_recipient: ZswapCoinPublicKey,
   admin_coin_nonce: Bytes<32>,
   admin_supply: Uint<64>
-)
+): []
 ```
 
-Deployment is a single atomic transaction. The constructor mints the genesis admin
-token — `admin_supply + 1` shielded units (1 permanent anchor + `admin_supply`
-spendable credits) — directly to `admin_recipient` in the same transaction that
-deploys the contract, and records the resulting color as `admin_token_color` (a
-single, contract-wide `Bytes<32>` ledger value, set once and never reassigned). There
-is no separate post-deploy bootstrap step: the previous `register_initial_admin()`
-circuit, which let the first caller self-claim the ADMIN role via a bare
-`ownPublicKey()` comparison with no proof of possession, has been removed entirely.
+A second, ordinary export circuit — called immediately after deploy by the app's
+own deploy flow (`UnifiedRegistryAPI.deploy()` followed by
+`registerInitialAdmin()`, see `src/lib/registry/unified-registry-api.ts`). Mints the
+genesis admin token — `admin_supply + 1` shielded units (1 permanent anchor +
+`admin_supply` spendable credits) — directly to `admin_recipient`, using the color
+fixed at deploy. Guarded only by `assert(!admin_registered, ...)`: callable exactly
+once. **Still coin-based, not `ownPublicKey()`-based** — this mints a real
+`ShieldedCoinInfo`, exactly like the constructor did before this change; only the
+atomicity with deploy was removed. The project owner explicitly accepted the
+resulting bootstrap race-condition risk (whoever calls this first, after deploy,
+becomes admin) — mitigation: discard and redeploy if the race is lost. This
+contract has no production value yet (preprod/testnet).
 
 Authorization model — coin-gated, not identity-gated:
 
@@ -612,6 +636,12 @@ See:
 
 ## Release Notes
 
+### v0.8.7
+
+- **Genesis admin token bootstrap split into two transactions** — owner decision, 2026-07-21, not a regression. The constructor now only deploys the contract; a new, second `register_initial_admin()` call (a separate transaction, run immediately after deploy by the app's own deploy flow) mints the genesis admin token. The atomic version shipped in v0.8.3 (below) was found to interfere with wallet-side transaction balancing during live preprod testing. Still coin-based, not `ownPublicKey()`-based — see [Constructor](#constructor) and `sdd/wip/005-coin-gated-admin-access/decision-log-2026-07-21.md` for the full rationale, including the accepted bootstrap race-condition tradeoff.
+- **Midnight SDK aligned to the official support matrix** — `@midnight-ntwrk/ledger-v8` (`^8.0.3` → `^8.1.0`) and the eight `@midnight-ntwrk/midnight-js-*` packages (→ `^4.1.1`), matching Mainnet's alignment with Preprod's infrastructure versions (Node 1.0.0, Ledger 8.1.0, Indexer 4.3.3, Proof Server 8.1.0). `@midnight-ntwrk/midnight-js-types` added as an explicit direct dependency (previously an undeclared transitive dependency).
+- **Fixed a stale cross-network deployment display bug** — the "last deployed contract" cache was not scoped by network, so a contract deployed on one network (e.g. preview) could incorrectly appear as already deployed after switching networks (e.g. preprod).
+
 ### v0.8.3
 
 - **Security fix: forgeable `ownPublicKey()` admin authorization replaced with coin-gated authorization** — every admin-tier operation on `did_registry.compact` (`mint_capability_tokens`, `issue_did`, `grant_role`, `revoke_role`, `revoke_did`) used to be authorized by comparing `ownPublicKey()` against a role recorded in `role_by_key`. `ownPublicKey()` is not cryptographically bound to a transaction's actual signer, so that check was forgeable — any caller could potentially claim admin authority under the previous model. It is replaced by `consumeAdminToken()`, rooting authorization in possession-and-consumption of a real shielded coin of a single dedicated `admin_token_color`, the same mechanism already used for capability-token gating. No long-lived secret, witness, or local vault is introduced.
@@ -657,24 +687,25 @@ See git log for prior release notes.
 
 ## Tested Versions
 
-- Application version: `0.8.3`
+- Application version: `0.8.7`
 - Compact compiler: `v0.31.0` (`pragma language_version >= 0.23 && <= 0.23`)
-- Midnight JS SDK family: `4.0.2`
+- Midnight JS SDK family: `4.1.1`
 - Midnight DApp connector API: `4.0.1`
-- Midnight ledger / proof stack: `8.0.3`
+- Midnight ledger / proof stack: `8.1.0`
 - 1AM Wallet: Beta channel from the official installer at `https://1am.xyz/install-beta`
 
 For the Midnight SDK, the main package set currently pinned in this repository is:
 
-- `@midnight-ntwrk/midnight-js-contracts@^4.0.2`
-- `@midnight-ntwrk/midnight-js-fetch-zk-config-provider@^4.0.2`
-- `@midnight-ntwrk/midnight-js-http-client-proof-provider@^4.0.2`
-- `@midnight-ntwrk/midnight-js-indexer-public-data-provider@^4.0.2`
-- `@midnight-ntwrk/midnight-js-level-private-state-provider@^4.0.2`
-- `@midnight-ntwrk/midnight-js-network-id@^4.0.2`
-- `@midnight-ntwrk/midnight-js-node-zk-config-provider@^4.0.2`
-- `@midnight-ntwrk/midnight-js-utils@^4.0.2`
-- `@midnight-ntwrk/ledger-v8@^8.0.3`
+- `@midnight-ntwrk/midnight-js-contracts@^4.1.1`
+- `@midnight-ntwrk/midnight-js-fetch-zk-config-provider@^4.1.1`
+- `@midnight-ntwrk/midnight-js-http-client-proof-provider@^4.1.1`
+- `@midnight-ntwrk/midnight-js-indexer-public-data-provider@^4.1.1`
+- `@midnight-ntwrk/midnight-js-level-private-state-provider@^4.1.1`
+- `@midnight-ntwrk/midnight-js-network-id@^4.1.1`
+- `@midnight-ntwrk/midnight-js-types@^4.1.1`
+- `@midnight-ntwrk/midnight-js-node-zk-config-provider@^4.1.1`
+- `@midnight-ntwrk/midnight-js-utils@^4.1.1`
+- `@midnight-ntwrk/ledger-v8@^8.1.0`
 
 Note:
 

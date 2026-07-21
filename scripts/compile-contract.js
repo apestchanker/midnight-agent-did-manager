@@ -30,6 +30,7 @@ const compiledMetaPath = resolve(compiledMetaDir, "did_registry.compiled.json");
 const CONTRACT_METADATA_VERSION = "0.2.0";
 const CIRCUITS = [
   "contract_version",
+  "register_initial_admin",
   "mint_capability_tokens",
   "gated_self_register_did",
   "request_update_did",

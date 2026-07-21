@@ -129,9 +129,17 @@ export default function App() {
   // isConfiguredAdminWallet below). If this env var is ever needed again for
   // unrelated display purposes, read it independently at that call site —
   // do not wire it back into the admin-gating decision.
-  const LAST_CONTRACT_KEY = "did-registry:last-contract-address:v1";
-  const LAST_AGENT_KEY = "did-registry:last-agent-address:v1";
-  const LAST_AGENT_SELECTION_KEY = "did-registry:last-agent-selection:v1";
+  // Scoped by network: an address cached while connected to one network
+  // (e.g. preview) must never be restored/displayed after switching to
+  // another network (e.g. preprod) — see getSavedDeployment's networkId
+  // filter in src/lib/did/cache.ts for the equivalent fix on the deploy
+  // cache. currentNetworkId falls back to "unknown" only if VITE_NETWORK_ID
+  // is unset, which keeps the keys deterministic without ever colliding
+  // with a real network's cached values.
+  const currentNetworkId = (rawEnv.VITE_NETWORK_ID || "unknown").trim();
+  const LAST_CONTRACT_KEY = `did-registry:last-contract-address:v1:${currentNetworkId}`;
+  const LAST_AGENT_KEY = `did-registry:last-agent-address:v1:${currentNetworkId}`;
+  const LAST_AGENT_SELECTION_KEY = `did-registry:last-agent-selection:v1:${currentNetworkId}`;
   const STORAGE_MODE_KEY = "did-registry:storage-mode:v1";
   const [storageMode, setStorageMode] = useState<StorageMode>(() => {
     if (typeof window === "undefined") return "app_local";
@@ -404,8 +412,8 @@ export default function App() {
   }, [activeMainSection, status, viewMode]);
 
   useEffect(() => {
-    const savedAddress = getSavedContractAddress();
-    const savedDeployment = getSavedDeployment();
+    const savedAddress = getSavedContractAddress(currentNetworkId);
+    const savedDeployment = getSavedDeployment(currentNetworkId);
     const viewedContract =
       typeof window !== "undefined"
         ? window.localStorage.getItem(LAST_CONTRACT_KEY)
@@ -422,6 +430,11 @@ export default function App() {
     if (viewedAgent) setSelectedAgentAddress(viewedAgent);
     if (viewedAgentSelection) setSelectedAgentKey(viewedAgentSelection);
     if (savedDeployment) setDeployResult(savedDeployment);
+    // Intentionally run once on mount only: LAST_*_KEY/currentNetworkId are
+    // derived from the build-time VITE_NETWORK_ID and never change during
+    // the component's lifetime, so re-running this on their "change" would
+    // be a no-op.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -492,21 +505,21 @@ export default function App() {
     if (contractAddress.trim()) {
       window.localStorage.setItem(LAST_CONTRACT_KEY, contractAddress.trim());
     }
-  }, [contractAddress]);
+  }, [contractAddress, LAST_CONTRACT_KEY]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (selectedAgentAddress.trim()) {
       window.localStorage.setItem(LAST_AGENT_KEY, selectedAgentAddress.trim());
     }
-  }, [selectedAgentAddress]);
+  }, [selectedAgentAddress, LAST_AGENT_KEY]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (selectedAgentKey.trim()) {
       window.localStorage.setItem(LAST_AGENT_SELECTION_KEY, selectedAgentKey.trim());
     }
-  }, [selectedAgentKey]);
+  }, [selectedAgentKey, LAST_AGENT_SELECTION_KEY]);
 
   useEffect(() => {
     if (viewMode !== "user") return;

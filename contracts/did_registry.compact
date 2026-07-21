@@ -54,44 +54,42 @@ export ledger did_token_color: Map<Bytes<32>, Bytes<32>>;
 export ledger admin_token_color: Bytes<32>;
 
 // === CONSTRUCTOR ===
-// Feature 005-coin-gated-admin-access (ADR-003): el constructor mintea el
-// admin token génesis atómicamente en la misma tx de deploy. Reemplaza el
-// bootstrap en dos pasos anterior (register_initial_admin, eliminado).
-constructor(
-  salt: Bytes<32>,
-  admin_recipient: ZswapCoinPublicKey,
-  admin_coin_nonce: Bytes<32>,
-  admin_supply: Uint<64>
-  ) {
+// ---------------------------------------------------------------------------
+// DECISIÓN EXPLÍCITA DEL OWNER DEL PROYECTO — 2026-07-21. NO REVERTIR SIN SU
+// AUTORIZACIÓN EXPLÍCITA. Ver también sdd/wip/005-coin-gated-admin-access/.
+//
+// Esta es la segunda vez que cambia la forma del bootstrap de admin:
+//   1. Pre-005: register_initial_admin() en dos pasos, gateado por
+//      ownPublicKey() — forgeable (ver commit 3cd3f20), vulnerabilidad real.
+//   2. 005-coin-gated-admin-access: se cerró la vulnerabilidad Y se hizo
+//      atómico (deploy + mint del admin token en la MISMA tx del constructor).
+//   3. ESTE CAMBIO (2026-07-21): el owner pidió deshacer solo la ATOMICIDAD,
+//      no el mecanismo. Evaluó el riesgo de carrera (otro caller podría
+//      llamar register_initial_admin() antes que el deployer legítimo) y lo
+//      ACEPTÓ conscientemente — su mitigación explícita es descartar el
+//      contrato y redeployar uno nuevo si eso llegara a pasar. Este contrato
+//      no tiene valor real en producción todavía (preprod/testnet).
+//
+// El root of trust SIGUE SIENDO coin-based, no ownPublicKey() — eso NO
+// cambió. register_initial_admin() (más abajo) sigue minteando un
+// ShieldedCoinInfo real, igual que hacía este constructor antes. Solo se
+// separó en dos transacciones porque la construcción atómica del
+// ZswapOutput del admin token en la misma tx que el deploy del contrato
+// estaba interfiriendo con el balanceo de la wallet (ver debugging de deploy
+// del 2026-07-21).
+//
+// Si en el futuro alguien considera "arreglar" esto volviendo a la versión
+// atómica: ya se evaluó y se rechazó explícitamente. Consultar con el owner
+// del proyecto primero.
+// ---------------------------------------------------------------------------
+constructor(salt: Bytes<32>) {
   registry_salt = disclose(salt);
   total_active_dids = 0 as Uint<64>;
-
-  // Fix post-quality-gate (task 2-4 review): admin_supply debe ser >= 1 antes
-  // de usarlo para calcular total/mintear (evita génesis con solo el 1
-  // anchor unit y ningún admin token utilizable).
-  assert(disclose(admin_supply) >= (1 as Uint<64>), "admin_supply must be at least 1");
-
-  const public_recipient = disclose(admin_recipient);
-  const public_nonce = disclose(admin_coin_nonce);
-  const public_supply = disclose(admin_supply);
-  const total = (public_supply + (1 as Uint<64>)) as Uint<64>;
-
+  admin_registered = false;
+  // Fijado acá (determinista, depende solo de kernel.self()) para que
+  // register_initial_admin() — llamado después, en una tx separada — mintee
+  // exactamente este color y no otro.
   admin_token_color = tokenType(adminDomainSep(), kernel.self());
-
-  mintShieldedToken(
-    adminDomainSep(),
-    total,
-    public_nonce,
-    left<ZswapCoinPublicKey, ContractAddress>(public_recipient)
-    );
-
-  // Bookkeeping de solo-lectura para deriveRegistryAccess() (no es fuente de
-  // autorización — consumeAdminToken() es el único gate para operaciones
-  // admin-tier a partir de esta feature).
-  admin_registered = true;
-  initial_admin = public_recipient;
-  role_by_key.insert(roleKey(public_recipient, adminRole()), true);
-  role_by_key.insert(roleKey(public_recipient, userRole()), true);
 }
 
 // === HELPERS PURE ===
@@ -119,6 +117,43 @@ pure circuit adminDomainSep(): Bytes<32> {
 
 pure circuit userRole(): Bytes<32> {
   return pad(32, "USER");
+}
+
+// === NO GATEADO: bootstrap del admin — segunda TX, separada del deploy ===
+// DECISIÓN EXPLÍCITA DEL OWNER (2026-07-21) — ver el comentario extenso en
+// el constructor antes de tocar esto. Sin gating adicional a propósito:
+// quien llame primero se queda con el admin token génesis (riesgo de carrera
+// aceptado explícitamente por el owner). Sigue siendo coin-based, no
+// ownPublicKey() — la única diferencia respecto al diseño 005 original es
+// que esto ahora vive en su propia transacción en vez de correr dentro del
+// constructor.
+export circuit register_initial_admin(
+                 admin_recipient: ZswapCoinPublicKey,
+                 admin_coin_nonce: Bytes<32>,
+                 admin_supply: Uint<64>
+                 ): [] {
+  assert(!admin_registered, "Admin already registered");
+  assert(disclose(admin_supply) >= (1 as Uint<64>), "admin_supply must be at least 1");
+
+  const public_recipient = disclose(admin_recipient);
+  const public_nonce = disclose(admin_coin_nonce);
+  const public_supply = disclose(admin_supply);
+  const total = (public_supply + (1 as Uint<64>)) as Uint<64>;
+
+  mintShieldedToken(
+    adminDomainSep(),
+    total,
+    public_nonce,
+    left<ZswapCoinPublicKey, ContractAddress>(public_recipient)
+    );
+
+  // Bookkeeping de solo-lectura para deriveRegistryAccess() (no es fuente de
+  // autorización — consumeAdminToken() es el único gate para operaciones
+  // admin-tier).
+  admin_registered = true;
+  initial_admin = public_recipient;
+  role_by_key.insert(roleKey(public_recipient, adminRole()), true);
+  role_by_key.insert(roleKey(public_recipient, userRole()), true);
 }
 
 // === HELPER INTERNO: consumeToken (ADR-003) ===

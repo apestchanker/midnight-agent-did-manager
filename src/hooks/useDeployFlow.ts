@@ -31,10 +31,10 @@ export function useDeployFlow(
   });
   const [step3, setStep3] = useState<StepState>({
     ...initialStep,
-    done: !!getSavedDeployment(),
+    done: !!getSavedDeployment(providers.networkId),
   });
   const [lastDeployResult, setLastDeployResult] = useState<DeployResult | null>(
-    getSavedDeployment(),
+    getSavedDeployment(providers.networkId),
   );
 
   async function handleLoadArtifacts(): Promise<void> {
@@ -66,6 +66,7 @@ export function useDeployFlow(
       });
       onDeployed(result);
     } catch (e) {
+      console.error("[useDeployFlow] Deployment failed:", e);
       setStep3((s) => ({
         ...s,
         loading: false,

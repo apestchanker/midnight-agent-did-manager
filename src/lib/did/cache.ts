@@ -67,12 +67,20 @@ export function mergeDidMetadata(
   return merged;
 }
 
-export function getSavedContractAddress(): string {
-  return getSavedDeployment()?.contractAddress || "";
+export function getSavedContractAddress(expectedNetworkId?: string): string {
+  return getSavedDeployment(expectedNetworkId)?.contractAddress || "";
 }
 
-export function getSavedDeployment(): SavedDeployment | null {
-  return readSavedJson<SavedDeployment>(DEPLOY_KEY);
+// A deployment cached while connected to one network (e.g. preview) must
+// never be surfaced as "confirmed on-chain" after switching to another
+// network (e.g. preprod) — the storage key itself isn't network-scoped, so
+// callers that care about the active network must pass it in to filter out
+// stale cross-network results.
+export function getSavedDeployment(expectedNetworkId?: string): SavedDeployment | null {
+  const saved = readSavedJson<SavedDeployment>(DEPLOY_KEY);
+  if (!saved) return null;
+  if (expectedNetworkId && saved.networkId !== expectedNetworkId) return null;
+  return saved;
 }
 
 export function getSavedCompileArtifact(): SavedCompileArtifact | null {
