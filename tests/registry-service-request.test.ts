@@ -335,6 +335,139 @@ describe("registry-service request creation", () => {
   });
 });
 
+describe("registry-service approveDidRequestByHuman / rejectDidRequestByHuman — ownership checks", () => {
+  beforeEach(() => {
+    queryMock.mockReset();
+    withTransactionMock.mockReset();
+  });
+
+  const pendingRequest = {
+    id: "request-human-1",
+    subject_wallet_address: "mn_addr_preprod1subject",
+    requester_wallet_address: "mn_addr_preprod1subject",
+    request_status: "pending_human_approval",
+  };
+
+  function clientDispatch(overrides: Record<string, (params: unknown[]) => unknown> = {}) {
+    return {
+      query: vi.fn(async (sql: string, params: unknown[]) => {
+        if (sql.includes("select") && sql.includes("from did_requests") && sql.includes("where id = $1") && !sql.includes("update")) {
+          return { rows: [pendingRequest] };
+        }
+        if (sql.includes("update did_requests") && sql.includes("request_status = 'pending_admin_review'")) {
+          return overrides.approveUpdate
+            ? { rows: [overrides.approveUpdate(params)] }
+            : {
+                rows: [
+                  { ...pendingRequest, request_status: "pending_admin_review", human_approved_by_wallet: params[1] },
+                ],
+              };
+        }
+        if (sql.includes("update did_requests") && sql.includes("request_status = 'human_rejected'")) {
+          return overrides.rejectUpdate
+            ? { rows: [overrides.rejectUpdate(params)] }
+            : {
+                rows: [
+                  { ...pendingRequest, request_status: "human_rejected", human_approved_by_wallet: params[1] },
+                ],
+              };
+        }
+        if (sql.includes("insert into audit_events")) {
+          return { rows: [] };
+        }
+        throw new Error(`Unexpected query in test: ${sql}`);
+      }),
+    };
+  }
+
+  it("approveDidRequestByHuman succeeds when the acting wallet matches the request's subject wallet", async () => {
+    const client = clientDispatch();
+    withTransactionMock.mockImplementation(async (run) => run(client));
+
+    const { approveDidRequestByHuman } = await import("../server/registry-service.js");
+    const row = await approveDidRequestByHuman({
+      requestId: pendingRequest.id,
+      humanWalletAddress: pendingRequest.subject_wallet_address,
+    });
+
+    expect(row.request_status).toBe("pending_admin_review");
+  });
+
+  it("approveDidRequestByHuman throws when the acting wallet does not match the request's subject wallet", async () => {
+    const client = clientDispatch();
+    withTransactionMock.mockImplementation(async (run) => run(client));
+
+    const { approveDidRequestByHuman } = await import("../server/registry-service.js");
+    await expect(
+      approveDidRequestByHuman({
+        requestId: pendingRequest.id,
+        humanWalletAddress: "mn_addr_preprod1attacker",
+      }),
+    ).rejects.toThrow("Connected wallet does not match the DID request's subject wallet.");
+  });
+
+  it("rejectDidRequestByHuman succeeds when the acting wallet matches the request's subject wallet", async () => {
+    const client = clientDispatch();
+    withTransactionMock.mockImplementation(async (run) => run(client));
+
+    const { rejectDidRequestByHuman } = await import("../server/registry-service.js");
+    const row = await rejectDidRequestByHuman({
+      requestId: pendingRequest.id,
+      humanWalletAddress: pendingRequest.subject_wallet_address,
+      reason: "No longer needed",
+    });
+
+    expect(row.request_status).toBe("human_rejected");
+  });
+
+  it("rejectDidRequestByHuman throws when the acting wallet does not match the request's subject wallet", async () => {
+    const client = clientDispatch();
+    withTransactionMock.mockImplementation(async (run) => run(client));
+
+    const { rejectDidRequestByHuman } = await import("../server/registry-service.js");
+    await expect(
+      rejectDidRequestByHuman({
+        requestId: pendingRequest.id,
+        humanWalletAddress: "mn_addr_preprod1attacker",
+        reason: "Trying to reject someone else's request",
+      }),
+    ).rejects.toThrow("Connected wallet does not match the DID request's subject wallet.");
+  });
+});
+
+describe("registry-service issueApprovedDidRequest / rejectDidRequestByAdmin — defensive acting-wallet checks", () => {
+  beforeEach(() => {
+    queryMock.mockReset();
+    withTransactionMock.mockReset();
+  });
+
+  it("issueApprovedDidRequest throws when called with an empty/undefined acting wallet, before touching the DB", async () => {
+    const { issueApprovedDidRequest } = await import("../server/registry-service.js");
+
+    await expect(
+      issueApprovedDidRequest({ requestId: "request-1", issuerWalletAddress: "" }),
+    ).rejects.toThrow("An issuer wallet address is required to issue a DID request.");
+    await expect(
+      issueApprovedDidRequest({ requestId: "request-1", issuerWalletAddress: undefined }),
+    ).rejects.toThrow("An issuer wallet address is required to issue a DID request.");
+
+    expect(withTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it("rejectDidRequestByAdmin throws when called with an empty/undefined acting wallet, before touching the DB", async () => {
+    const { rejectDidRequestByAdmin } = await import("../server/registry-service.js");
+
+    await expect(
+      rejectDidRequestByAdmin({ requestId: "request-1", adminWalletAddress: "" }),
+    ).rejects.toThrow("An admin wallet address is required to reject a DID request.");
+    await expect(
+      rejectDidRequestByAdmin({ requestId: "request-1", adminWalletAddress: undefined }),
+    ).rejects.toThrow("An admin wallet address is required to reject a DID request.");
+
+    expect(withTransactionMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("registry-service createOrUpdateDidRequestRecord re-send coalesce", () => {
   beforeEach(() => {
     queryMock.mockReset();

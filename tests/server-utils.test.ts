@@ -3,7 +3,9 @@ import {
   buildDid,
   createMcpKey,
   deriveAgentKey,
+  encodeDerivedWalletAddress,
   generateAgentId,
+  getClientIp,
   normalizeWallet,
   parseRequestPath,
   readJson,
@@ -113,6 +115,59 @@ describe("server/utils", () => {
     expect(headers.get("Content-Type")).toBe("application/json");
     expect(headers.get("Access-Control-Allow-Origin")).toBe("http://localhost:5173");
     expect(res.body).toBe(JSON.stringify({ ok: true }));
+  });
+
+  it("encodes a raw address hex into a Bech32m unshielded address", () => {
+    const rawAddressHex =
+      "9bcd03a50d2a66157e579ae37b483e45dc349341d4963f465601735225d7efb2";
+
+    expect(encodeDerivedWalletAddress(rawAddressHex, "preprod")).toBe(
+      "mn_addr_preprod1n0xs8fgd9fnp2ljhnt3hkjp7ghwrfy6p6jtr73jkq9e4yfwha7eqsr3je2",
+    );
+  });
+
+  it("falls back to the raw hex unchanged when Bech32m encoding throws", () => {
+    // Not valid hex, so Buffer.from(..., "hex") / the address codec will not
+    // produce a well-formed 32-byte address and encoding fails.
+    expect(encodeDerivedWalletAddress("not-valid-hex", "preprod")).toBe(
+      "not-valid-hex",
+    );
+  });
+
+  describe("getClientIp (FIX 2: Render proxy support for rate-limit keys)", () => {
+    it("uses the first entry of X-Forwarded-For when present, trimmed", () => {
+      const req = {
+        headers: { "x-forwarded-for": "203.0.113.7, 10.0.0.5, 10.0.0.1" },
+        socket: { remoteAddress: "10.0.0.1" },
+      };
+      expect(getClientIp(req as any)).toBe("203.0.113.7");
+    });
+
+    it("trims whitespace around a single X-Forwarded-For value", () => {
+      const req = {
+        headers: { "x-forwarded-for": "  203.0.113.9  " },
+        socket: { remoteAddress: "10.0.0.1" },
+      };
+      expect(getClientIp(req as any)).toBe("203.0.113.9");
+    });
+
+    it("falls back to req.socket.remoteAddress when X-Forwarded-For is absent (local/dev, no proxy)", () => {
+      const req = { headers: {}, socket: { remoteAddress: "127.0.0.1" } };
+      expect(getClientIp(req as any)).toBe("127.0.0.1");
+    });
+
+    it("falls back to req.socket.remoteAddress when X-Forwarded-For is an empty string", () => {
+      const req = {
+        headers: { "x-forwarded-for": "" },
+        socket: { remoteAddress: "127.0.0.1" },
+      };
+      expect(getClientIp(req as any)).toBe("127.0.0.1");
+    });
+
+    it("returns an empty string when neither X-Forwarded-For nor a socket address is available", () => {
+      const req = { headers: {}, socket: {} };
+      expect(getClientIp(req as any)).toBe("");
+    });
   });
 
   it("sends text responses with CORS headers", () => {

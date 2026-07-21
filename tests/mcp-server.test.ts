@@ -1,5 +1,54 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Server } from "http";
 import { createMcpServer } from "../server/mcp-core.js";
+
+// Task 8: server/mcp-http.js's GET /logs is now gated by requireSession
+// (duplicated from server/index.js per ADR-005) instead of the old
+// requireApiAuth/DID_API_AUTH_TOKEN check. These mocks only affect the
+// "server/mcp-http.js GET /logs" describe block below — the rest of this
+// file exercises server/mcp-core.js's createMcpServer directly with its own
+// hand-rolled deps and never touches these real modules.
+vi.mock("../server/load-env.js", () => ({}));
+vi.mock("../server/log-store.js", () => ({
+  getRecentLogs: vi.fn(() => [{ level: "info", message: "hello" }]),
+  installProcessLogger: vi.fn(),
+}));
+vi.mock("../server/db.js", () => ({
+  query: vi.fn(async () => ({ rows: [] })),
+  withTransaction: vi.fn(),
+  initializeDatabase: vi.fn(async () => {}),
+}));
+vi.mock("../server/registry-service.js", () => ({
+  authenticateMcpKey: vi.fn(),
+  createDidRequest: vi.fn(),
+  getCustomerContextById: vi.fn(),
+  getDidRequestById: vi.fn(),
+  listDidRequests: vi.fn(),
+  resolveDid: vi.fn(),
+  validateDid: vi.fn(),
+}));
+vi.mock("../server/proof-request-service.js", () => ({
+  createProofRequestForAgent: vi.fn(),
+  getProofRequestById: vi.fn(),
+  listProofRequests: vi.fn(),
+}));
+vi.mock("../server/vc-service.js", () => ({
+  getCredentialBundle: vi.fn(),
+  getIssuerDescriptor: vi.fn(),
+  getMidnightProofMaterial: vi.fn(),
+  listCredentialsForDid: vi.fn(),
+  rotateCredentialsForDid: vi.fn(),
+}));
+vi.mock("../server/midnight-proof-service.js", () => ({
+  createMidnightProofRequest: vi.fn(),
+  verifyMidnightProofSubmission: vi.fn(),
+  verifyUnifiedVP: vi.fn(),
+}));
+
+const mockValidateSession = vi.fn();
+vi.mock("../server/session-service.js", () => ({
+  validateSession: mockValidateSession,
+}));
 
 function createDeps() {
   return {
@@ -783,5 +832,98 @@ describe("MCP server core", () => {
       expect(tool.description).toContain("UnifiedVerifiablePresentation");
       expect(tool.description).toContain("MidnightNativeOwnershipProof2024");
     });
+  });
+});
+
+describe("server/mcp-http.js GET /logs (Task 8: requireSession gating)", () => {
+  const ADMIN_TOKEN = "admin-session-token";
+  const HUMAN_TOKEN = "human-session-token";
+  const ADMIN_WALLET = "mn_addr_preprod1admin";
+  const HUMAN_WALLET = "mn_addr_preprod1holder";
+  const ORIGINAL_ENV = { ...process.env };
+
+  let server: Server;
+  let baseUrl: string;
+
+  beforeAll(async () => {
+    process.env.DID_ADMIN_WALLET_ADDRESS = ADMIN_WALLET;
+    const mod = await import("../server/mcp-http.js");
+    server = mod.server;
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+    baseUrl = `http://127.0.0.1:${port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    process.env = { ...ORIGINAL_ENV };
+  });
+
+  beforeEach(() => {
+    mockValidateSession.mockReset();
+    mockValidateSession.mockImplementation(async (token: string) => {
+      if (token === HUMAN_TOKEN) return { walletAddress: HUMAN_WALLET, isAdmin: false };
+      if (token === ADMIN_TOKEN) return { walletAddress: ADMIN_WALLET, isAdmin: true };
+      return null;
+    });
+    process.env.DID_ADMIN_WALLET_ADDRESS = ADMIN_WALLET;
+  });
+
+  it("rejects a request with only the legacy DID_API_AUTH_TOKEN and no session (401)", async () => {
+    process.env.DID_API_AUTH_TOKEN = "legacy-shared-secret";
+    const response = await fetch(`${baseUrl}/logs`, {
+      headers: { "x-did-api-key": "legacy-shared-secret" },
+    });
+    expect(response.status).toBe(401);
+    const body = await response.json();
+    expect(body.error).toBe("unauthorized");
+  });
+
+  // FIX 3 (code review follow-up): a *valid* session token value sent only
+  // via X-DID-API-Key (no Authorization header) must not authenticate —
+  // before the fix, getApiAuthToken read this header as an alternative to
+  // Authorization: Bearer, so this would have succeeded (200).
+  it("a valid session token sent only via X-DID-API-Key (no Authorization header) no longer authenticates", async () => {
+    const response = await fetch(`${baseUrl}/logs`, {
+      headers: { "x-did-api-key": ADMIN_TOKEN },
+    });
+    expect(response.status).toBe(401);
+    const body = await response.json();
+    expect(body.error).toBe("unauthorized");
+    expect(mockValidateSession).not.toHaveBeenCalledWith(ADMIN_TOKEN);
+  });
+
+  it("rejects a valid non-admin session with 403", async () => {
+    const response = await fetch(`${baseUrl}/logs`, {
+      headers: { authorization: `Bearer ${HUMAN_TOKEN}` },
+    });
+    expect(response.status).toBe(403);
+  });
+
+  it("succeeds for a session whose wallet_address matches DID_ADMIN_WALLET_ADDRESS", async () => {
+    const response = await fetch(`${baseUrl}/logs`, {
+      headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(Array.isArray(body.entries)).toBe(true);
+  });
+
+  it("GET /health remains public and unaffected", async () => {
+    const response = await fetch(`${baseUrl}/health`);
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.ok).toBe(true);
+  });
+
+  it("source no longer defines requireApiAuth or compares DID_API_AUTH_TOKEN", async () => {
+    const fs = await import("fs");
+    const src = fs.readFileSync("server/mcp-http.js", "utf-8");
+    expect(src).not.toMatch(/function requireApiAuth\s*\(/);
+    expect(src).not.toMatch(/process\.env\.DID_API_AUTH_TOKEN/);
+    expect(src).toContain("async function requireSession(");
   });
 });

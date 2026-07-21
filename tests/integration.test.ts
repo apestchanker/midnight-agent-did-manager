@@ -430,3 +430,66 @@ describe("App.tsx task 8 — structural acceptance criteria (source-level check)
     expect(src).toContain("MidnightNativeOwnershipProof2024");
   });
 });
+
+// Task 10 (feature 007-wallet-nonce-session-auth): isConfiguredAdminWallet
+// must be derived from the server-determined `isAdmin` field of the
+// wallet-session login response (REQ-06), not from a client-side comparison
+// against VITE_ADMIN_WALLET_SHIELDED_ADDR — even when that env var happens
+// to reference the same connected wallet for unrelated display purposes.
+describe("isAdminSession (src/lib/auth-session.ts) — REQ-06 behavior", () => {
+  it("returns true when the session's isAdmin field is true", async () => {
+    const { isAdminSession } = await import("../src/lib/auth-session.js");
+    expect(
+      isAdminSession({
+        token: "t1",
+        walletAddress: "mn1adminwallet",
+        isAdmin: true,
+        expiresAt: "2026-07-20T01:00:00.000Z",
+      }),
+    ).toBe(true);
+  });
+
+  it("returns false when the session's isAdmin field is false, even for the wallet VITE_ADMIN_WALLET_SHIELDED_ADDR would reference for display purposes", async () => {
+    const { isAdminSession } = await import("../src/lib/auth-session.js");
+    expect(
+      isAdminSession({
+        token: "t2",
+        walletAddress: "mn1samewalletdifferentformat",
+        isAdmin: false,
+        expiresAt: "2026-07-20T01:00:00.000Z",
+      }),
+    ).toBe(false);
+  });
+
+  it("returns false before login completes (no session yet)", async () => {
+    const { isAdminSession } = await import("../src/lib/auth-session.js");
+    expect(isAdminSession(null)).toBe(false);
+  });
+});
+
+describe("App.tsx task 10 — structural acceptance criteria (source-level check)", () => {
+  it("App.tsx no longer compares the connected wallet against VITE_ADMIN_WALLET_SHIELDED_ADDR to gate admin UI", async () => {
+    const fs = await import("fs");
+    const src = fs.readFileSync("src/App.tsx", "utf-8");
+    expect(src).not.toContain("configuredAdminShieldedAddress");
+  });
+
+  it("App.tsx derives isConfiguredAdminWallet from isAdminSession(authSession)", async () => {
+    const fs = await import("fs");
+    const src = fs.readFileSync("src/App.tsx", "utf-8");
+    expect(src).toContain("isAdminSession(authSession)");
+  });
+
+  it("App.tsx calls serviceApi's login() when a wallet connects", async () => {
+    const fs = await import("fs");
+    const src = fs.readFileSync("src/App.tsx", "utf-8");
+    expect(src).toMatch(/await login\(api, walletAddress\)/);
+  });
+
+  it("App.tsx imports login/clearAuthSession from ./utils/serviceApi and isAdminSession from ./lib/auth-session", async () => {
+    const fs = await import("fs");
+    const src = fs.readFileSync("src/App.tsx", "utf-8");
+    expect(src).toContain("import { isAdminSession } from \"./lib/auth-session\"");
+    expect(src).toMatch(/clearAuthSession,\s*\n\s*createWalletDidRequest/);
+  });
+});

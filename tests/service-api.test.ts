@@ -309,4 +309,174 @@ describe("serviceApi Task 6", () => {
       expect(body.controller).toBeUndefined();
     });
   });
+
+  // Task 9 (feature 007-wallet-nonce-session-auth): wallet-session login flow
+  // replaces the shared VITE_DID_API_AUTH_TOKEN / X-DID-API-Key mechanism
+  // with a nonce/signature challenge-response exchanged for a session token
+  // attached as `Authorization: Bearer <token>` on subsequent requests.
+  describe("login", () => {
+    function mockWalletApi(signatureOverrides: Partial<{
+      data: string;
+      signature: string;
+      verifyingKey: string;
+    }> = {}) {
+      const signData = vi.fn(async (data: string) => ({
+        data,
+        signature: signatureOverrides.signature ?? "sig-hex",
+        verifyingKey: signatureOverrides.verifyingKey ?? "verifying-key-hex",
+        ...signatureOverrides,
+      }));
+      return { signData } as unknown as import("@midnight-ntwrk/dapp-connector-api").ConnectedAPI;
+    }
+
+    afterEach(async () => {
+      const { clearAuthSession } = await import("../src/utils/serviceApi.js");
+      clearAuthSession();
+    });
+
+    it("removes VITE_DID_API_AUTH_TOKEN / X-DID-API-Key from serviceApi entirely", async () => {
+      const fs = await import("node:fs");
+      const path = await import("node:path");
+      const source = fs.readFileSync(
+        path.resolve(__dirname, "../src/utils/serviceApi.ts"),
+        "utf8",
+      );
+      expect(source).not.toContain("VITE_DID_API_AUTH_TOKEN");
+      expect(source).not.toContain("X-DID-API-Key");
+    });
+
+    it("requests a challenge, signs it via api.signData, exchanges it for a session, and stores the token", async () => {
+      const challenge = JSON.stringify({
+        type: "midnight-did:auth-challenge",
+        purpose: "wallet-session-login",
+        walletAddress: "mn1walletaddress",
+        nonce: "nonce-123",
+        issuedAt: "2026-07-20T00:00:00.000Z",
+        expiresAt: "2026-07-20T00:05:00.000Z",
+        domain: "test",
+      });
+      const nonceResponse = {
+        challenge,
+        nonce: "nonce-123",
+        expiresAt: "2026-07-20T00:05:00.000Z",
+      };
+      const sessionResponse = {
+        token: "session-token-abc",
+        walletAddress: "mn1walletaddress",
+        isAdmin: false,
+        expiresAt: "2026-07-20T00:35:00.000Z",
+      };
+
+      const fetchMock = vi.fn(async (url: string) => {
+        if (String(url).includes("/api/auth/nonce")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => nonceResponse,
+            text: async () => JSON.stringify(nonceResponse),
+          };
+        }
+        if (String(url).includes("/api/auth/session")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => sessionResponse,
+            text: async () => JSON.stringify(sessionResponse),
+          };
+        }
+        throw new Error(`Unexpected fetch to ${url}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const { login, getAuthSession } = await import("../src/utils/serviceApi.js");
+      const api = mockWalletApi();
+
+      const result = await login(api, "mn1walletaddress");
+
+      // api.signData was called with the exact challenge string returned by
+      // the nonce endpoint, using the same call shape as proof approvals.
+      expect((api as unknown as { signData: ReturnType<typeof vi.fn> }).signData).toHaveBeenCalledWith(
+        challenge,
+        { encoding: "text", keyType: "unshielded" },
+      );
+
+      // The signed exchange POSTs the signature envelope to /api/auth/session.
+      const sessionCall = fetchMock.mock.calls.find(([url]) =>
+        String(url).includes("/api/auth/session"),
+      );
+      expect(sessionCall).toBeTruthy();
+      const [, sessionInit] = sessionCall as [string, RequestInit];
+      const sessionBody = JSON.parse(sessionInit.body as string);
+      expect(sessionBody.signature).toEqual({
+        data: challenge,
+        signature: "sig-hex",
+        verifyingKey: "verifying-key-hex",
+      });
+
+      // The nonce request carried the declared wallet address.
+      const nonceCall = fetchMock.mock.calls.find(([url]) =>
+        String(url).includes("/api/auth/nonce"),
+      );
+      const [, nonceInit] = nonceCall as [string, RequestInit];
+      expect(JSON.parse(nonceInit.body as string)).toEqual({
+        walletAddress: "mn1walletaddress",
+      });
+
+      // The returned token is stored and returned.
+      expect(result).toEqual(sessionResponse);
+      expect(getAuthSession()).toEqual(sessionResponse);
+    });
+
+    it("attaches Authorization: Bearer <token> to subsequent requests after a successful login", async () => {
+      const challenge = "challenge-string";
+      const nonceResponse = { challenge, nonce: "n1", expiresAt: "2026-07-20T00:05:00.000Z" };
+      const sessionResponse = {
+        token: "session-token-xyz",
+        walletAddress: "mn1walletaddress",
+        isAdmin: true,
+        expiresAt: "2026-07-20T00:35:00.000Z",
+      };
+      const backendLogsResponse = { entries: [] };
+
+      const fetchMock = vi.fn(async (url: string) => {
+        if (String(url).includes("/api/auth/nonce")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => nonceResponse,
+            text: async () => JSON.stringify(nonceResponse),
+          };
+        }
+        if (String(url).includes("/api/auth/session")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => sessionResponse,
+            text: async () => JSON.stringify(sessionResponse),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => backendLogsResponse,
+          text: async () => JSON.stringify(backendLogsResponse),
+        };
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const { login, fetchBackendLogs } = await import("../src/utils/serviceApi.js");
+      await login(mockWalletApi(), "mn1walletaddress");
+
+      await fetchBackendLogs(50);
+
+      const logsCall = fetchMock.mock.calls.find(([url]) =>
+        String(url).includes("/api/admin/logs"),
+      );
+      expect(logsCall).toBeTruthy();
+      const [, logsInit] = logsCall as [string, RequestInit];
+      const headers = new Headers(logsInit.headers);
+      expect(headers.get("Authorization")).toBe("Bearer session-token-xyz");
+      expect(headers.has("X-DID-API-Key")).toBe(false);
+    });
+  });
 });

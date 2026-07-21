@@ -306,6 +306,36 @@ describe("proof-request-service", () => {
     expect(result.error_message).toBe("No longer needed");
   });
 
+  it("rejects with an error when the acting wallet does not match the DID holder wallet (REQ-04)", async () => {
+    withTransactionMock.mockImplementation(async (run) => {
+      const client = {
+        query: vi.fn().mockResolvedValueOnce({
+          rows: [
+            {
+              id: "proof-request-5",
+              did: "did:midnight:preprod:contract:agent",
+              holder_wallet_address: "mn_addr_preprod1holder",
+              request_status: "pending_human_approval",
+            },
+          ],
+        }),
+      };
+      return run(client);
+    });
+
+    const { rejectProofRequestByHuman } = await import(
+      "../server/proof-request-service.js"
+    );
+
+    await expect(
+      rejectProofRequestByHuman({
+        proofRequestId: "proof-request-5",
+        humanWalletAddress: "mn_addr_preprod1attacker",
+        reason: "Trying to reject someone else's request",
+      }),
+    ).rejects.toThrow("Connected wallet does not match the DID holder wallet.");
+  });
+
   it("full lifecycle verified: proof_ready → verified with audit event", async () => {
     verifyMidnightProofSubmissionMock.mockResolvedValue({
       valid: true,
