@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.8.6
+
+### Changed
+- Bumped the application version to `0.8.6` while keeping the contract version at `3.0.0`.
+  Reason/impact: closes SEC-02 from the 2026-07-09 security audit before the first public deployment.
+
+### Fixed
+- Replaced the shared, build-time-embedded `DID_API_AUTH_TOKEN` with a wallet nonce + signature challenge-response session mechanism, used identically for regular users and administrators (admin status is a server-side wallet-address comparison, not a separate code path).
+  Reason/impact: the old token was baked into the public frontend bundle by design, so publishing the site for the investor demo would have handed anyone the master credential for every private REST route (approve/reject requests, admin issuance, wallet-state sync). The new flow proves wallet possession via the same `verifySignature`/`addressFromKey` primitive already used for holder-signature verification, issues short-lived opaque sessions (hashed server-side, revocable), and ties every previously client-declared `humanWalletAddress`/`adminWalletAddress`/`issuerWalletAddress`/`deployerWalletAddress` to the authenticated session instead.
+- Added rate limiting (per-wallet+IP and per-IP) to `POST /api/auth/nonce`, and per-IP rate limiting to `POST /api/auth/session`, closing an unauthenticated-flood and a signature-verification CPU-amplification vector respectively.
+- Added audit logging (`auth_session_created` / `auth_session_denied`) for every login attempt, success or failure, without persisting any signature or token material.
+
 ## v0.8.5
 
 ### Changed
