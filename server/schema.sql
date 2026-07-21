@@ -262,3 +262,29 @@ create table if not exists audit_events (
 );
 
 create index if not exists idx_audit_events_entity on audit_events(entity_type, entity_id);
+
+-- Wallet nonce + session auth (feature 007): replaces the shared DID_API_AUTH_TOKEN
+-- with challenge-response login. See sdd/wip/007-wallet-nonce-session-auth/2-technical/spec.md.
+create table if not exists auth_nonces (
+  id uuid primary key default gen_random_uuid(),
+  nonce text not null unique,
+  wallet_address text not null,
+  challenge text not null,
+  expires_at timestamptz not null,
+  consumed_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_auth_nonces_wallet on auth_nonces(wallet_address);
+create index if not exists idx_auth_nonces_expires on auth_nonces(expires_at);
+
+create table if not exists auth_sessions (
+  id uuid primary key default gen_random_uuid(),
+  token_hash text not null unique,
+  wallet_address text not null,
+  expires_at timestamptz not null,
+  revoked_at timestamptz,
+  created_at timestamptz not null default now(),
+  last_used_at timestamptz
+);
+create index if not exists idx_auth_sessions_wallet on auth_sessions(wallet_address);
+create index if not exists idx_auth_sessions_expires on auth_sessions(expires_at);

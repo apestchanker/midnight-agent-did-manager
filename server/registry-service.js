@@ -1218,8 +1218,33 @@ export async function createWalletDidRequest(input) {
   });
 }
 
+// Shared by approveDidRequestByHuman/rejectDidRequestByHuman: the human step
+// only ever applies to requests still in 'pending_human_approval' (created
+// via the MCP-driven createDidRequest flow, where subject_wallet_address is
+// always the same wallet the request was made for) — so the wallet
+// authorized to approve/reject is the request's subject_wallet_address.
+// Generalizes the ownership-assertion pattern already used by
+// approveProofRequestByHuman/rejectProofRequestByHuman
+// (server/proof-request-service.js), which compares the acting wallet
+// against holder_wallet_address the same way.
+async function assertActingWalletOwnsDidRequest(client, requestId, actingWalletAddress) {
+  const current = (
+    await client.query(`select * from did_requests where id = $1 limit 1`, [requestId])
+  ).rows[0];
+  if (!current) {
+    throw new Error("DID request not found or not pending human approval.");
+  }
+  const actingWallet = normalizeWallet(actingWalletAddress);
+  if (!actingWallet || actingWallet !== normalizeWallet(current.subject_wallet_address)) {
+    throw new Error("Connected wallet does not match the DID request's subject wallet.");
+  }
+  return current;
+}
+
 export async function approveDidRequestByHuman(input) {
   return withTransaction(async (client) => {
+    await assertActingWalletOwnsDidRequest(client, input.requestId, input.humanWalletAddress);
+
     const result = await client.query(
       `update did_requests
        set request_status = 'pending_admin_review',
@@ -1258,6 +1283,8 @@ export async function approveDidRequestByHuman(input) {
 
 export async function rejectDidRequestByHuman(input) {
   return withTransaction(async (client) => {
+    await assertActingWalletOwnsDidRequest(client, input.requestId, input.humanWalletAddress);
+
     const result = await client.query(
       `update did_requests
        set request_status = 'human_rejected',
@@ -1287,6 +1314,17 @@ export async function rejectDidRequestByHuman(input) {
 }
 
 export async function issueApprovedDidRequest(input) {
+  // Defensive check: issueApprovedDidRequest is only reachable in production
+  // through the { admin: true } requireSession tier (server/index.js), so
+  // route-level gating is what actually enforces "only an admin session may
+  // call this" — but the service layer must never silently accept an
+  // empty/undefined acting wallet even if a future caller forgets to gate
+  // the route, since this value is what gets recorded as admin_decision_by
+  // and the audit-trail actorRef.
+  const issuerWalletGuard = normalizeWallet(input.issuerWalletAddress);
+  if (!issuerWalletGuard) {
+    throw new Error("An issuer wallet address is required to issue a DID request.");
+  }
   return withTransaction(async (client) => {
     const requestResult = await client.query(
       `select *
@@ -1593,6 +1631,15 @@ export async function getPersistedDidState(input) {
 }
 
 export async function rejectDidRequestByAdmin(input) {
+  // Defensive check — same rationale as issueApprovedDidRequest: reachable
+  // in production only through the { admin: true } requireSession tier, but
+  // the service layer must never silently accept an empty/undefined acting
+  // wallet, since it's what gets recorded as admin_decision_by and the
+  // audit-trail actorRef.
+  const adminWalletGuard = normalizeWallet(input.adminWalletAddress);
+  if (!adminWalletGuard) {
+    throw new Error("An admin wallet address is required to reject a DID request.");
+  }
   return withTransaction(async (client) => {
     const result = await client.query(
       `update did_requests

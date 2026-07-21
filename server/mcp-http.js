@@ -1,10 +1,11 @@
 import "./load-env.js";
 import { createServer } from "http";
-import { URL } from "url";
+import { URL, fileURLToPath } from "url";
 import { initializeDatabase } from "./db.js";
 import { getRecentLogs, installProcessLogger } from "./log-store.js";
 import { createDidMcpApp } from "./mcp-app.js";
 import { readJson, RequestBodyError, sendJson, sendText, setCorsHeaders } from "./utils.js";
+import { validateSession } from "./session-service.js";
 
 const PORT = Number(process.env.PORT || process.env.DID_MCP_PORT || 8788);
 const HOST = (process.env.DID_MCP_HOST || "127.0.0.1").trim();
@@ -12,11 +13,12 @@ const app = createDidMcpApp();
 
 installProcessLogger("mcp-http");
 
+// Code review follow-up (feature 007, post-verify): the shared-secret
+// X-DID-API-Key header was the ADR-005 predecessor to session-token bearer
+// auth and was retired as a hard cutover, no dual-accept window. This
+// function now only reads Authorization: Bearer, matching
+// src/utils/serviceApi.ts and server/index.js's getApiAuthToken.
 function getApiAuthToken(req) {
-  const headerToken = req.headers["x-did-api-key"];
-  if (typeof headerToken === "string" && headerToken.trim()) {
-    return headerToken.trim();
-  }
   const authHeader = req.headers.authorization || "";
   if (typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
     return authHeader.slice("Bearer ".length).trim();
@@ -24,24 +26,46 @@ function getApiAuthToken(req) {
   return "";
 }
 
-function requireApiAuth(req, res) {
-  const expected = String(process.env.DID_API_AUTH_TOKEN || "").trim();
-  if (!expected) {
-    sendJson(res, 503, {
-      ok: false,
-      error: "api_auth_not_configured",
-      message: "DID_API_AUTH_TOKEN is required for private MCP HTTP routes.",
-    }, req);
-    return false;
+// Duplicated verbatim from server/index.js per ADR-005 — the two files are
+// separate process entrypoints with no shared runtime module beyond
+// db.js/utils.js/session-service.js, all of which are already imported by
+// both. Replaces the old shared-secret requireApiAuth/DID_API_AUTH_TOKEN
+// check on GET /logs.
+async function requireSession(req, res, url, parts, { admin = false } = {}) {
+  if (!req.session) {
+    const token = getApiAuthToken(req);
+    const session = await validateSession(token);
+    if (!session) {
+      sendJson(res, 401, {
+        ok: false,
+        error: "unauthorized",
+        message: "Missing or invalid session.",
+      }, req);
+      return false;
+    }
+    req.session = session;
   }
-  if (getApiAuthToken(req) !== expected) {
-    sendJson(res, 401, {
-      ok: false,
-      error: "unauthorized",
-      message: "Missing or invalid API authorization token.",
-    }, req);
-    return false;
+
+  if (admin) {
+    const adminConfigured = String(process.env.DID_ADMIN_WALLET_ADDRESS || "").trim();
+    if (!adminConfigured) {
+      sendJson(res, 503, {
+        ok: false,
+        error: "admin_auth_not_configured",
+        message: "DID_ADMIN_WALLET_ADDRESS is required for admin routes.",
+      }, req);
+      return false;
+    }
+    if (!req.session.isAdmin) {
+      sendJson(res, 403, {
+        ok: false,
+        error: "forbidden",
+        message: "Administrator session required.",
+      }, req);
+      return false;
+    }
   }
+
   return true;
 }
 
@@ -67,7 +91,7 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === "GET" && url.pathname === "/logs") {
-    if (!requireApiAuth(req, res)) {
+    if (!(await requireSession(req, res, url, undefined, { admin: true }))) {
       return;
     }
     sendJson(res, 200, {
@@ -134,13 +158,25 @@ const server = createServer(async (req, res) => {
   sendText(res, 404, "Not found", req);
 });
 
-initializeDatabase()
-  .then(() => {
-    server.listen(PORT, HOST, () => {
-      console.log(`[did-mcp] listening on http://${HOST}:${PORT}`);
+// Only auto-initialize the database and start listening when this file is
+// run directly (`node server/mcp-http.js` / `npm run dev:mcp:http`), not
+// when it's imported — e.g. by tests that need the `server` instance and
+// requireSession without a real DB connection or a real listen() on
+// import. Production behavior is unchanged.
+const isMainModule =
+  process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+
+if (isMainModule) {
+  initializeDatabase()
+    .then(() => {
+      server.listen(PORT, HOST, () => {
+        console.log(`[did-mcp] listening on http://${HOST}:${PORT}`);
+      });
+    })
+    .catch((error) => {
+      console.error("[did-mcp] failed to initialize database", error);
+      process.exit(1);
     });
-  })
-  .catch((error) => {
-    console.error("[did-mcp] failed to initialize database", error);
-    process.exit(1);
-  });
+}
+
+export { server, requireSession };

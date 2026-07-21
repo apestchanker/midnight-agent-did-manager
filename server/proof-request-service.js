@@ -1,24 +1,17 @@
 import { TextEncoder } from "util";
 import { addressFromKey, verifySignature } from "@midnight-ntwrk/ledger-v8";
-import { MidnightBech32m, UnshieldedAddress } from "@midnight-ntwrk/wallet-sdk-address-format";
 import { query, withTransaction } from "./db.js";
-import { normalizeWallet, normalizeWalletSignatureHex, uniqueScopes } from "./utils.js";
+import {
+  encodeDerivedWalletAddress,
+  normalizeWallet,
+  normalizeWalletSignatureHex,
+  uniqueScopes,
+} from "./utils.js";
 import { authenticateMcpKey, getCustomerByWallet } from "./registry-service.js";
 import {
   createMidnightProofRequest,
   verifyMidnightProofSubmission,
 } from "./midnight-proof-service.js";
-
-function encodeDerivedWalletAddress(rawAddressHex, networkId) {
-  try {
-    return MidnightBech32m.encode(
-      networkId || "preprod",
-      new UnshieldedAddress(Buffer.from(rawAddressHex, "hex")),
-    ).toString();
-  } catch {
-    return rawAddressHex;
-  }
-}
 
 function buildApprovalPayload(material, holderWalletAddress) {
   return JSON.stringify(

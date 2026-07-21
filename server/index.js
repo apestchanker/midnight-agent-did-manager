@@ -1,7 +1,7 @@
 import "./load-env.js";
 import { createServer } from "http";
-import { URL } from "url";
-import { initializeDatabase } from "./db.js";
+import { URL, fileURLToPath } from "url";
+import { initializeDatabase, query } from "./db.js";
 import { getRecentLogs, installProcessLogger } from "./log-store.js";
 import {
   approveDidRequestByHuman,
@@ -57,6 +57,8 @@ import {
   submitProofForRequest,
 } from "./proof-request-service.js";
 import {
+  getClientIp,
+  normalizeWallet,
   parseRequestPath,
   readJson,
   RequestBodyError,
@@ -64,6 +66,12 @@ import {
   sendText,
   setCorsHeaders,
 } from "./utils.js";
+import {
+  AuthError,
+  createSessionFromSignature,
+  issueNonce,
+  validateSession,
+} from "./session-service.js";
 
 const PORT = Number(process.env.PORT || process.env.DID_API_PORT || 8787);
 const HOST = (process.env.DID_API_HOST || "127.0.0.1").trim();
@@ -106,11 +114,12 @@ async function initializeDatabaseWithRetry() {
   }
 }
 
+// Code review follow-up (feature 007, post-verify): the shared-secret
+// X-DID-API-Key header was the ADR-005 predecessor to session-token bearer
+// auth and was retired as a hard cutover, no dual-accept window. This
+// function now only reads Authorization: Bearer, matching
+// src/utils/serviceApi.ts, which already only ever sends that header.
 function getApiAuthToken(req) {
-  const headerToken = req.headers["x-did-api-key"];
-  if (typeof headerToken === "string" && headerToken.trim()) {
-    return headerToken.trim();
-  }
   const authHeader = req.headers.authorization || "";
   if (typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
     return authHeader.slice("Bearer ".length).trim();
@@ -129,28 +138,193 @@ function isPublicApiRoute(req, url, parts) {
   if (req.method === "POST" && url.pathname === "/api/vps/midnight/verify") return true;
   if (req.method === "POST" && url.pathname === "/api/agent/did-requests") return true;
   if (req.method === "POST" && url.pathname === "/api/agent/proof-requests") return true;
+  if (req.method === "POST" && url.pathname === "/api/auth/nonce") return true;
+  if (req.method === "POST" && url.pathname === "/api/auth/session") return true;
   return false;
 }
 
-function requireApiAuth(req, res, url, parts) {
+// OWASP A04 follow-up (security scan on tasks 1-3): POST /api/auth/nonce is
+// unauthenticated by design (that's the whole point of a login challenge),
+// so it must be rate-limited or an attacker can flood auth_nonces for an
+// arbitrary declared wallet address. Fixed-window counter keyed by the
+// declared wallet address (plus source IP when available) — an in-process
+// Map with a TTL-equivalent window reset is sufficient here since what's
+// being protected is a burst of unrateLimited nonce rows, not session
+// validity (nonces are single-use and short-lived regardless).
+//
+// code review + security scan follow-up (tasks 7-8): the wallet address in
+// the per-wallet bucket key is *client-declared* and unverified at this
+// point (real proof of possession only happens later, in
+// createSessionFromSignature) — it just has to match WALLET_ADDRESS_PATTERN.
+// A single attacker IP can therefore roll a fresh, well-formed-but-arbitrary
+// wallet address on every request and get a brand-new per-wallet bucket
+// every time, sidestepping NONCE_RATE_LIMIT_MAX_REQUESTS entirely. A second,
+// coarser limiter keyed by source IP alone (independent of any declared
+// wallet) closes that gap; both limiters must pass. Same finding also
+// pointed out these Maps are never pruned — every call now sweeps expired
+// buckets out of both maps first, bounding their size to the number of
+// distinct keys seen within the last rate-limit window.
+const NONCE_RATE_LIMIT_WINDOW_MS = 60_000;
+const NONCE_RATE_LIMIT_MAX_REQUESTS = 5;
+const NONCE_IP_RATE_LIMIT_MAX_REQUESTS = 20;
+const nonceRateLimitBuckets = new Map();
+const nonceIpRateLimitBuckets = new Map();
+
+function pruneExpiredRateLimitBuckets(buckets, now) {
+  for (const [key, bucket] of buckets) {
+    if (now - bucket.windowStart >= NONCE_RATE_LIMIT_WINDOW_MS) {
+      buckets.delete(key);
+    }
+  }
+}
+
+function checkAndBumpRateLimitBucket(buckets, key, now, maxRequests) {
+  const bucket = buckets.get(key);
+  if (!bucket || now - bucket.windowStart >= NONCE_RATE_LIMIT_WINDOW_MS) {
+    buckets.set(key, { count: 1, windowStart: now });
+    return false;
+  }
+  bucket.count += 1;
+  return bucket.count > maxRequests;
+}
+
+function isNonceRateLimited(walletAddress, remoteAddress) {
+  const now = Date.now();
+  pruneExpiredRateLimitBuckets(nonceRateLimitBuckets, now);
+  pruneExpiredRateLimitBuckets(nonceIpRateLimitBuckets, now);
+
+  const walletKey = `${normalizeWallet(walletAddress)}|${remoteAddress || ""}`;
+  // Evaluate (and bump) both limiters unconditionally rather than
+  // short-circuiting, so the IP-wide budget is always charged for the
+  // request regardless of which limiter, if either, ultimately denies it.
+  const walletLimited = checkAndBumpRateLimitBucket(
+    nonceRateLimitBuckets,
+    walletKey,
+    now,
+    NONCE_RATE_LIMIT_MAX_REQUESTS,
+  );
+  const ipLimited = checkAndBumpRateLimitBucket(
+    nonceIpRateLimitBuckets,
+    remoteAddress || "",
+    now,
+    NONCE_IP_RATE_LIMIT_MAX_REQUESTS,
+  );
+  return walletLimited || ipLimited;
+}
+
+// Security scan follow-up (final gate, feature 007): POST /api/auth/session
+// had no rate limiting of its own — only /api/auth/nonce did. A nonce
+// obtained through the (already-limited) nonce endpoint stays valid for its
+// whole DID_AUTH_NONCE_TTL_SECONDS window, and an attacker who has a nonce
+// (or even a bogus/never-issued one) could hammer this endpoint with
+// arbitrary signature attempts for the rest of that window with no cap at
+// all — each attempt runs real signature-verification crypto
+// (verifySignature) inside createSessionFromSignature, so this was an
+// unauthenticated, uncapped CPU-amplification vector (OWASP A04). There is
+// no cleanly-declared wallet available at this point in the request (the
+// wallet is only known *after* signature verification succeeds), so unlike
+// isNonceRateLimited this limiter is IP-only. The threshold is looser than
+// the nonce limiter's (10/60s vs 5/60s) since a legitimate login may need a
+// retry or two after a typo'd signature, but still far short of "unlimited".
+// Reuses the exact same bucket/prune/check helpers as the nonce limiter.
+const SESSION_RATE_LIMIT_MAX_REQUESTS = 10;
+const sessionRateLimitBuckets = new Map();
+
+function isSessionRateLimited(remoteAddress) {
+  const now = Date.now();
+  pruneExpiredRateLimitBuckets(sessionRateLimitBuckets, now);
+  return checkAndBumpRateLimitBucket(
+    sessionRateLimitBuckets,
+    remoteAddress || "",
+    now,
+    SESSION_RATE_LIMIT_MAX_REQUESTS,
+  );
+}
+
+// OWASP A09 follow-up (security scan on tasks 4-6): createSessionFromSignature
+// wrote no audit trail on success or failure. Rather than teach
+// session-service.js about audit_events directly (its failure paths run
+// mostly *before* any withTransaction block, and the one failure detected
+// *inside* the transaction would have its audit row rolled back along with
+// everything else), the HTTP layer records the event here — same
+// audit_events table/columns already used by registry-service.js's and
+// proof-request-service.js's local `audit()` helpers, just invoked with the
+// plain `query()` export instead of a transaction client.
+async function auditAuthEvent(input) {
+  try {
+    await query(
+      `insert into audit_events (actor_type, actor_ref, event_type, entity_type, entity_id, event_data)
+       values ($1, $2, $3, $4, $5, $6::jsonb)`,
+      [
+        input.actorType,
+        input.actorRef,
+        input.eventType,
+        input.entityType,
+        input.entityId,
+        JSON.stringify(input.eventData || {}),
+      ],
+    );
+  } catch (auditError) {
+    // Best-effort: a failure to record an audit row must never turn an
+    // otherwise-successful (or otherwise-correctly-rejected) auth attempt
+    // into a 500.
+    console.error("[did-api] failed to record auth audit event", auditError);
+  }
+}
+
+function declaredWalletFromSignatureData(signature) {
+  try {
+    const parsed = JSON.parse(String(signature?.data || ""));
+    return normalizeWallet(parsed && typeof parsed === "object" ? parsed.walletAddress : "");
+  } catch {
+    return "";
+  }
+}
+
+// Replaces the old shared-secret requireApiAuth (ADR-005): validates the
+// bearer token (still extracted via the unchanged getApiAuthToken) against
+// session-service.validateSession instead of a static DID_API_AUTH_TOKEN
+// comparison. Idempotent per request — if req.session is already populated
+// by an earlier call in the same request (the top-level gate), a second
+// call with { admin: true } at an admin route reuses it instead of
+// re-validating the token against the database a second time.
+async function requireSession(req, res, url, parts, { admin = false } = {}) {
   if (isPublicApiRoute(req, url, parts)) return true;
-  const expected = String(process.env.DID_API_AUTH_TOKEN || "").trim();
-  if (!expected) {
-    sendJson(res, 503, {
-      ok: false,
-      error: "api_auth_not_configured",
-      message: "DID_API_AUTH_TOKEN is required for private API routes.",
-    }, req);
-    return false;
+
+  if (!req.session) {
+    const token = getApiAuthToken(req);
+    const session = await validateSession(token);
+    if (!session) {
+      sendJson(res, 401, {
+        ok: false,
+        error: "unauthorized",
+        message: "Missing or invalid session.",
+      }, req);
+      return false;
+    }
+    req.session = session;
   }
-  if (getApiAuthToken(req) !== expected) {
-    sendJson(res, 401, {
-      ok: false,
-      error: "unauthorized",
-      message: "Missing or invalid API authorization token.",
-    }, req);
-    return false;
+
+  if (admin) {
+    const adminConfigured = String(process.env.DID_ADMIN_WALLET_ADDRESS || "").trim();
+    if (!adminConfigured) {
+      sendJson(res, 503, {
+        ok: false,
+        error: "admin_auth_not_configured",
+        message: "DID_ADMIN_WALLET_ADDRESS is required for admin routes.",
+      }, req);
+      return false;
+    }
+    if (!req.session.isAdmin) {
+      sendJson(res, 403, {
+        ok: false,
+        error: "forbidden",
+        message: "Administrator session required.",
+      }, req);
+      return false;
+    }
   }
+
   return true;
 }
 
@@ -172,7 +346,7 @@ const server = createServer(async (req, res) => {
   console.info(`[backend] ${req.method} ${url.pathname}`);
 
   try {
-    if (!requireApiAuth(req, res, url, parts)) {
+    if (!(await requireSession(req, res, url, parts))) {
       return;
     }
 
@@ -184,7 +358,91 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && url.pathname === "/api/auth/nonce") {
+      const body = await readJson(req);
+      const walletAddress = String(body.walletAddress || "");
+      if (isNonceRateLimited(walletAddress, getClientIp(req))) {
+        sendJson(res, 429, {
+          ok: false,
+          error: "rate_limited",
+          message: "Too many challenge requests. Try again shortly.",
+        }, req);
+        return;
+      }
+      try {
+        const result = await issueNonce(walletAddress);
+        sendJson(res, 200, result, req);
+      } catch (error) {
+        // Expected validation failure (session-service.issueNonce throws a
+        // typed AuthError for a malformed/empty wallet address): safe to
+        // echo back to the caller, same as before this fix. Anything else
+        // (e.g. a Postgres error out of the `insert into auth_nonces`
+        // call) is unexpected and must not leak internal detail to this
+        // unauthenticated, public route — rethrow so it's handled by the
+        // general catch-all below, which already redacts `error.message`
+        // per `process.env.NODE_ENV` (same pattern as every other
+        // unhandled error in this file).
+        if (error instanceof AuthError) {
+          sendJson(res, error.statusCode, {
+            ok: false,
+            error: error.code,
+            message: error.message,
+          }, req);
+          return;
+        }
+        throw error;
+      }
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/auth/session") {
+      if (isSessionRateLimited(getClientIp(req))) {
+        sendJson(res, 429, {
+          ok: false,
+          error: "rate_limited",
+          message: "Too many session exchange attempts. Try again shortly.",
+        }, req);
+        return;
+      }
+      const body = await readJson(req);
+      try {
+        const result = await createSessionFromSignature({ signature: body.signature });
+        await auditAuthEvent({
+          actorType: "wallet",
+          actorRef: result.walletAddress,
+          eventType: "auth_session_created",
+          entityType: "auth_session",
+          entityId: result.walletAddress,
+          eventData: { isAdmin: result.isAdmin },
+        });
+        sendJson(res, 200, result, req);
+      } catch (error) {
+        if (error instanceof AuthError) {
+          const declaredWallet = declaredWalletFromSignatureData(body?.signature);
+          await auditAuthEvent({
+            actorType: "wallet",
+            actorRef: declaredWallet || "unknown",
+            eventType: "auth_session_denied",
+            entityType: "auth_session",
+            entityId: declaredWallet || "unknown",
+            eventData: { reason: error.code },
+          });
+          sendJson(res, error.statusCode, {
+            ok: false,
+            error: error.code,
+            message: error.message,
+          }, req);
+          return;
+        }
+        throw error;
+      }
+      return;
+    }
+
     if (req.method === "GET" && url.pathname === "/api/admin/logs") {
+      if (!(await requireSession(req, res, url, parts, { admin: true }))) {
+        return;
+      }
       sendJson(res, 200, {
         entries: getRecentLogs(Number(url.searchParams.get("limit") || "200")),
       }, req);
@@ -437,11 +695,25 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/admin/registry-deployments") {
-      sendJson(res, 201, await saveAdminRegistryDeployment(await readJson(req)));
+      if (!(await requireSession(req, res, url, parts, { admin: true }))) {
+        return;
+      }
+      const body = await readJson(req);
+      sendJson(
+        res,
+        201,
+        await saveAdminRegistryDeployment({
+          ...body,
+          deployerWalletAddress: req.session.walletAddress,
+        }),
+      );
       return;
     }
 
     if (req.method === "GET" && url.pathname === "/api/admin/registry-deployments/latest") {
+      if (!(await requireSession(req, res, url, parts, { admin: true }))) {
+        return;
+      }
       sendJson(
         res,
         200,
@@ -455,6 +727,9 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/api/admin/registry-deployments") {
+      if (!(await requireSession(req, res, url, parts, { admin: true }))) {
+        return;
+      }
       sendJson(
         res,
         200,
@@ -494,7 +769,7 @@ const server = createServer(async (req, res) => {
         200,
         await approveDidRequestByHuman({
           requestId: parts[3],
-          humanWalletAddress: body.humanWalletAddress,
+          humanWalletAddress: req.session.walletAddress,
           requestedDid: body.requestedDid,
           onchainRequestTxId: body.onchainRequestTxId,
           onchainRequestTxHash: body.onchainRequestTxHash,
@@ -510,7 +785,7 @@ const server = createServer(async (req, res) => {
         200,
         await rejectDidRequestByHuman({
           requestId: parts[3],
-          humanWalletAddress: body.humanWalletAddress,
+          humanWalletAddress: req.session.walletAddress,
           reason: body.reason,
         }),
       );
@@ -524,7 +799,7 @@ const server = createServer(async (req, res) => {
         200,
         await approveProofRequestByHuman({
           proofRequestId: parts[3],
-          humanWalletAddress: body.humanWalletAddress,
+          humanWalletAddress: req.session.walletAddress,
           holderSignature: body.holderSignature,
         }),
       );
@@ -538,7 +813,7 @@ const server = createServer(async (req, res) => {
         200,
         await rejectProofRequestByHuman({
           proofRequestId: parts[3],
-          humanWalletAddress: body.humanWalletAddress,
+          humanWalletAddress: req.session.walletAddress,
           reason: body.reason,
         }),
       );
@@ -546,13 +821,16 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && parts[0] === "api" && parts[1] === "admin" && parts[2] === "did-requests" && parts[4] === "issue") {
+      if (!(await requireSession(req, res, url, parts, { admin: true }))) {
+        return;
+      }
       const body = await readJson(req);
       sendJson(
         res,
         200,
         await issueApprovedDidRequest({
           requestId: parts[3],
-          issuerWalletAddress: body.issuerWalletAddress,
+          issuerWalletAddress: req.session.walletAddress,
           didDocument: body.didDocument,
           onchainRequestTxId: body.onchainRequestTxId,
           onchainRequestTxHash: body.onchainRequestTxHash,
@@ -568,13 +846,15 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "DELETE" && parts[0] === "api" && parts[1] === "admin" && parts[2] === "proof-requests" && parts[3]) {
-      const body = await readJson(req).catch(() => ({}));
+      if (!(await requireSession(req, res, url, parts, { admin: true }))) {
+        return;
+      }
       sendJson(
         res,
         200,
         await deleteProofRequest({
           proofRequestId: parts[3],
-          adminWalletAddress: body.adminWalletAddress,
+          adminWalletAddress: req.session.walletAddress,
         }),
       );
       return;
@@ -596,13 +876,16 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && parts[0] === "api" && parts[1] === "admin" && parts[2] === "did-requests" && parts[4] === "reject") {
+      if (!(await requireSession(req, res, url, parts, { admin: true }))) {
+        return;
+      }
       const body = await readJson(req);
       sendJson(
         res,
         200,
         await rejectDidRequestByAdmin({
           requestId: parts[3],
-          adminWalletAddress: body.adminWalletAddress,
+          adminWalletAddress: req.session.walletAddress,
           reason: body.reason,
         }),
       );
@@ -831,13 +1114,25 @@ const server = createServer(async (req, res) => {
   }
 });
 
-initializeDatabaseWithRetry()
-  .then(() => {
-    server.listen(PORT, HOST, () => {
-      console.log(`[did-api] listening on http://${HOST}:${PORT}`);
+// Only auto-initialize the database and start listening when this file is
+// run directly (`node server/index.js` / `npm run dev:api`), not when it's
+// imported — e.g. by tests that need the `server` instance and the auth
+// gate functions without triggering a real DB connection or a real listen()
+// on import. Production behavior (`node server/index.js`) is unchanged.
+const isMainModule =
+  process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+
+if (isMainModule) {
+  initializeDatabaseWithRetry()
+    .then(() => {
+      server.listen(PORT, HOST, () => {
+        console.log(`[did-api] listening on http://${HOST}:${PORT}`);
+      });
+    })
+    .catch((error) => {
+      console.error("[did-api] failed to initialize database", error);
+      process.exit(1);
     });
-  })
-  .catch((error) => {
-    console.error("[did-api] failed to initialize database", error);
-    process.exit(1);
-  });
+}
+
+export { server, requireSession, isPublicApiRoute };

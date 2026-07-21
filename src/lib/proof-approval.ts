@@ -38,3 +38,33 @@ export async function signProofApprovalPayload(
 
   return signature;
 }
+
+/**
+ * Signs a wallet-session-login challenge (the canonical JSON envelope string
+ * returned by POST /api/auth/nonce) so it can be exchanged for a session via
+ * POST /api/auth/session. Mirrors signProofApprovalPayload's exact call shape
+ * (api.signData with { encoding: "text", keyType: "unshielded" }) — the two
+ * signing call sites share the same pattern by design (see technical spec
+ * ADR-003: domain separation comes from the *content* of the challenge
+ * string, not from a different signing mechanism).
+ */
+export async function signAuthChallenge(
+  api: ConnectedAPI,
+  challenge: string,
+): Promise<Signature> {
+  const signature = await api.signData(challenge, {
+    encoding: "text",
+    keyType: "unshielded",
+  });
+
+  console.info("[auth] wallet signature envelope", {
+    dataLength: String(signature.data || "").length,
+    dataPreview: String(signature.data || "").slice(0, 80),
+    signatureLength: String(signature.signature || "").length,
+    signaturePrefix: String(signature.signature || "").slice(0, 24),
+    verifyingKey: String(signature.verifyingKey || ""),
+    verifyingKeyLength: String(signature.verifyingKey || "").length,
+  });
+
+  return signature;
+}

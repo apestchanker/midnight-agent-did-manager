@@ -1,5 +1,7 @@
+import type { ConnectedAPI } from "@midnight-ntwrk/dapp-connector-api";
 import type { DidRecord } from "../types/did";
 import type {
+  AuthSession,
   BootstrapResponse,
   CredentialBundle,
   CustomerContext,
@@ -19,12 +21,34 @@ import type {
   VerifiableCredentialRow,
 } from "../types/service";
 import type { DeployResult } from "../types/did";
+import { signAuthChallenge } from "../lib/proof-approval";
 
 const API_BASE =
   (import.meta.env.VITE_DID_API_BASE_URL || "").trim() || "http://localhost:8787";
 const MCP_BASE =
   (import.meta.env.VITE_DID_MCP_BASE_URL || "").trim() || "http://localhost:8788";
-const API_AUTH_TOKEN = (import.meta.env.VITE_DID_API_AUTH_TOKEN || "").trim();
+
+// In-memory only (never persisted to storage, per ADR-002 in the technical
+// spec) — a wallet-session token obtained via login(). Lost on page reload,
+// which is intentional: re-authentication is a fresh challenge-response
+// round trip, not a stored-refresh-token flow.
+let currentSession: AuthSession | null = null;
+
+export function getAuthSession(): AuthSession | null {
+  return currentSession;
+}
+
+export function clearAuthSession(): void {
+  currentSession = null;
+}
+
+function authHeaders(): Headers {
+  const headers = new Headers();
+  if (currentSession?.token) {
+    headers.set("Authorization", `Bearer ${currentSession.token}`);
+  }
+  return headers;
+}
 
 function apiUrl(path: string): string {
   return `${API_BASE}${path}`;
@@ -49,8 +73,8 @@ async function readError(response: Response): Promise<string> {
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers || {});
-  if (API_AUTH_TOKEN && !headers.has("X-DID-API-Key")) {
-    headers.set("X-DID-API-Key", API_AUTH_TOKEN);
+  if (currentSession?.token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${currentSession.token}`);
   }
   const response = await fetch(apiUrl(path), {
     ...init,
@@ -62,6 +86,50 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+/**
+ * Wallet-session login (REQ-01/REQ-02): requests a one-time challenge for
+ * `walletAddress`, signs it with the connected wallet via signAuthChallenge
+ * (the same api.signData({ encoding: "text", keyType: "unshielded" }) call
+ * shape already used for proof approvals), exchanges the signature for a
+ * session, and stores the result in memory for subsequent requestJson calls
+ * to attach as `Authorization: Bearer <token>`.
+ */
+export async function login(
+  api: ConnectedAPI,
+  walletAddress: string,
+): Promise<AuthSession> {
+  const { challenge } = await requestJson<{
+    challenge: string;
+    nonce: string;
+    expiresAt: string;
+  }>("/api/auth/nonce", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ walletAddress }),
+  });
+
+  const signature = await signAuthChallenge(api, challenge);
+
+  const session = await requestJson<AuthSession>("/api/auth/session", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      signature: {
+        data: signature.data,
+        signature: signature.signature,
+        verifyingKey: signature.verifyingKey,
+      },
+    }),
+  });
+
+  currentSession = session;
+  return session;
+}
+
 export function checkDidServiceHealth(): Promise<{ ok: boolean }> {
   return requestJson("/health");
 }
@@ -71,10 +139,8 @@ export function fetchBackendLogs(limit = 200): Promise<{ entries: LogEntry[] }> 
 }
 
 export async function fetchMcpLogs(limit = 200): Promise<{ entries: LogEntry[] }> {
-  const headers = new Headers();
-  if (API_AUTH_TOKEN) headers.set("X-DID-API-Key", API_AUTH_TOKEN);
   const response = await fetch(mcpUrl(`/logs?limit=${encodeURIComponent(String(limit))}`), {
-    headers,
+    headers: authHeaders(),
   });
   if (!response.ok) {
     throw new Error(await readError(response));
@@ -85,11 +151,9 @@ export async function fetchMcpLogs(limit = 200): Promise<{ entries: LogEntry[] }
 export async function getCustomerByWallet(
   walletAddress: string,
 ): Promise<CustomerContext | null> {
-  const headers = new Headers();
-  if (API_AUTH_TOKEN) headers.set("X-DID-API-Key", API_AUTH_TOKEN);
   const response = await fetch(
     apiUrl(`/api/customers/by-wallet?walletAddress=${encodeURIComponent(walletAddress)}`),
-    { headers },
+    { headers: authHeaders() },
   );
   if (response.status === 404) return null;
   if (!response.ok) {

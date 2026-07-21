@@ -15,6 +15,7 @@ import { VcPanel } from "./components/VcPanel";
 import { TokenGatingPanel } from "./components/TokenGatingPanel";
 import type { DidRecord, DeployResult, RegistryAccess, RegistrySummary } from "./types/did";
 import type {
+  AuthSession,
   DidRequestRow,
   LogEntry,
   MidnightProofVerificationResult,
@@ -33,7 +34,9 @@ import {
   updateDidWithSync,
 } from "./lib/did/app-api";
 import { deriveSubjectNonceFromSeed } from "./lib/did/private-state";
+import { isAdminSession } from "./lib/auth-session";
 import {
+  clearAuthSession,
   createWalletDidRequest,
   fetchBackendLogs,
   fetchMcpLogs,
@@ -42,6 +45,7 @@ import {
   getLatestAdminRegistryDeployment,
   listDidRequests,
   listRegistryDids,
+  login,
   saveAdminRegistryDeployment,
   verifyUnifiedVPRequest,
 } from "./utils/serviceApi";
@@ -118,13 +122,13 @@ export default function App() {
   const rawEnv = import.meta.env as Record<string, string | undefined>;
   const appTitle = (rawEnv.VITE_APP_TITLE || "Midnight Agent DID Manager").trim();
   const versionedAppTitle = `${appTitle} v${APP_VERSION}`;
-  const configuredAdminShieldedAddress = (
-    rawEnv.VITE_ADMIN_WALLET_SHIELDED_ADDR ||
-    rawEnv.ADMIN_WALLET_SHIELDED_ADDR ||
-    ""
-  )
-    .trim()
-    .toLowerCase();
+  // REQ-06: VITE_ADMIN_WALLET_SHIELDED_ADDR is intentionally NOT read here for
+  // admin-gating purposes anymore — it was a client-side, unverified string
+  // comparison. Administrator UI is now derived from the server-determined
+  // `isAdmin` field of the wallet-session login response (see authSession /
+  // isConfiguredAdminWallet below). If this env var is ever needed again for
+  // unrelated display purposes, read it independently at that call site —
+  // do not wire it back into the admin-gating decision.
   const LAST_CONTRACT_KEY = "did-registry:last-contract-address:v1";
   const LAST_AGENT_KEY = "did-registry:last-agent-address:v1";
   const LAST_AGENT_SELECTION_KEY = "did-registry:last-agent-selection:v1";
@@ -200,6 +204,12 @@ export default function App() {
   const [backendLogs, setBackendLogs] = useState<LogEntry[]>([]);
   const [mcpLogs, setMcpLogs] = useState<LogEntry[]>([]);
   const [logsError, setLogsError] = useState("");
+  // REQ-01/REQ-02/REQ-06: server-issued wallet session (nonce -> signature ->
+  // session), obtained via serviceApi's login(). Administrator UI is derived
+  // from this session's `isAdmin` field, never from a client-side address
+  // comparison. Starts null (no session) until login() resolves.
+  const [authSession, setAuthSession] = useState<AuthSession | null>(null);
+  const [authSessionError, setAuthSessionError] = useState("");
   const agentCarouselRef = useRef<HTMLDivElement | null>(null);
   const adminDidCarouselRef = useRef<HTMLDivElement | null>(null);
   const registryCarouselRef = useRef<HTMLDivElement | null>(null);
@@ -214,13 +224,13 @@ export default function App() {
   );
 
   const walletAddress = useMemo(() => address || "", [address]);
-  const isConfiguredAdminWallet = useMemo(() => {
-    if (!configuredAdminShieldedAddress || !providers?.shieldedAddress) return false;
-    return (
-      providers.shieldedAddress.trim().toLowerCase() ===
-      configuredAdminShieldedAddress
-    );
-  }, [configuredAdminShieldedAddress, providers?.shieldedAddress]);
+  // REQ-06: administrator status comes solely from the server-determined
+  // `isAdmin` field of the authenticated wallet session, not from comparing
+  // the connected wallet against a client-side configured address.
+  const isConfiguredAdminWallet = useMemo(
+    () => isAdminSession(authSession),
+    [authSession],
+  );
   const hasLocalOwnerDeployment = Boolean(
     deployResult?.contractAddress &&
       contractAddress.trim() &&
@@ -421,6 +431,40 @@ export default function App() {
       setSelectedAgentKey("");
     }
   }, [walletAddress]);
+
+  // REQ-01/REQ-02/REQ-06: log in (nonce -> sign -> session) once a wallet is
+  // connected, so every subsequent private API call carries a real,
+  // server-verified session and admin-only UI reflects the server's
+  // determination rather than a client-side address comparison. Resets to
+  // "no session" whenever the wallet disconnects or changes.
+  useEffect(() => {
+    if (status !== "connected" || !api || !walletAddress.trim()) {
+      setAuthSession(null);
+      setAuthSessionError("");
+      clearAuthSession();
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const session = await login(api, walletAddress);
+        if (cancelled) return;
+        setAuthSession(session);
+        setAuthSessionError("");
+      } catch (error) {
+        if (cancelled) return;
+        setAuthSession(null);
+        setAuthSessionError(
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [status, api, walletAddress]);
 
   // tokenAPI is now an alias to the unified registry contract (same contract handles both gating + DID)
   useEffect(() => {
@@ -1653,6 +1697,12 @@ export default function App() {
                     {walletError}
                   </pre>
                 </details>
+              </div>
+            )}
+
+            {!authSession && authSessionError && (
+              <div className="bg-red-950/50 border border-red-800 rounded-lg p-4 text-red-300 text-sm">
+                <strong>⚠️ Session Error:</strong> Could not establish a signed-in session ({authSessionError}). Private actions and admin views are unavailable until you retry.
               </div>
             )}
 

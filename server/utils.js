@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { MidnightBech32m, UnshieldedAddress } from "@midnight-ntwrk/wallet-sdk-address-format";
 
 const DEFAULT_MAX_JSON_BODY_BYTES = 1024 * 1024;
 const DEFAULT_ALLOWED_ORIGINS = [
@@ -55,6 +56,17 @@ export function generateAgentId() {
 
 export function sha256Hex(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+export function encodeDerivedWalletAddress(rawAddressHex, networkId) {
+  try {
+    return MidnightBech32m.encode(
+      networkId || "preprod",
+      new UnshieldedAddress(Buffer.from(rawAddressHex, "hex")),
+    ).toString();
+  } catch {
+    return rawAddressHex;
+  }
 }
 
 export function createMcpKey() {
@@ -128,7 +140,7 @@ export function applyCorsHeaders(res, req) {
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
   res.setHeader(
     "Access-Control-Allow-Headers",
-    "Content-Type, X-MCP-Key, X-DID-API-Key, Authorization",
+    "Content-Type, X-MCP-Key, Authorization",
   );
 }
 
@@ -160,4 +172,22 @@ export function buildDid({ networkId, contractAddress, agentId }) {
 
 export function parseRequestPath(pathname) {
   return pathname.split("/").filter(Boolean);
+}
+
+// Render (and most reverse proxies/load balancers) terminate the client TCP
+// connection themselves, so req.socket.remoteAddress on the app process is
+// always the proxy's own address — identical for every request regardless
+// of which real client sent it. Render confirms it fills in the standard
+// X-Forwarded-For header with the real client IP as the FIRST entry in the
+// (possibly multi-hop) comma-separated list. Used anywhere a caller's
+// source IP is needed for rate-limiting keys; falls back to
+// req.socket?.remoteAddress for local/dev environments with no proxy in
+// front (where X-Forwarded-For is never set).
+export function getClientIp(req) {
+  const forwardedFor = req?.headers?.["x-forwarded-for"];
+  if (typeof forwardedFor === "string" && forwardedFor.trim()) {
+    const first = forwardedFor.split(",")[0]?.trim();
+    if (first) return first;
+  }
+  return req?.socket?.remoteAddress || "";
 }

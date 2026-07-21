@@ -1,3 +1,10 @@
+export interface AuthSession {
+  token: string;
+  walletAddress: string;
+  isAdmin: boolean;
+  expiresAt: string;
+}
+
 export interface Customer {
   id: string;
   email: string;
