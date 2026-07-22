@@ -106,9 +106,67 @@ renamed in `contracts/*.compact.template`:
 (including Render) unless a proper builtin-key shim (a `SYSTEM_KEYS`
 lookup like `midnightntwrk/passport`'s, checked *before* falling through
 to the contract's own `ZKConfigProvider`) is implemented in
-`lib/providers.ts`. Unset, the wallet handles protocol builtins natively
-and correctly; our own `ZKConfigProvider` only ever needs to know about
-our own contract's circuits, which is the case it's actually built for.
-If a configured HTTP proof server is ever genuinely needed again (e.g. no
-wallet available), implement the shim first — don't just point the env
-var at a URL.
+`lib/providers.ts`. If a configured HTTP proof server is ever genuinely
+needed again (e.g. no wallet available), implement the shim first — don't
+just point the env var at a URL.
+
+## Update (2026-07-22): unsetting it was not sufficient — some wallets don't resolve builtins internally either
+
+The original recommendation above ("unset it, the wallet handles
+protocol builtins natively") turned out to be **wallet-specific, not
+universal**. Confirmed in production: with `VITE_PROVER_SERVER_URI`
+correctly unset, deploying + calling `register_initial_admin` (the first
+circuit in this contract to call `mintShieldedToken`, so the first to ever
+need a `midnight/zswap/output` proof) still 404'd fetching
+`midnight%2Fzswap%2Foutput.{prover,verifier,bzkir}` from our own site and
+timed out — with the **1AM** wallet extension. The reference
+`midnight-wallet` SDK's `WasmProver.ts` (which Lace is built on) does
+resolve these builtins internally from a fixed source without ever asking
+the DApp's `ZKConfigProvider`; 1AM apparently does not implement the same
+shortcut and falls back to asking us for them, same as a self-hosted HTTP
+proof server would.
+
+Since this project intentionally supports multiple wallets (not just
+Lace), the fix had to work regardless of which wallet resolves proving —
+so we now **serve the four protocol builtin keys ourselves**, same-origin,
+sidestepping this entirely:
+
+- `midnight/zswap/spend`, `midnight/zswap/output`, `midnight/zswap/sign`,
+  `midnight/dust/spend` — each as `.prover`/`.verifier` (in `keys/`) and
+  `.bzkir` (in `zkir/`), named exactly as `NormalizedFetchZkConfigProvider`
+  requests them: `${encodeURIComponent(circuitId)}${extension}` — a flat
+  filename literally containing `%2F`, e.g.
+  `public/contracts/managed/did-registry/keys/midnight%2Fzswap%2Foutput.prover`.
+  Static file servers (Vite dev, Render's static hosting) do not decode
+  `%2F` back to `/` when resolving a path to a file, so this flat,
+  literally-percent-encoded filename is what actually needs to exist on
+  disk — not a `midnight/zswap/` subdirectory.
+- Sourced from `https://srs.midnight.network/{zswap,dust}/9/*` — verified
+  via real HTTP fetch (`200`, correct binary `Content-Length` for all 12
+  files, not HTML error pages). The `9` is the `midnight-ledger-static`
+  crate version, confirmed via source inspection
+  (`midnight-ledger/static/version`, and its use in
+  `zswap/src/prove.rs`/`ledger/src/dust.rs` to build these exact path
+  strings) to be the correct pin for `@midnight-ntwrk/ledger-v8 ^8.1.0` —
+  it is a separate, independently-versioned artifact namespace from the
+  ledger-wasm package's own `8.x` version, not something to guess by
+  trial and error.
+- **Both verified public sources for these files**
+  (`midnight-s3-fileshare-dev-eu-west-1.s3.eu-west-1.amazonaws.com` and
+  `srs.midnight.network`) **lack CORS headers** (`OPTIONS` preflight →
+  `403`, no `Access-Control-Allow-Origin`). A direct browser-side fetch to
+  either from our own DApp code (replicating `midnight-wallet`'s
+  `SYSTEM_KEYS` pattern client-side) would likely be blocked by the
+  browser's CORS policy — wallet extensions can get away with this fetch
+  because extensions have relaxed cross-origin permissions a regular
+  webpage does not. Fetching the files once (server-side, e.g. via
+  `curl`, no browser involved) and committing them to serve same-origin
+  avoids this entirely, and is why that's the fix here rather than a
+  client-side `SYSTEM_KEYS` shim.
+- Only needed for circuits that actually call `mintShieldedToken` (or
+  otherwise construct a shielded output/spend) — most of this contract's
+  admin-gated circuits only *spend* existing capability-token coins via
+  `consumeAdminToken()`/`consumeToken()`, which is a different operation.
+  If a future circuit is added to a *different* managed contract
+  (`native-ownership-proof`, etc.) and also mints, the same 4×3 files need
+  to be copied into that contract's `keys/`/`zkir/` directories too.
