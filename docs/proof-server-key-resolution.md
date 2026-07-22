@@ -133,14 +133,23 @@ sidestepping this entirely:
 
 - `midnight/zswap/spend`, `midnight/zswap/output`, `midnight/zswap/sign`,
   `midnight/dust/spend` — each as `.prover`/`.verifier` (in `keys/`) and
-  `.bzkir` (in `zkir/`), named exactly as `NormalizedFetchZkConfigProvider`
-  requests them: `${encodeURIComponent(circuitId)}${extension}` — a flat
-  filename literally containing `%2F`, e.g.
-  `public/contracts/managed/did-registry/keys/midnight%2Fzswap%2Foutput.prover`.
-  Static file servers (Vite dev, Render's static hosting) do not decode
-  `%2F` back to `/` when resolving a path to a file, so this flat,
-  literally-percent-encoded filename is what actually needs to exist on
-  disk — not a `midnight/zswap/` subdirectory.
+  `.bzkir` (in `zkir/`). `NormalizedFetchZkConfigProvider` requests them as
+  `${encodeURIComponent(circuitId)}${extension}`, e.g. a GET for
+  `keys/midnight%2Fzswap%2Foutput.prover`. **Correction, found the hard way
+  in production**: an earlier version of this fix placed a file literally
+  named with the percent-encoded string as its filename (`midnight%2Fzswap%2Foutput.prover`,
+  no subdirectory) — that is wrong. Render's edge (Cloudflare-fronted, and
+  this is standard behavior for most CDNs/static hosts, not unusual)
+  decodes `%2F` back to `/` before resolving the static file, so the
+  request above actually needs a real `midnight/zswap/output.prover` file
+  under a `midnight/zswap/` subdirectory, not a flat percent-encoded
+  filename. Confirmed by curling the flat-filename version on the live
+  deployment (`404`) after confirming it built into `dist/` correctly —
+  the mismatch was purely at the hosting layer, not the build. Verify with
+  a real HTTP request against the deployed origin before trusting either
+  layout — a local filesystem check (`find`/`ls`) proves the build step
+  worked, not that the hosting layer serves it at the URL the app actually
+  requests.
 - Sourced from `https://srs.midnight.network/{zswap,dust}/9/*` — verified
   via real HTTP fetch (`200`, correct binary `Content-Length` for all 12
   files, not HTML error pages). The `9` is the `midnight-ledger-static`
@@ -170,3 +179,32 @@ sidestepping this entirely:
   If a future circuit is added to a *different* managed contract
   (`native-ownership-proof`, etc.) and also mints, the same 4×3 files need
   to be copied into that contract's `keys/`/`zkir/` directories too.
+
+## `VITE_PROVER_SERVER_URI` and CORS on `/prove` itself
+
+Separate from key/ZKIR resolution: `proof-server.preprod.midnight.network`'s
+actual `/prove` endpoint also has **no CORS headers** — a browser-side
+`fetch()` to it (which is what `httpClientProvingProvider` does when
+`VITE_PROVER_SERVER_URI` is configured) is blocked outright
+(`Access-Control-Allow-Origin` missing, `TypeError: Failed to fetch`).
+This isn't specific to this one proof server — every external proof
+server tried so far (1AM's, the official preprod one) has failed for a
+CORS-shaped or CORS-adjacent reason when called directly from page JS.
+Confirmed in `lib/providers.ts`'s own fallback path
+(`configuredProofProvider` failing → `[providers] configured proof server
+... failed, falling back to wallet prover`), the code already handles
+this gracefully by falling back to wallet-delegated proving per proof —
+but that fallback still costs a failed round trip per proof needed in the
+transaction, and depends on the wallet's own proving succeeding after it.
+
+Given both the key-serving problem (above) and this CORS problem are
+solved by *not* going through an external HTTP proof server from the
+browser at all, the working configuration for this project is:
+**`VITE_PROVER_SERVER_URI` unset**, wallet-delegated proving only, with
+this project's own `zkConfigProvider` serving both the contract's own
+circuits and the four protocol builtins (see above) so any wallet's
+delegated proving can resolve everything it needs from our own origin.
+A self-hosted proof server would need to be reachable through something
+other than a direct browser `fetch()` (e.g. proxied through this
+project's own backend, which isn't subject to browser CORS) to be a
+viable alternative.
