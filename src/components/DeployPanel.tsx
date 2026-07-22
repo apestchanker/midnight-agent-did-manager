@@ -15,9 +15,11 @@ export function DeployPanel({ providers, onDeployed }: DeployPanelProps) {
   const {
     step1,
     step3,
+    step4,
     lastDeployResult,
     handleLoadArtifacts,
     handleDeployUnified,
+    handleInitAdmin,
   } = useDeployFlow(providers, onDeployed);
 
   return (
@@ -28,8 +30,8 @@ export function DeployPanel({ providers, onDeployed }: DeployPanelProps) {
           Deploy DID Registry
         </CardTitle>
         <CardDescription className="text-zinc-400">
-          Two-step deploy on {providers.networkId}: load compiled artifacts, then deploy the unified
-          registry contract (token gating + DID operations in one atomic ZK contract).
+          Three-step deploy on {providers.networkId}: load compiled artifacts, deploy the unified
+          registry contract, then initialize the admin token as its own separate transaction.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -111,6 +113,47 @@ export function DeployPanel({ providers, onDeployed }: DeployPanelProps) {
           {step3.error && (
             <div className="rounded-md border border-red-800 bg-red-950/40 p-2">
               <p className="text-xs text-red-300">{step3.error}</p>
+            </div>
+          )}
+        </div>
+
+        {/* Step 3 — Initialize Admin (second, separate transaction) */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-medium text-zinc-300 flex items-center gap-1">
+              {!step3.done && <Lock className="h-3 w-3 text-zinc-500" />}
+              Step 3: Initialize Admin
+            </label>
+            {step4.done && (
+              <span className="text-xs text-emerald-400 flex items-center gap-1">
+                <BadgeCheck className="h-3 w-3" /> Admin Initialized
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-zinc-500">
+            Mints the genesis admin token in a second, separate transaction. First caller to run
+            this after deploy becomes admin — retry here any time, no need to redeploy.
+          </p>
+          <Button
+            type="button"
+            onClick={handleInitAdmin}
+            disabled={!step3.done || step4.loading}
+            className="w-full bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {step4.loading
+              ? "Initializing..."
+              : step4.done
+              ? "Re-run Initialize Admin"
+              : "Initialize Admin"}
+          </Button>
+          {step4.message && (
+            <div className="rounded-md border border-emerald-800 bg-emerald-950/30 p-2">
+              <p className="text-xs text-emerald-200">{step4.message}</p>
+            </div>
+          )}
+          {step4.error && (
+            <div className="rounded-md border border-red-800 bg-red-950/40 p-2">
+              <p className="text-xs text-red-300">{step4.error}</p>
             </div>
           )}
         </div>

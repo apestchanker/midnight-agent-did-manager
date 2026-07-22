@@ -52,6 +52,17 @@ export async function compileDidRegistry(
 /**
  * Deploy the unified DID registry + token-gating contract (v3).
  * No separate token-gating contract needed — everything is in one contract.
+ *
+ * Owner decision, 2026-07-21 (see the extensive comment on the Compact
+ * constructor in did_registry.compact.template — do not revert without the
+ * project owner's explicit sign-off): deploy and the genesis admin token
+ * mint are two separate transactions, not one atomic tx. This function only
+ * performs the first (deploy) — call initializeAdmin() as a separate,
+ * explicit step once this resolves. Splitting them into distinct UI actions
+ * (rather than chaining them in one function) makes each transaction
+ * independently retryable and easier to debug against remote infra, where
+ * failures in the second step were previously indistinguishable from
+ * failures in the first.
  */
 export async function deployUnifiedRegistry(
   providers: AppProviders,
@@ -67,17 +78,6 @@ export async function deployUnifiedRegistry(
   const api = await UnifiedRegistryAPI.deploy(providers);
   const deployed = api.getDeployMetadata();
 
-  // Owner decision, 2026-07-21 (see the extensive comment on the Compact
-  // constructor in did_registry.compact.template — do not revert without the
-  // project owner's explicit sign-off): deploy and the genesis admin token
-  // mint are now two separate transactions instead of one atomic tx. This is
-  // the second step, run immediately after deploy succeeds. If it fails, the
-  // contract is deployed but has no admin yet — surface the deploy tx info
-  // regardless and let the error propagate so the caller knows to retry
-  // registerInitialAdmin() (or redeploy, per the owner's accepted
-  // race-condition mitigation) rather than silently reporting full success.
-  const adminRegistration = await api.registerInitialAdmin();
-
   const result: DeployResult = {
     contractAddress: api.contractAddress,
     txHash: String(deployed?.public?.txHash || ""),
@@ -86,10 +86,8 @@ export async function deployUnifiedRegistry(
     mode: "onchain",
     deployedAt: new Date().toISOString(),
     networkId: providers.networkId,
-    initializeTxHash: adminRegistration.txHash,
-    initializeTxId: adminRegistration.txId,
     message:
-      "Unified DID registry deployed to Midnight. Token gating and DID operations share this single contract. The genesis admin token was minted in a second, separate transaction right after deploy (owner-approved two-step bootstrap, 2026-07-21).",
+      "Unified DID registry deployed to Midnight. Token gating and DID operations share this single contract. No admin token exists yet — run Initialize Admin as a separate step.",
   };
 
   saveDeployment({
@@ -98,6 +96,28 @@ export async function deployUnifiedRegistry(
     deployedAt: result.deployedAt || new Date().toISOString(),
   });
   return result;
+}
+
+/**
+ * Second step of the two-transaction admin bootstrap (see
+ * deployUnifiedRegistry() above and the owner decision it references): mints
+ * the genesis admin token to the caller's wallet on an already-deployed
+ * contract. Rejoins the contract by address rather than reusing a live
+ * UnifiedRegistryAPI instance, so this can be called as its own action any
+ * time after deploy — including in a later session, or as a retry after a
+ * prior attempt failed — not only immediately after deploy() resolves.
+ */
+export async function initializeAdmin(
+  providers: AppProviders,
+  contractAddress: string,
+): Promise<{ initializeTxHash: string; initializeTxId?: string }> {
+  const { UnifiedRegistryAPI } = await import("../registry/unified-registry-api");
+  const api = await UnifiedRegistryAPI.join(providers, contractAddress);
+  const adminRegistration = await api.registerInitialAdmin();
+  return {
+    initializeTxHash: adminRegistration.txHash,
+    initializeTxId: adminRegistration.txId,
+  };
 }
 
 export async function requestDidWithSync(
