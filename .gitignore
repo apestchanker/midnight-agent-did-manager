@@ -31,6 +31,10 @@ outputs/
 repo-map.html
 .claude/
 vendor/
+
+# Local-only: never publish to the remote (security audit findings, local proxy checks)
+docs/security-audit-2026-07-09.md
+scripts/anthropic-proxy.py
 artifacts/sdk-package-src/
 artifacts/sdk-package-src/**
 !artifacts/sdk/
