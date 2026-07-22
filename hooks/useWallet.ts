@@ -90,7 +90,14 @@ export function useWallet(storageMode: StorageMode = "app_local") {
       setSelectedWalletName(resolvedWalletName);
       setStatus("disconnected");
     });
-  }, [clearPersistedSelection, persistSelectedWallet, selectedWalletName]);
+    // Mount-only: this detects available wallets and resolves an initial
+    // selection once. It must NOT re-run when selectedWalletName changes —
+    // doing so previously re-read the (stale) persisted wallet from
+    // localStorage and forced the user's live dropdown pick back to
+    // whatever was last connected, since persistSelectedWallet() is only
+    // called on a successful connect, not on every selection change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clearPersistedSelection, persistSelectedWallet]);
 
   const reconnectApi = useCallback(
     async (walletNameOverride?: string): Promise<ConnectedAPI> => {
