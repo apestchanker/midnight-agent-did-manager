@@ -91,15 +91,14 @@ export async function connectWallet(preferredWalletName?: string): Promise<{
   for (const net of networks) {
     try {
       console.log("[Wallet] Trying network:", net);
-      const api = await Promise.race([
-        selected.connect(net as never),
-        new Promise<never>((_, rej) =>
-          setTimeout(
-            () => rej(new Error("Connection timeout after 15s")),
-            15000,
-          ),
-        ),
-      ]);
+      // No artificial timeout here: connect() is what triggers the wallet's
+      // "approve this site" prompt, which some wallets open in a detached
+      // window instead of the extension's anchored popup. Racing that
+      // against a short clock abandons the promise (and the app's view of
+      // the connection) while the user is still mid-approval in that
+      // window, even though the wallet itself would have resolved fine —
+      // this must wait as long as the human interaction actually takes.
+      const api = await selected.connect(net as never);
       const config = await api.getConfiguration();
       console.log("[Wallet] Connected on " + config.networkId, config);
       return { api, config, walletName: selected.name };
