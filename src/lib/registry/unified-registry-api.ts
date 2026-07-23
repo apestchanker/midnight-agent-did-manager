@@ -2,6 +2,7 @@ import { deployContract, findDeployedContract } from "@midnight-ntwrk/midnight-j
 import { from, map, shareReplay, switchMap, type Observable } from "rxjs";
 import * as CompactCompiledContract from "@midnight-ntwrk/compact-js/effect/CompiledContract";
 import type { AppProviders } from "../../../lib/providers";
+import { logRawWalletError } from "../../../lib/providers";
 import { fromHex, toHex } from "../../../lib/wallet-bridge";
 // toHex re-exported for ledger helpers that require it as a parameter
 import { extractContractAddress } from "../did/runtime";
@@ -371,12 +372,8 @@ export class UnifiedRegistryAPI {
         ) => Promise<{ public: { txHash: string; txId?: string }; result: Uint8Array }>
       )(coin, opts.subjectNonce);
     } catch (error) {
-      console.error("[gatedSelfRegisterDid] callTx.gated_self_register_did threw", {
+      logRawWalletError("gatedSelfRegisterDid: callTx.gated_self_register_did", error, {
         durationMs: Date.now() - callStartedAt,
-        errorName: error instanceof Error ? error.name : typeof error,
-        errorMessage: error instanceof Error ? error.message : String(error),
-        errorStack: error instanceof Error ? error.stack : undefined,
-        errorCause: error instanceof Error ? (error as { cause?: unknown }).cause : undefined,
         colorHex,
         contractAddress: this.contractAddress,
       });

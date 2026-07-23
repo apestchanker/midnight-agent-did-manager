@@ -36,37 +36,74 @@ import { fromHex, toHex } from "./wallet-bridge";
 // (message, name, stack, cause chain, and any non-standard own properties)
 // at the actual call site, before it reaches that wrapper, so a future
 // failure is actually debuggable instead of opaque.
-function logRawWalletError(context: string, error: unknown, extra?: Record<string, unknown>): void {
-  const parts: Record<string, unknown> = { context, ...extra };
-  if (error instanceof Error) {
-    parts.name = error.name;
-    parts.message = error.message;
-    parts.stack = error.stack;
-    parts.ownProps = Object.fromEntries(
-      Object.getOwnPropertyNames(error)
-        .filter((k) => !["name", "message", "stack"].includes(k))
-        .map((k) => [k, (error as unknown as Record<string, unknown>)[k]]),
-    );
-    let cause: unknown = (error as { cause?: unknown }).cause;
-    let depth = 0;
-    while (cause && depth < 5) {
-      const causeInfo: Record<string, unknown> =
-        cause instanceof Error
-          ? { name: cause.name, message: cause.message, stack: cause.stack }
-          : { value: cause };
-      parts[`cause_${depth}`] = causeInfo;
-      cause = cause instanceof Error ? (cause as { cause?: unknown }).cause : undefined;
-      depth += 1;
-    }
-  } else {
-    parts.rawValue = error;
+// Deeply walks an arbitrary value (Error, Effect-TS FiberFailure/Cause,
+// plain object, whatever the wallet connector actually throws) into a
+// plain JSON-serializable tree, so it can be logged as a single STRING via
+// JSON.stringify rather than a lazily-expandable console object reference.
+// The first attempt at this (a shallow error.cause walk) printed
+// `cause_0: {value: {…}}` — still collapsed, still useless when copy-pasted
+// from the console. This recurses through own properties (including
+// non-enumerable ones on Error/its prototype chain) up to a bounded depth,
+// with cycle detection, and stringifies BigInt/Uint8Array/Map/Set so
+// nothing gets silently dropped by JSON.stringify's defaults.
+export function deepSerializeForLog(value: unknown, seen: WeakSet<object> = new WeakSet(), depth = 0): unknown {
+  if (depth > 8) return "<max depth reached>";
+  if (value === null || value === undefined) return value;
+  if (typeof value === "bigint") return `${value.toString()}n`;
+  if (typeof value === "function") return `<function ${value.name || "anonymous"}>`;
+  if (value instanceof Uint8Array) return `<Uint8Array len=${value.length} hex=${Array.from(value.slice(0, 64)).map((b) => b.toString(16).padStart(2, "0")).join("")}${value.length > 64 ? "..." : ""}>`;
+  if (typeof value !== "object") return value;
+  if (seen.has(value as object)) return "<circular>";
+  seen.add(value as object);
+
+  if (Array.isArray(value)) {
+    return value.map((v) => deepSerializeForLog(v, seen, depth + 1));
+  }
+  if (value instanceof Map) {
+    return { __type: "Map", entries: Array.from(value.entries()).map(([k, v]) => [deepSerializeForLog(k, seen, depth + 1), deepSerializeForLog(v, seen, depth + 1)]) };
+  }
+  if (value instanceof Set) {
+    return { __type: "Set", values: Array.from(value.values()).map((v) => deepSerializeForLog(v, seen, depth + 1)) };
+  }
+
+  const out: Record<string, unknown> = {};
+  if (value instanceof Error) {
+    out.__errorName = value.name;
+    out.__errorMessage = value.message;
+    out.__errorStack = value.stack;
+  }
+  // Object.getOwnPropertyNames catches non-enumerable props too (Error.message
+  // is non-enumerable, and Effect's FiberFailure/Cause classes commonly use
+  // non-enumerable fields as well) -- plain `for...in`/Object.entries misses
+  // exactly the properties we need here.
+  for (const key of Object.getOwnPropertyNames(value)) {
+    if (key === "stack") continue; // already captured above for Errors, noisy otherwise
     try {
-      parts.jsonAttempt = JSON.stringify(error);
-    } catch {
-      parts.jsonAttempt = "<not JSON-serializable>";
+      out[key] = deepSerializeForLog((value as Record<string, unknown>)[key], seen, depth + 1);
+    } catch (e) {
+      out[key] = `<unreadable: ${e instanceof Error ? e.message : String(e)}>`;
     }
   }
-  console.error(`[providers][RAW WALLET ERROR] ${context}`, parts);
+  return out;
+}
+
+export function logRawWalletError(context: string, error: unknown, extra?: Record<string, unknown>): void {
+  const payload = {
+    context,
+    ...extra,
+    errorType: error instanceof Error ? error.constructor.name : typeof error,
+    serialized: deepSerializeForLog(error),
+  };
+  let text: string;
+  try {
+    text = JSON.stringify(payload, null, 2);
+  } catch (e) {
+    text = `<JSON.stringify failed: ${e instanceof Error ? e.message : String(e)}> raw=${String(error)}`;
+  }
+  // Logged as a single string (not an object) so the whole tree prints as
+  // copy-pasteable text instead of a console object reference the next
+  // person has to click through node by node.
+  console.error(`[providers][RAW WALLET ERROR] ${context}\n${text}`);
 }
 
 const MANAGED_CONTRACT_PATH =
