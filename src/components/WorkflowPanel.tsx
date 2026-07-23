@@ -127,8 +127,14 @@ function renderActionTokenGrantTotals(
     }, 0);
   }
 
+  // Clamp to 0: on-chain balance is the source of truth and can legitimately
+  // exceed what this contract's DB grant rows add up to (e.g. a grant whose
+  // mint succeeded on-chain but whose recordActionTokenGrant() call failed —
+  // see resolveCustomerForActionTokenGrant). Showing a negative "Used" count
+  // in that case is confusing rather than informative; 0 communicates "we
+  // can't attribute usage to a grant record" without implying negative use.
   const usedDisplay = onChainRemaining !== null
-    ? granted - onChainRemaining
+    ? Math.max(0, granted - onChainRemaining)
     : current.reduce((sum, g) => sum + Number(g.credits_used || 0), 0);
   const remainingDisplay = onChainRemaining !== null ? onChainRemaining : Math.max(0, granted - usedDisplay);
   const isOnChain = onChainRemaining !== null;
