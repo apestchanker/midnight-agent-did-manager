@@ -213,15 +213,23 @@ export class UnifiedRegistryAPI {
       bigint
     >;
     const verifiedColors = await this.fetchVerifiedTokenColors(Object.keys(rawBalances));
+    console.debug("[_buildCoin] wallet balances vs. verified (valid_colors) colors", {
+      allBalances: Object.fromEntries(
+        Object.entries(rawBalances).map(([k, v]) => [k, String(v)]),
+      ),
+      verifiedColors: Array.from(verifiedColors),
+    });
 
     for (const colorHex of verifiedColors) {
       const bal = rawBalances[colorHex];
+      console.debug("[_buildCoin] checking verified color", { colorHex, balance: bal !== undefined ? String(bal) : undefined });
       if (bal !== undefined && BigInt(bal) >= 2n) {
         // value: 2n = 1 credit spent + 1 permanent anchor retained by the contract.
         // The wallet SDK exposes aggregate balances, not individual UTXOs.
         // If the balance >= 2n comes from many small UTXOs (each < 2n), the ZK proof
         // will fail at runtime with a coin-not-found error. Normal mint flow (batches of 5+)
         // avoids this; users with heavily fragmented wallets should request a re-mint.
+        console.debug("[_buildCoin] selected coin", { colorHex, aggregateBalance: String(bal), syntheticValue: "2" });
         return {
           coin: {
             nonce: crypto.getRandomValues(new Uint8Array(32)),
@@ -232,6 +240,10 @@ export class UnifiedRegistryAPI {
         };
       }
     }
+    console.error("[_buildCoin] no verified color had balance >= 2n", {
+      allBalances: Object.fromEntries(Object.entries(rawBalances).map(([k, v]) => [k, String(v)])),
+      verifiedColors: Array.from(verifiedColors),
+    });
     throw new Error(
       "No spendable action credits found. Your wallet needs shielded tokens with at least 2 units in a single coin.",
     );
@@ -342,14 +354,38 @@ export class UnifiedRegistryAPI {
     organizationDisclosure?: "disclosed" | "undisclosed";
     didDocument?: string;
   }): Promise<DidRecord> {
-    const { coin } = await this._buildCoin();
+    const { coin, colorHex } = await this._buildCoin();
+    console.debug("[gatedSelfRegisterDid] built coin, calling callTx.gated_self_register_did", {
+      colorHex,
+      contractAddress: this.contractAddress,
+      subjectNonceHex: toHex(opts.subjectNonce),
+    });
 
-    const tx = await (
-      this.contract.callTx.gated_self_register_did as (
-        coin: ShieldedCoin,
-        subjectNonce: Uint8Array,
-      ) => Promise<{ public: { txHash: string; txId?: string }; result: Uint8Array }>
-    )(coin, opts.subjectNonce);
+    const callStartedAt = Date.now();
+    let tx;
+    try {
+      tx = await (
+        this.contract.callTx.gated_self_register_did as (
+          coin: ShieldedCoin,
+          subjectNonce: Uint8Array,
+        ) => Promise<{ public: { txHash: string; txId?: string }; result: Uint8Array }>
+      )(coin, opts.subjectNonce);
+    } catch (error) {
+      console.error("[gatedSelfRegisterDid] callTx.gated_self_register_did threw", {
+        durationMs: Date.now() - callStartedAt,
+        errorName: error instanceof Error ? error.name : typeof error,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorStack: error instanceof Error ? error.stack : undefined,
+        errorCause: error instanceof Error ? (error as { cause?: unknown }).cause : undefined,
+        colorHex,
+        contractAddress: this.contractAddress,
+      });
+      throw error;
+    }
+    console.debug("[gatedSelfRegisterDid] callTx.gated_self_register_did succeeded", {
+      durationMs: Date.now() - callStartedAt,
+      txHash: tx.public.txHash,
+    });
 
     const didKeyHex = toHex(tx.result);
     const did = await createDidIdentifier(

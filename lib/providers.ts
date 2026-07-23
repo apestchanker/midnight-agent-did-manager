@@ -27,6 +27,48 @@ import { levelPrivateStateProvider } from "@midnight-ntwrk/midnight-js-level-pri
 import { requestWalletPermissionsIfSupported } from "./wallet-permissions";
 import { fromHex, toHex } from "./wallet-bridge";
 
+// Diagnostic logging added 2026-07-23 while debugging a "Unexpected error
+// submitting scoped transaction '<unnamed>': Error" failure from
+// gated_self_register_did: midnight-js-contracts wraps whatever the wallet
+// connector throws with `String(err)`, which collapses a bare `new Error()`
+// (no message) down to the literal text "Error" -- all diagnostic
+// information is lost at that wrapping point. This logs the RAW error
+// (message, name, stack, cause chain, and any non-standard own properties)
+// at the actual call site, before it reaches that wrapper, so a future
+// failure is actually debuggable instead of opaque.
+function logRawWalletError(context: string, error: unknown, extra?: Record<string, unknown>): void {
+  const parts: Record<string, unknown> = { context, ...extra };
+  if (error instanceof Error) {
+    parts.name = error.name;
+    parts.message = error.message;
+    parts.stack = error.stack;
+    parts.ownProps = Object.fromEntries(
+      Object.getOwnPropertyNames(error)
+        .filter((k) => !["name", "message", "stack"].includes(k))
+        .map((k) => [k, (error as unknown as Record<string, unknown>)[k]]),
+    );
+    let cause: unknown = (error as { cause?: unknown }).cause;
+    let depth = 0;
+    while (cause && depth < 5) {
+      const causeInfo: Record<string, unknown> =
+        cause instanceof Error
+          ? { name: cause.name, message: cause.message, stack: cause.stack }
+          : { value: cause };
+      parts[`cause_${depth}`] = causeInfo;
+      cause = cause instanceof Error ? (cause as { cause?: unknown }).cause : undefined;
+      depth += 1;
+    }
+  } else {
+    parts.rawValue = error;
+    try {
+      parts.jsonAttempt = JSON.stringify(error);
+    } catch {
+      parts.jsonAttempt = "<not JSON-serializable>";
+    }
+  }
+  console.error(`[providers][RAW WALLET ERROR] ${context}`, parts);
+}
+
 const MANAGED_CONTRACT_PATH =
   (import.meta.env.VITE_MANAGED_CONTRACT_PATH || "").trim() ||
   "/contracts/managed/did-registry";
@@ -518,18 +560,37 @@ export async function buildProviders(
   let currentApi = api;
 
   const withWalletRetry = async <T>(operation: (connectedApi: ConnectedAPI) => Promise<T>): Promise<T> => {
+    const startedAt = Date.now();
     try {
       await ensureWalletSession(currentApi);
-      return await operation(currentApi);
+      const result = await operation(currentApi);
+      console.debug("[providers] withWalletRetry succeeded", { durationMs: Date.now() - startedAt });
+      return result;
     } catch (error) {
+      logRawWalletError("withWalletRetry (first attempt)", error, {
+        durationMs: Date.now() - startedAt,
+        willRetry: isWalletDisconnectedError(error) && !!options.reconnect,
+      });
       if (!isWalletDisconnectedError(error) || !options.reconnect) {
         throw error;
       }
 
-      currentApi = await options.reconnect();
-      options.onReconnect?.(currentApi);
-      await ensureWalletSession(currentApi);
-      return operation(currentApi);
+      const retryStartedAt = Date.now();
+      try {
+        currentApi = await options.reconnect();
+        options.onReconnect?.(currentApi);
+        await ensureWalletSession(currentApi);
+        const result = await operation(currentApi);
+        console.debug("[providers] withWalletRetry succeeded on retry", {
+          durationMs: Date.now() - retryStartedAt,
+        });
+        return result;
+      } catch (retryError) {
+        logRawWalletError("withWalletRetry (retry attempt)", retryError, {
+          durationMs: Date.now() - retryStartedAt,
+        });
+        throw retryError;
+      }
     }
   };
 
@@ -629,11 +690,29 @@ export async function buildProviders(
     getEncryptionPublicKey: () =>
       shielded.shieldedEncryptionPublicKey as never,
     async balanceTx(tx) {
-      const result = await withWalletRetry((connectedApi) =>
-        connectedApi.balanceUnsealedTransaction(toHex(tx.serialize()), {
-          payFees: true,
-        }),
-      );
+      const serialized = toHex(tx.serialize());
+      console.debug("[providers] balanceTx: calling connectedApi.balanceUnsealedTransaction", {
+        txHexLength: serialized.length,
+      });
+      const startedAt = Date.now();
+      let result;
+      try {
+        result = await withWalletRetry((connectedApi) =>
+          connectedApi.balanceUnsealedTransaction(serialized, {
+            payFees: true,
+          }),
+        );
+      } catch (error) {
+        logRawWalletError("balanceTx: connectedApi.balanceUnsealedTransaction", error, {
+          durationMs: Date.now() - startedAt,
+          txHexLength: serialized.length,
+        });
+        throw error;
+      }
+      console.debug("[providers] balanceTx: balanceUnsealedTransaction resolved", {
+        durationMs: Date.now() - startedAt,
+        resultTxHexLength: result.tx?.length,
+      });
       return Transaction.deserialize(
         "signature",
         "proof",
@@ -645,9 +724,27 @@ export async function buildProviders(
 
   const midnightProvider: MidnightProvider = {
     async submitTx(tx) {
-      const submittedId = await withWalletRetry(async (connectedApi) => {
-        const submitted = await connectedApi.submitTransaction(toHex(tx.serialize()));
-        return submittedTransactionId(submitted);
+      const submitStartedAt = Date.now();
+      const serialized = toHex(tx.serialize());
+      console.debug("[providers] submitTx: calling connectedApi.submitTransaction", {
+        txHexLength: serialized.length,
+      });
+      let submittedId;
+      try {
+        submittedId = await withWalletRetry(async (connectedApi) => {
+          const submitted = await connectedApi.submitTransaction(serialized);
+          return submittedTransactionId(submitted);
+        });
+      } catch (error) {
+        logRawWalletError("submitTx: connectedApi.submitTransaction", error, {
+          durationMs: Date.now() - submitStartedAt,
+          txHexLength: serialized.length,
+        });
+        throw error;
+      }
+      console.debug("[providers] submitTx: submitTransaction resolved", {
+        durationMs: Date.now() - submitStartedAt,
+        submittedId,
       });
       const identifier =
         transactionIdentifier(tx) ||
