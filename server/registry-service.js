@@ -977,7 +977,11 @@ async function upsertIssuedDidRecord(client, input) {
   const subjectWallet = normalizeWallet(input.subjectWalletAddress);
   const customer = await ensureCustomerForWallet(client, subjectWallet);
   const agentId = normalizeAgentId(input.agentId);
-  const agentKey = deriveAgentKey(agentId);
+  // subject_agent_key should be the real on-chain did_key (the DID's last
+  // segment), not a placeholder — input.did is always the value returned by
+  // the actual gated_self_register_did/issue_did circuit call by this point,
+  // never the pre-registration sha256(agentId) placeholder used elsewhere.
+  const agentKey = String(input.did || "").split(":").pop() || deriveAgentKey(agentId);
   const controller = input.controller || null;
   const organizationName =
     input.organizationDisclosure === "disclosed"
