@@ -86,10 +86,18 @@ constructor(salt: Bytes<32>) {
   registry_salt = disclose(salt);
   total_active_dids = 0 as Uint<64>;
   admin_registered = false;
-  // Fijado acá (determinista, depende solo de kernel.self()) para que
-  // register_initial_admin() — llamado después, en una tx separada — mintee
-  // exactamente este color y no otro.
-  admin_token_color = tokenType(adminDomainSep(), kernel.self());
+  // BUG REAL ENCONTRADO Y CORREGIDO — 2026-07-22. NO volver a fijar
+  // admin_token_color acá. Se verificó on-chain, contra dos deploys reales
+  // y distintos en preprod (direcciones de contrato distintas, confirmado
+  // vía registry_salt distinto), que `tokenType(adminDomainSep(),
+  // kernel.self())` evaluado DENTRO DEL CONSTRUCTOR devuelve el MISMO color
+  // para contratos distintos — kernel.self() no se comporta ahí como un
+  // identificador único por-contrato. Eso rompía el modelo de seguridad
+  // completo (el admin token dejaba de estar atado a un contrato
+  // específico). El cálculo real y correcto ahora vive en
+  // register_initial_admin() (más abajo), en el mismo circuit donde
+  // mintShieldedToken() realmente mintea el coin — ver el comentario ahí
+  // para el detalle completo.
 }
 
 // === HELPERS PURE ===
@@ -139,6 +147,15 @@ export circuit register_initial_admin(
   const public_nonce = disclose(admin_coin_nonce);
   const public_supply = disclose(admin_supply);
   const total = (public_supply + (1 as Uint<64>)) as Uint<64>;
+
+  // Fix 2026-07-22 (ver el comentario en el constructor): admin_token_color
+  // se calcula ACÁ, en el mismo circuit donde mintShieldedToken() realmente
+  // mintea el coin — no en el constructor, donde kernel.self() demostró NO
+  // devolver un valor único por-contrato (verificado on-chain contra dos
+  // deploys reales con el mismo resultado). Fijarlo en el mismo circuit que
+  // hace el mint garantiza por construcción que el bookkeeping del ledger
+  // coincide exactamente con el color del coin que efectivamente se emite.
+  admin_token_color = tokenType(adminDomainSep(), kernel.self());
 
   mintShieldedToken(
     adminDomainSep(),

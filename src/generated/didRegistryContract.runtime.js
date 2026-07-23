@@ -202,28 +202,28 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('register_initial_admin',
                                      'argument 1 (as invoked from Typescript)',
-                                     'did_registry.compact line 130 char 1',
+                                     'did_registry.compact line 138 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
         if (!(typeof(admin_recipient_0) === 'object' && admin_recipient_0.bytes.buffer instanceof ArrayBuffer && admin_recipient_0.bytes.BYTES_PER_ELEMENT === 1 && admin_recipient_0.bytes.length === 32)) {
           __compactRuntime.typeError('register_initial_admin',
                                      'argument 1 (argument 2 as invoked from Typescript)',
-                                     'did_registry.compact line 130 char 1',
+                                     'did_registry.compact line 138 char 1',
                                      'struct ZswapCoinPublicKey<bytes: Bytes<32>>',
                                      admin_recipient_0)
         }
         if (!(admin_coin_nonce_0.buffer instanceof ArrayBuffer && admin_coin_nonce_0.BYTES_PER_ELEMENT === 1 && admin_coin_nonce_0.length === 32)) {
           __compactRuntime.typeError('register_initial_admin',
                                      'argument 2 (argument 3 as invoked from Typescript)',
-                                     'did_registry.compact line 130 char 1',
+                                     'did_registry.compact line 138 char 1',
                                      'Bytes<32>',
                                      admin_coin_nonce_0)
         }
         if (!(typeof(admin_supply_0) === 'bigint' && admin_supply_0 >= 0n && admin_supply_0 <= 18446744073709551615n)) {
           __compactRuntime.typeError('register_initial_admin',
                                      'argument 3 (argument 4 as invoked from Typescript)',
-                                     'did_registry.compact line 130 char 1',
+                                     'did_registry.compact line 138 char 1',
                                      'Uint<0..18446744073709551616>',
                                      admin_supply_0)
         }
@@ -258,42 +258,42 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('mint_capability_tokens',
                                      'argument 1 (as invoked from Typescript)',
-                                     'did_registry.compact line 209 char 1',
+                                     'did_registry.compact line 226 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
         if (!(typeof(coin_0) === 'object' && coin_0.nonce.buffer instanceof ArrayBuffer && coin_0.nonce.BYTES_PER_ELEMENT === 1 && coin_0.nonce.length === 32 && coin_0.color.buffer instanceof ArrayBuffer && coin_0.color.BYTES_PER_ELEMENT === 1 && coin_0.color.length === 32 && typeof(coin_0.value) === 'bigint' && coin_0.value >= 0n && coin_0.value <= 340282366920938463463374607431768211455n)) {
           __compactRuntime.typeError('mint_capability_tokens',
                                      'argument 1 (argument 2 as invoked from Typescript)',
-                                     'did_registry.compact line 209 char 1',
+                                     'did_registry.compact line 226 char 1',
                                      'struct ShieldedCoinInfo<nonce: Bytes<32>, color: Bytes<32>, value: Uint<0..340282366920938463463374607431768211456>>',
                                      coin_0)
         }
         if (!(subscription_key_0.buffer instanceof ArrayBuffer && subscription_key_0.BYTES_PER_ELEMENT === 1 && subscription_key_0.length === 32)) {
           __compactRuntime.typeError('mint_capability_tokens',
                                      'argument 2 (argument 3 as invoked from Typescript)',
-                                     'did_registry.compact line 209 char 1',
+                                     'did_registry.compact line 226 char 1',
                                      'Bytes<32>',
                                      subscription_key_0)
         }
         if (!(typeof(recipient_0) === 'object' && recipient_0.bytes.buffer instanceof ArrayBuffer && recipient_0.bytes.BYTES_PER_ELEMENT === 1 && recipient_0.bytes.length === 32)) {
           __compactRuntime.typeError('mint_capability_tokens',
                                      'argument 3 (argument 4 as invoked from Typescript)',
-                                     'did_registry.compact line 209 char 1',
+                                     'did_registry.compact line 226 char 1',
                                      'struct ZswapCoinPublicKey<bytes: Bytes<32>>',
                                      recipient_0)
         }
         if (!(coin_nonce_0.buffer instanceof ArrayBuffer && coin_nonce_0.BYTES_PER_ELEMENT === 1 && coin_nonce_0.length === 32)) {
           __compactRuntime.typeError('mint_capability_tokens',
                                      'argument 4 (argument 5 as invoked from Typescript)',
-                                     'did_registry.compact line 209 char 1',
+                                     'did_registry.compact line 226 char 1',
                                      'Bytes<32>',
                                      coin_nonce_0)
         }
         if (!(typeof(amount_0) === 'bigint' && amount_0 >= 0n && amount_0 <= 18446744073709551615n)) {
           __compactRuntime.typeError('mint_capability_tokens',
                                      'argument 5 (argument 6 as invoked from Typescript)',
-                                     'did_registry.compact line 209 char 1',
+                                     'did_registry.compact line 226 char 1',
                                      'Uint<0..18446744073709551616>',
                                      amount_0)
         }
@@ -327,21 +327,21 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('gated_self_register_did',
                                      'argument 1 (as invoked from Typescript)',
-                                     'did_registry.compact line 248 char 1',
+                                     'did_registry.compact line 265 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
         if (!(typeof(coin_0) === 'object' && coin_0.nonce.buffer instanceof ArrayBuffer && coin_0.nonce.BYTES_PER_ELEMENT === 1 && coin_0.nonce.length === 32 && coin_0.color.buffer instanceof ArrayBuffer && coin_0.color.BYTES_PER_ELEMENT === 1 && coin_0.color.length === 32 && typeof(coin_0.value) === 'bigint' && coin_0.value >= 0n && coin_0.value <= 340282366920938463463374607431768211455n)) {
           __compactRuntime.typeError('gated_self_register_did',
                                      'argument 1 (argument 2 as invoked from Typescript)',
-                                     'did_registry.compact line 248 char 1',
+                                     'did_registry.compact line 265 char 1',
                                      'struct ShieldedCoinInfo<nonce: Bytes<32>, color: Bytes<32>, value: Uint<0..340282366920938463463374607431768211456>>',
                                      coin_0)
         }
         if (!(subject_nonce_0.buffer instanceof ArrayBuffer && subject_nonce_0.BYTES_PER_ELEMENT === 1 && subject_nonce_0.length === 32)) {
           __compactRuntime.typeError('gated_self_register_did',
                                      'argument 2 (argument 3 as invoked from Typescript)',
-                                     'did_registry.compact line 248 char 1',
+                                     'did_registry.compact line 265 char 1',
                                      'Bytes<32>',
                                      subject_nonce_0)
         }
@@ -374,35 +374,35 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('request_update_did',
                                      'argument 1 (as invoked from Typescript)',
-                                     'did_registry.compact line 273 char 1',
+                                     'did_registry.compact line 290 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
         if (!(typeof(coin_0) === 'object' && coin_0.nonce.buffer instanceof ArrayBuffer && coin_0.nonce.BYTES_PER_ELEMENT === 1 && coin_0.nonce.length === 32 && coin_0.color.buffer instanceof ArrayBuffer && coin_0.color.BYTES_PER_ELEMENT === 1 && coin_0.color.length === 32 && typeof(coin_0.value) === 'bigint' && coin_0.value >= 0n && coin_0.value <= 340282366920938463463374607431768211455n)) {
           __compactRuntime.typeError('request_update_did',
                                      'argument 1 (argument 2 as invoked from Typescript)',
-                                     'did_registry.compact line 273 char 1',
+                                     'did_registry.compact line 290 char 1',
                                      'struct ShieldedCoinInfo<nonce: Bytes<32>, color: Bytes<32>, value: Uint<0..340282366920938463463374607431768211456>>',
                                      coin_0)
         }
         if (!(subject_nonce_0.buffer instanceof ArrayBuffer && subject_nonce_0.BYTES_PER_ELEMENT === 1 && subject_nonce_0.length === 32)) {
           __compactRuntime.typeError('request_update_did',
                                      'argument 2 (argument 3 as invoked from Typescript)',
-                                     'did_registry.compact line 273 char 1',
+                                     'did_registry.compact line 290 char 1',
                                      'Bytes<32>',
                                      subject_nonce_0)
         }
         if (!(doc_commitment_0.buffer instanceof ArrayBuffer && doc_commitment_0.BYTES_PER_ELEMENT === 1 && doc_commitment_0.length === 32)) {
           __compactRuntime.typeError('request_update_did',
                                      'argument 3 (argument 4 as invoked from Typescript)',
-                                     'did_registry.compact line 273 char 1',
+                                     'did_registry.compact line 290 char 1',
                                      'Bytes<32>',
                                      doc_commitment_0)
         }
         if (!(cap_commitment_0.buffer instanceof ArrayBuffer && cap_commitment_0.BYTES_PER_ELEMENT === 1 && cap_commitment_0.length === 32)) {
           __compactRuntime.typeError('request_update_did',
                                      'argument 4 (argument 5 as invoked from Typescript)',
-                                     'did_registry.compact line 273 char 1',
+                                     'did_registry.compact line 290 char 1',
                                      'Bytes<32>',
                                      cap_commitment_0)
         }
@@ -438,42 +438,42 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('issue_did',
                                      'argument 1 (as invoked from Typescript)',
-                                     'did_registry.compact line 304 char 1',
+                                     'did_registry.compact line 321 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
         if (!(typeof(coin_0) === 'object' && coin_0.nonce.buffer instanceof ArrayBuffer && coin_0.nonce.BYTES_PER_ELEMENT === 1 && coin_0.nonce.length === 32 && coin_0.color.buffer instanceof ArrayBuffer && coin_0.color.BYTES_PER_ELEMENT === 1 && coin_0.color.length === 32 && typeof(coin_0.value) === 'bigint' && coin_0.value >= 0n && coin_0.value <= 340282366920938463463374607431768211455n)) {
           __compactRuntime.typeError('issue_did',
                                      'argument 1 (argument 2 as invoked from Typescript)',
-                                     'did_registry.compact line 304 char 1',
+                                     'did_registry.compact line 321 char 1',
                                      'struct ShieldedCoinInfo<nonce: Bytes<32>, color: Bytes<32>, value: Uint<0..340282366920938463463374607431768211456>>',
                                      coin_0)
         }
         if (!(did_key_0.buffer instanceof ArrayBuffer && did_key_0.BYTES_PER_ELEMENT === 1 && did_key_0.length === 32)) {
           __compactRuntime.typeError('issue_did',
                                      'argument 2 (argument 3 as invoked from Typescript)',
-                                     'did_registry.compact line 304 char 1',
+                                     'did_registry.compact line 321 char 1',
                                      'Bytes<32>',
                                      did_key_0)
         }
         if (!(did_commitment_0.buffer instanceof ArrayBuffer && did_commitment_0.BYTES_PER_ELEMENT === 1 && did_commitment_0.length === 32)) {
           __compactRuntime.typeError('issue_did',
                                      'argument 3 (argument 4 as invoked from Typescript)',
-                                     'did_registry.compact line 304 char 1',
+                                     'did_registry.compact line 321 char 1',
                                      'Bytes<32>',
                                      did_commitment_0)
         }
         if (!(doc_commitment_0.buffer instanceof ArrayBuffer && doc_commitment_0.BYTES_PER_ELEMENT === 1 && doc_commitment_0.length === 32)) {
           __compactRuntime.typeError('issue_did',
                                      'argument 4 (argument 5 as invoked from Typescript)',
-                                     'did_registry.compact line 304 char 1',
+                                     'did_registry.compact line 321 char 1',
                                      'Bytes<32>',
                                      doc_commitment_0)
         }
         if (!(proof_commitment_0.buffer instanceof ArrayBuffer && proof_commitment_0.BYTES_PER_ELEMENT === 1 && proof_commitment_0.length === 32)) {
           __compactRuntime.typeError('issue_did',
                                      'argument 5 (argument 6 as invoked from Typescript)',
-                                     'did_registry.compact line 304 char 1',
+                                     'did_registry.compact line 321 char 1',
                                      'Bytes<32>',
                                      proof_commitment_0)
         }
@@ -508,28 +508,28 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('grant_role',
                                      'argument 1 (as invoked from Typescript)',
-                                     'did_registry.compact line 329 char 1',
+                                     'did_registry.compact line 346 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
         if (!(typeof(coin_0) === 'object' && coin_0.nonce.buffer instanceof ArrayBuffer && coin_0.nonce.BYTES_PER_ELEMENT === 1 && coin_0.nonce.length === 32 && coin_0.color.buffer instanceof ArrayBuffer && coin_0.color.BYTES_PER_ELEMENT === 1 && coin_0.color.length === 32 && typeof(coin_0.value) === 'bigint' && coin_0.value >= 0n && coin_0.value <= 340282366920938463463374607431768211455n)) {
           __compactRuntime.typeError('grant_role',
                                      'argument 1 (argument 2 as invoked from Typescript)',
-                                     'did_registry.compact line 329 char 1',
+                                     'did_registry.compact line 346 char 1',
                                      'struct ShieldedCoinInfo<nonce: Bytes<32>, color: Bytes<32>, value: Uint<0..340282366920938463463374607431768211456>>',
                                      coin_0)
         }
         if (!(did_key_0.buffer instanceof ArrayBuffer && did_key_0.BYTES_PER_ELEMENT === 1 && did_key_0.length === 32)) {
           __compactRuntime.typeError('grant_role',
                                      'argument 2 (argument 3 as invoked from Typescript)',
-                                     'did_registry.compact line 329 char 1',
+                                     'did_registry.compact line 346 char 1',
                                      'Bytes<32>',
                                      did_key_0)
         }
         if (!(role_0.buffer instanceof ArrayBuffer && role_0.BYTES_PER_ELEMENT === 1 && role_0.length === 32)) {
           __compactRuntime.typeError('grant_role',
                                      'argument 3 (argument 4 as invoked from Typescript)',
-                                     'did_registry.compact line 329 char 1',
+                                     'did_registry.compact line 346 char 1',
                                      'Bytes<32>',
                                      role_0)
         }
@@ -562,28 +562,28 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('revoke_role',
                                      'argument 1 (as invoked from Typescript)',
-                                     'did_registry.compact line 339 char 1',
+                                     'did_registry.compact line 356 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
         if (!(typeof(coin_0) === 'object' && coin_0.nonce.buffer instanceof ArrayBuffer && coin_0.nonce.BYTES_PER_ELEMENT === 1 && coin_0.nonce.length === 32 && coin_0.color.buffer instanceof ArrayBuffer && coin_0.color.BYTES_PER_ELEMENT === 1 && coin_0.color.length === 32 && typeof(coin_0.value) === 'bigint' && coin_0.value >= 0n && coin_0.value <= 340282366920938463463374607431768211455n)) {
           __compactRuntime.typeError('revoke_role',
                                      'argument 1 (argument 2 as invoked from Typescript)',
-                                     'did_registry.compact line 339 char 1',
+                                     'did_registry.compact line 356 char 1',
                                      'struct ShieldedCoinInfo<nonce: Bytes<32>, color: Bytes<32>, value: Uint<0..340282366920938463463374607431768211456>>',
                                      coin_0)
         }
         if (!(did_key_0.buffer instanceof ArrayBuffer && did_key_0.BYTES_PER_ELEMENT === 1 && did_key_0.length === 32)) {
           __compactRuntime.typeError('revoke_role',
                                      'argument 2 (argument 3 as invoked from Typescript)',
-                                     'did_registry.compact line 339 char 1',
+                                     'did_registry.compact line 356 char 1',
                                      'Bytes<32>',
                                      did_key_0)
         }
         if (!(role_0.buffer instanceof ArrayBuffer && role_0.BYTES_PER_ELEMENT === 1 && role_0.length === 32)) {
           __compactRuntime.typeError('revoke_role',
                                      'argument 3 (argument 4 as invoked from Typescript)',
-                                     'did_registry.compact line 339 char 1',
+                                     'did_registry.compact line 356 char 1',
                                      'Bytes<32>',
                                      role_0)
         }
@@ -617,35 +617,35 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('rotate_admin_tokens',
                                      'argument 1 (as invoked from Typescript)',
-                                     'did_registry.compact line 355 char 1',
+                                     'did_registry.compact line 372 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
         if (!(typeof(coin_0) === 'object' && coin_0.nonce.buffer instanceof ArrayBuffer && coin_0.nonce.BYTES_PER_ELEMENT === 1 && coin_0.nonce.length === 32 && coin_0.color.buffer instanceof ArrayBuffer && coin_0.color.BYTES_PER_ELEMENT === 1 && coin_0.color.length === 32 && typeof(coin_0.value) === 'bigint' && coin_0.value >= 0n && coin_0.value <= 340282366920938463463374607431768211455n)) {
           __compactRuntime.typeError('rotate_admin_tokens',
                                      'argument 1 (argument 2 as invoked from Typescript)',
-                                     'did_registry.compact line 355 char 1',
+                                     'did_registry.compact line 372 char 1',
                                      'struct ShieldedCoinInfo<nonce: Bytes<32>, color: Bytes<32>, value: Uint<0..340282366920938463463374607431768211456>>',
                                      coin_0)
         }
         if (!(typeof(new_recipient_0) === 'object' && new_recipient_0.bytes.buffer instanceof ArrayBuffer && new_recipient_0.bytes.BYTES_PER_ELEMENT === 1 && new_recipient_0.bytes.length === 32)) {
           __compactRuntime.typeError('rotate_admin_tokens',
                                      'argument 2 (argument 3 as invoked from Typescript)',
-                                     'did_registry.compact line 355 char 1',
+                                     'did_registry.compact line 372 char 1',
                                      'struct ZswapCoinPublicKey<bytes: Bytes<32>>',
                                      new_recipient_0)
         }
         if (!(new_coin_nonce_0.buffer instanceof ArrayBuffer && new_coin_nonce_0.BYTES_PER_ELEMENT === 1 && new_coin_nonce_0.length === 32)) {
           __compactRuntime.typeError('rotate_admin_tokens',
                                      'argument 3 (argument 4 as invoked from Typescript)',
-                                     'did_registry.compact line 355 char 1',
+                                     'did_registry.compact line 372 char 1',
                                      'Bytes<32>',
                                      new_coin_nonce_0)
         }
         if (!(typeof(new_supply_0) === 'bigint' && new_supply_0 >= 0n && new_supply_0 <= 18446744073709551615n)) {
           __compactRuntime.typeError('rotate_admin_tokens',
                                      'argument 4 (argument 5 as invoked from Typescript)',
-                                     'did_registry.compact line 355 char 1',
+                                     'did_registry.compact line 372 char 1',
                                      'Uint<0..18446744073709551616>',
                                      new_supply_0)
         }
@@ -678,21 +678,21 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('revoke_did',
                                      'argument 1 (as invoked from Typescript)',
-                                     'did_registry.compact line 388 char 1',
+                                     'did_registry.compact line 405 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
         if (!(typeof(coin_0) === 'object' && coin_0.nonce.buffer instanceof ArrayBuffer && coin_0.nonce.BYTES_PER_ELEMENT === 1 && coin_0.nonce.length === 32 && coin_0.color.buffer instanceof ArrayBuffer && coin_0.color.BYTES_PER_ELEMENT === 1 && coin_0.color.length === 32 && typeof(coin_0.value) === 'bigint' && coin_0.value >= 0n && coin_0.value <= 340282366920938463463374607431768211455n)) {
           __compactRuntime.typeError('revoke_did',
                                      'argument 1 (argument 2 as invoked from Typescript)',
-                                     'did_registry.compact line 388 char 1',
+                                     'did_registry.compact line 405 char 1',
                                      'struct ShieldedCoinInfo<nonce: Bytes<32>, color: Bytes<32>, value: Uint<0..340282366920938463463374607431768211456>>',
                                      coin_0)
         }
         if (!(did_key_0.buffer instanceof ArrayBuffer && did_key_0.BYTES_PER_ELEMENT === 1 && did_key_0.length === 32)) {
           __compactRuntime.typeError('revoke_did',
                                      'argument 2 (argument 3 as invoked from Typescript)',
-                                     'did_registry.compact line 388 char 1',
+                                     'did_registry.compact line 405 char 1',
                                      'Bytes<32>',
                                      did_key_0)
         }
@@ -1152,36 +1152,6 @@ export class Contract {
                                        { push: { storage: true,
                                                  value: __compactRuntime.StateValue.newCell({ value: _descriptor_1.toValue(false),
                                                                                               alignment: _descriptor_1.alignment() }).encode() } },
-                                       { ins: { cached: false, n: 1 } },
-                                       { ins: { cached: true, n: 1 } }]);
-    const tmp_1 = this._tokenType_0(this._adminDomainSep_0(),
-                                    _descriptor_7.fromValue(__compactRuntime.queryLedgerState(context,
-                                                                                              partialProofData,
-                                                                                              [
-                                                                                               { dup: { n: 2 } },
-                                                                                               { idx: { cached: true,
-                                                                                                        pushPath: false,
-                                                                                                        path: [
-                                                                                                               { tag: 'value',
-                                                                                                                 value: { value: _descriptor_6.toValue(0n),
-                                                                                                                          alignment: _descriptor_6.alignment() } }] } },
-                                                                                               { popeq: { cached: true,
-                                                                                                          result: undefined } }]).value));
-    __compactRuntime.queryLedgerState(context,
-                                      partialProofData,
-                                      [
-                                       { idx: { cached: false,
-                                                pushPath: true,
-                                                path: [
-                                                       { tag: 'value',
-                                                         value: { value: _descriptor_6.toValue(1n),
-                                                                  alignment: _descriptor_6.alignment() } }] } },
-                                       { push: { storage: false,
-                                                 value: __compactRuntime.StateValue.newCell({ value: _descriptor_6.toValue(14n),
-                                                                                              alignment: _descriptor_6.alignment() }).encode() } },
-                                       { push: { storage: true,
-                                                 value: __compactRuntime.StateValue.newCell({ value: _descriptor_0.toValue(tmp_1),
-                                                                                              alignment: _descriptor_0.alignment() }).encode() } },
                                        { ins: { cached: false, n: 1 } },
                                        { ins: { cached: true, n: 1 } }]);
     state_0.data = new __compactRuntime.ChargedState(context.currentQueryContext.state.state);
@@ -1645,10 +1615,40 @@ export class Contract {
     const public_supply_0 = admin_supply_0;
     const total_0 = ((t1) => {
                       if (t1 > 18446744073709551615n) {
-                        throw new __compactRuntime.CompactError('did_registry.compact line 141 char 17: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
+                        throw new __compactRuntime.CompactError('did_registry.compact line 149 char 17: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
                       }
                       return t1;
                     })(public_supply_0 + 1n);
+    const tmp_0 = this._tokenType_0(this._adminDomainSep_0(),
+                                    _descriptor_7.fromValue(__compactRuntime.queryLedgerState(context,
+                                                                                              partialProofData,
+                                                                                              [
+                                                                                               { dup: { n: 2 } },
+                                                                                               { idx: { cached: true,
+                                                                                                        pushPath: false,
+                                                                                                        path: [
+                                                                                                               { tag: 'value',
+                                                                                                                 value: { value: _descriptor_6.toValue(0n),
+                                                                                                                          alignment: _descriptor_6.alignment() } }] } },
+                                                                                               { popeq: { cached: true,
+                                                                                                          result: undefined } }]).value));
+    __compactRuntime.queryLedgerState(context,
+                                      partialProofData,
+                                      [
+                                       { idx: { cached: false,
+                                                pushPath: true,
+                                                path: [
+                                                       { tag: 'value',
+                                                         value: { value: _descriptor_6.toValue(1n),
+                                                                  alignment: _descriptor_6.alignment() } }] } },
+                                       { push: { storage: false,
+                                                 value: __compactRuntime.StateValue.newCell({ value: _descriptor_6.toValue(14n),
+                                                                                              alignment: _descriptor_6.alignment() }).encode() } },
+                                       { push: { storage: true,
+                                                 value: __compactRuntime.StateValue.newCell({ value: _descriptor_0.toValue(tmp_0),
+                                                                                              alignment: _descriptor_0.alignment() }).encode() } },
+                                       { ins: { cached: false, n: 1 } },
+                                       { ins: { cached: true, n: 1 } }]);
     this._mintShieldedToken_0(context,
                               partialProofData,
                               this._adminDomainSep_0(),
@@ -1689,28 +1689,7 @@ export class Contract {
                                                                                               alignment: _descriptor_4.alignment() }).encode() } },
                                        { ins: { cached: false, n: 1 } },
                                        { ins: { cached: true, n: 1 } }]);
-    const tmp_0 = this._roleKey_0(public_recipient_0, this._adminRole_0());
-    __compactRuntime.queryLedgerState(context,
-                                      partialProofData,
-                                      [
-                                       { idx: { cached: false,
-                                                pushPath: true,
-                                                path: [
-                                                       { tag: 'value',
-                                                         value: { value: _descriptor_6.toValue(1n),
-                                                                  alignment: _descriptor_6.alignment() } },
-                                                       { tag: 'value',
-                                                         value: { value: _descriptor_6.toValue(4n),
-                                                                  alignment: _descriptor_6.alignment() } }] } },
-                                       { push: { storage: false,
-                                                 value: __compactRuntime.StateValue.newCell({ value: _descriptor_0.toValue(tmp_0),
-                                                                                              alignment: _descriptor_0.alignment() }).encode() } },
-                                       { push: { storage: true,
-                                                 value: __compactRuntime.StateValue.newCell({ value: _descriptor_1.toValue(true),
-                                                                                              alignment: _descriptor_1.alignment() }).encode() } },
-                                       { ins: { cached: false, n: 1 } },
-                                       { ins: { cached: true, n: 2 } }]);
-    const tmp_1 = this._roleKey_0(public_recipient_0, this._userRole_0());
+    const tmp_1 = this._roleKey_0(public_recipient_0, this._adminRole_0());
     __compactRuntime.queryLedgerState(context,
                                       partialProofData,
                                       [
@@ -1725,6 +1704,27 @@ export class Contract {
                                                                   alignment: _descriptor_6.alignment() } }] } },
                                        { push: { storage: false,
                                                  value: __compactRuntime.StateValue.newCell({ value: _descriptor_0.toValue(tmp_1),
+                                                                                              alignment: _descriptor_0.alignment() }).encode() } },
+                                       { push: { storage: true,
+                                                 value: __compactRuntime.StateValue.newCell({ value: _descriptor_1.toValue(true),
+                                                                                              alignment: _descriptor_1.alignment() }).encode() } },
+                                       { ins: { cached: false, n: 1 } },
+                                       { ins: { cached: true, n: 2 } }]);
+    const tmp_2 = this._roleKey_0(public_recipient_0, this._userRole_0());
+    __compactRuntime.queryLedgerState(context,
+                                      partialProofData,
+                                      [
+                                       { idx: { cached: false,
+                                                pushPath: true,
+                                                path: [
+                                                       { tag: 'value',
+                                                         value: { value: _descriptor_6.toValue(1n),
+                                                                  alignment: _descriptor_6.alignment() } },
+                                                       { tag: 'value',
+                                                         value: { value: _descriptor_6.toValue(4n),
+                                                                  alignment: _descriptor_6.alignment() } }] } },
+                                       { push: { storage: false,
+                                                 value: __compactRuntime.StateValue.newCell({ value: _descriptor_0.toValue(tmp_2),
                                                                                               alignment: _descriptor_0.alignment() }).encode() } },
                                        { push: { storage: true,
                                                  value: __compactRuntime.StateValue.newCell({ value: _descriptor_1.toValue(true),
@@ -1909,7 +1909,7 @@ export class Contract {
     const domain_sep_0 = this._persistentHash_0(public_sub_key_0);
     const total_0 = ((t1) => {
                       if (t1 > 18446744073709551615n) {
-                        throw new __compactRuntime.CompactError('did_registry.compact line 231 char 17: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
+                        throw new __compactRuntime.CompactError('did_registry.compact line 248 char 17: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
                       }
                       return t1;
                     })(public_amount_0 + 1n);
@@ -2471,7 +2471,7 @@ export class Contract {
                                        { ins: { cached: true, n: 2 } }]);
     const tmp_1 = ((t1) => {
                     if (t1 > 18446744073709551615n) {
-                      throw new __compactRuntime.CompactError('did_registry.compact line 325 char 23: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
+                      throw new __compactRuntime.CompactError('did_registry.compact line 342 char 23: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
                     }
                     return t1;
                   })(_descriptor_5.fromValue(__compactRuntime.queryLedgerState(context,
@@ -2720,7 +2720,7 @@ export class Contract {
                                        { ins: { cached: true, n: 2 } }]);
     const total_0 = ((t1) => {
                       if (t1 > 18446744073709551615n) {
-                        throw new __compactRuntime.CompactError('did_registry.compact line 377 char 17: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
+                        throw new __compactRuntime.CompactError('did_registry.compact line 394 char 17: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
                       }
                       return t1;
                     })(new_supply_0 + 1n);

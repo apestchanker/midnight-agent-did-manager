@@ -880,7 +880,14 @@ describe("REQ-01 — genesis admin token minted via a second, separate transacti
     expect(init.currentZswapLocalState.outputs.filter((o) => o.recipient.is_left)).toHaveLength(0);
   });
 
-  it("S02: register_initial_admin mints admin_supply + 1 units to admin_recipient, matching the color fixed at deploy", () => {
+  it("S02: register_initial_admin computes admin_token_color itself and mints admin_supply + 1 units matching it", () => {
+    // Fix 2026-07-22: admin_token_color is no longer set in the constructor
+    // (verified on-chain against two distinct real deployments that
+    // tokenType(adminDomainSep(), kernel.self()) evaluated there did not
+    // vary per contract — see the constructor comment in
+    // did_registry.compact.template). It's computed fresh here, in the same
+    // circuit that performs the actual mint, so the ledger bookkeeping is
+    // guaranteed to match the minted coin's real color by construction.
     const { contract, init: deployedInit } = deployOnly();
     const preRegColor = ledgerFn(deployedInit.currentContractState.data).admin_token_color;
 
@@ -895,7 +902,8 @@ describe("REQ-01 — genesis admin token minted via a second, separate transacti
     const l = ledgerFn(registered.state);
 
     expect(l.admin_registered).toBe(true);
-    expect(toHex(l.admin_token_color)).toBe(toHex(preRegColor)); // fixed at deploy, unchanged
+    // Not the deploy-time placeholder anymore — a real, non-zero color.
+    expect(toHex(l.admin_token_color)).not.toBe(toHex(preRegColor));
     expect(registered.outputs[0].value).toBe(8n); // 7 + 1 anchor
     expect(toHex(registered.outputs[0].color)).toBe(toHex(l.admin_token_color));
   });
