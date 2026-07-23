@@ -369,7 +369,10 @@ export class UnifiedRegistryAPI {
         this.contract.callTx.gated_self_register_did as (
           coin: ShieldedCoin,
           subjectNonce: Uint8Array,
-        ) => Promise<{ public: { txHash: string; txId?: string }; result: Uint8Array }>
+        ) => Promise<{
+          public: { txHash: string; txId?: string };
+          private: { result: Uint8Array };
+        }>
       )(coin, opts.subjectNonce);
     } catch (error) {
       logRawWalletError("gatedSelfRegisterDid: callTx.gated_self_register_did", error, {
@@ -384,7 +387,7 @@ export class UnifiedRegistryAPI {
       txHash: tx.public.txHash,
     });
 
-    const didKeyHex = toHex(tx.result);
+    const didKeyHex = toHex(tx.private.result);
     const did = await createDidIdentifier(
       this.providers.networkId,
       this.contractAddress,
