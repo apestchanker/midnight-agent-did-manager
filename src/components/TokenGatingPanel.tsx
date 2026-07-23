@@ -50,6 +50,13 @@ export function TokenGatingPanel({ providers, tokenAPI, isAdmin }: TokenGatingPa
   const [mintResult, setMintResult] = useState("");
   const [mintError, setMintError] = useState("");
 
+  // Admin rotate/top-up form
+  const [rotateRecipientAddress, setRotateRecipientAddress] = useState("");
+  const [rotateSupply, setRotateSupply] = useState("10");
+  const [rotating, setRotating] = useState(false);
+  const [rotateResult, setRotateResult] = useState("");
+  const [rotateError, setRotateError] = useState("");
+
   const loadBalances = useCallback(async () => {
     setRefreshing(true);
     setBalanceError("");
@@ -141,6 +148,37 @@ export function TokenGatingPanel({ providers, tokenAPI, isAdmin }: TokenGatingPa
       setMintError(e instanceof Error ? e.message : "Mint failed");
     } finally {
       setMinting(false);
+    }
+  }
+
+  async function handleRotate() {
+    if (!tokenAPI) return;
+    const addr = rotateRecipientAddress.trim();
+    const supply = BigInt(rotateSupply || "0");
+
+    if (!addr) { setRotateError("Recipient wallet address is required."); return; }
+    if (supply < 1n) { setRotateError("Supply must be >= 1."); return; }
+    if (supply > BigInt(Number.MAX_SAFE_INTEGER)) {
+      setRotateError("Supply exceeds the allowed limit.");
+      return;
+    }
+
+    setRotating(true);
+    setRotateError("");
+    setRotateResult("");
+    try {
+      const newRecipientBytes = parseShieldedAddress(addr, providers.networkId);
+      const { txHash } = await tokenAPI.rotateAdminTokens({
+        newRecipientBytes,
+        newSupply: supply,
+      });
+      setRotateResult(
+        `Burned the old admin token and minted ${supply} + 1 anchor to the recipient. TX: ${txHash}.`,
+      );
+    } catch (e) {
+      setRotateError(e instanceof Error ? e.message : "Admin token rotation failed");
+    } finally {
+      setRotating(false);
     }
   }
 
@@ -326,6 +364,71 @@ export function TokenGatingPanel({ providers, tokenAPI, isAdmin }: TokenGatingPa
 
             <Button onClick={() => void handleMint()} disabled={minting}>
               {minting ? "Minting…" : "Grant Credits"}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Admin rotate/top-up panel */}
+      {isAdmin && tokenAPI && (
+        <Card className="bg-zinc-900 border-zinc-800">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base text-zinc-100">
+              <RefreshCw className="h-4 w-4" />
+              Top Up Admin Tokens
+            </CardTitle>
+            <CardDescription className="text-zinc-400">
+              Every admin-tier action (issue, grant, revoke, rotate) burns 1 unit from your admin
+              token. When the spendable balance runs low, burn the current admin token and mint a
+              fresh one via <code className="text-zinc-400">rotate_admin_tokens</code> — atomic in
+              a single transaction, no downtime. Send to your own wallet to top up, or to another
+              wallet to hand off admin control.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="rotate-recipient-address" className="text-zinc-200">Recipient Shielded Address</Label>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setRotateRecipientAddress(providers.shieldedAddress)}
+                  className="text-xs h-6 px-2 text-zinc-400 hover:text-zinc-200"
+                >
+                  Use my address
+                </Button>
+              </div>
+              <Input
+                id="rotate-recipient-address"
+                placeholder="mn_shield-addr_1... or mn_shield-cpk_1..."
+                value={rotateRecipientAddress}
+                onChange={(e) => setRotateRecipientAddress(e.target.value)}
+                className="bg-zinc-950 border-zinc-800 text-white placeholder:text-zinc-500 font-mono text-xs"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="rotate-supply" className="text-zinc-200">New Admin Supply</Label>
+              <Input
+                id="rotate-supply"
+                type="number"
+                min="1"
+                value={rotateSupply}
+                onChange={(e) => setRotateSupply(e.target.value)}
+                className="w-24 bg-zinc-950 border-zinc-800 text-white"
+              />
+              <p className="text-xs text-zinc-500">
+                Mints {rotateSupply || "0"} + 1 anchor ={" "}
+                {Number(rotateSupply || 0) + 1} raw units total, replacing the current admin token.
+              </p>
+            </div>
+
+            {rotateError && <p className="text-sm text-red-400">{rotateError}</p>}
+            {rotateResult && (
+              <p className="text-xs text-emerald-400 break-all font-mono">{rotateResult}</p>
+            )}
+
+            <Button onClick={() => void handleRotate()} disabled={rotating}>
+              {rotating ? "Rotating…" : "Rotate Admin Tokens"}
             </Button>
           </CardContent>
         </Card>
