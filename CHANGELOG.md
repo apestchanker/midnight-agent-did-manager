@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.8.8
+
+### Fixed — BREAKING (contract)
+- **Critical**: `admin_token_color` is no longer computed in the `did_registry` contract's constructor — it's now computed inside `register_initial_admin()`, the same circuit that actually mints the coin. Verified against two distinct real preprod deployments (different `registry_salt`, confirming genuinely different contracts) that `tokenType(adminDomainSep(), kernel.self())` evaluated inside the constructor produced the *same* color for both — `kernel.self()` was not behaving as a per-contract-unique identifier there, which broke the security model this was built on (the admin token was not actually bound to a specific contract deployment).
+  Reason/impact: any contract deployed before this fix (including ones deployed earlier the same day) has the bug baked in on-chain and cannot be patched — redeploy required. This was a previously-flagged, never-confirmed-necessary open question from the original 005-coin-gated-admin-access technical spec.
+- Split the "Deploy Unified Registry" UI action into two independent, separately-retryable steps: **Step 2 (Deploy)** only deploys the contract; the new **Step 3 (Initialize Admin)** mints the genesis admin token as its own transaction, any time after deploy, without needing to redeploy on failure.
+  Reason/impact: the two transactions were previously chained in one function, so a failure in the second was indistinguishable from a failure in the first, making failures on remote (non-local) proof-server/indexer infra very difficult to diagnose.
+- Fixed the deployed Static Site failing to serve the app's own custom circuit keys and the protocol's builtin proving keys (`midnight/zswap/{spend,output,sign}`, `midnight/dust/spend`), needed whenever a circuit calls `mintShieldedToken`. Root causes: (1) generated ZK artifacts for `register_initial_admin` were never committed for the Static Site build (only some of `keys/`/`zkir/` made earlier commits); (2) Render's CDN decodes `%2F` in URLs back to `/` before resolving static files, so a first attempt at serving the builtin keys under percent-encoded flat filenames 404'd — fixed by serving them from real nested directories instead.
+- Fixed wallet connect losing the session when a wallet extension opens its approval prompt in a detached window instead of an anchored popup: removed a hardcoded 15-second timeout racing the connect call, which abandoned the connection attempt (even though the wallet would have resolved fine) whenever a human took longer than 15s to notice and approve a detached prompt.
+- Fixed the wallet-selection dropdown reverting to the previously-connected wallet immediately after picking a different one: the wallet-detection effect had the selected wallet in its own dependency array, so choosing a new wallet re-triggered detection, which re-read the (stale) last-connected wallet from `localStorage` and overwrote the live selection.
+
 ## v0.8.7
 
 ### Changed

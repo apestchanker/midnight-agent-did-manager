@@ -636,6 +636,13 @@ See:
 
 ## Release Notes
 
+### v0.8.8
+
+- **Critical contract fix, breaking** — `admin_token_color` is no longer computed in the constructor. Verified against two distinct real preprod deployments that `tokenType(adminDomainSep(), kernel.self())` evaluated in the constructor produced the *same* color for different contracts — the admin token was not actually bound to a specific deployment. It's now computed inside `register_initial_admin()`, the same circuit that performs the mint. Contracts deployed before this fix cannot be patched — redeploy required. See [Constructor](#constructor).
+- **Deploy split into three independent steps** — "Deploy" and "Initialize Admin" are now separate, separately-retryable actions in the UI (previously chained in one call), so a failure in the admin-mint transaction no longer masquerades as a deploy failure and doesn't require redeploying to retry.
+- **Fixed the deployed Static Site not serving its own ZK proving keys** — both the app's custom circuit keys and the protocol's builtin keys (`midnight/zswap/*`, `midnight/dust/spend`, needed by any circuit that mints a shielded coin) now serve correctly in production; the previous attempt used percent-encoded flat filenames that Render's CDN doesn't resolve (it decodes `%2F` back to `/` first).
+- **Fixed wallet-connect and wallet-selection UI bugs**: connecting no longer times out after 15s if a wallet's approval prompt opens in a detached window and a human takes longer than that to click it; the wallet dropdown no longer snaps back to the previously-connected wallet when picking a different one.
+
 ### v0.8.7
 
 - **Genesis admin token bootstrap split into two transactions** — owner decision, 2026-07-21, not a regression. The constructor now only deploys the contract; a new, second `register_initial_admin()` call (a separate transaction, run immediately after deploy by the app's own deploy flow) mints the genesis admin token. The atomic version shipped in v0.8.3 (below) was found to interfere with wallet-side transaction balancing during live preprod testing. Still coin-based, not `ownPublicKey()`-based — see [Constructor](#constructor) and `sdd/wip/005-coin-gated-admin-access/decision-log-2026-07-21.md` for the full rationale, including the accepted bootstrap race-condition tradeoff.
@@ -687,7 +694,7 @@ See git log for prior release notes.
 
 ## Tested Versions
 
-- Application version: `0.8.7`
+- Application version: `0.8.8`
 - Compact compiler: `v0.31.0` (`pragma language_version >= 0.23 && <= 0.23`)
 - Midnight JS SDK family: `4.1.1`
 - Midnight DApp connector API: `4.0.1`
