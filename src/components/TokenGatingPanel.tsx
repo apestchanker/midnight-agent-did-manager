@@ -95,7 +95,7 @@ export function TokenGatingPanel({ providers, tokenAPI, isAdmin }: TokenGatingPa
     const credits = BigInt(grantCredits || "0");
 
     if (!addr) { setMintError("Recipient wallet address is required."); return; }
-    if (!customerRef) { setMintError("Customer email, ID, or linked wallet is required."); return; }
+    if (!customerRef) { setMintError("Customer wallet address is required."); return; }
     if (credits < 1n) { setMintError("Credits must be >= 1."); return; }
     if (credits > BigInt(Number.MAX_SAFE_INTEGER)) {
       setMintError("Credits exceed the service record limit.");
@@ -278,16 +278,29 @@ export function TokenGatingPanel({ providers, tokenAPI, isAdmin }: TokenGatingPa
               </p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="customer-ref" className="text-zinc-200">Customer Record</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="customer-ref" className="text-zinc-200">Customer Wallet Address (unshielded)</Label>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setRecipientCustomerRef(providers.unshieldedAddress)}
+                  className="text-xs h-6 px-2 text-zinc-400 hover:text-zinc-200"
+                >
+                  Use my address
+                </Button>
+              </div>
               <Input
                 id="customer-ref"
-                placeholder="customer email, ID, or linked wallet"
+                placeholder="mn_addr_1..."
                 value={recipientCustomerRef}
                 onChange={(e) => setRecipientCustomerRef(e.target.value)}
-                className="bg-zinc-950 border-zinc-800 text-white placeholder:text-zinc-500"
+                className="bg-zinc-950 border-zinc-800 text-white placeholder:text-zinc-500 font-mono text-xs"
               />
               <p className="text-xs text-zinc-500">
-                Used to write the action-token grant into the service DB after mint success.
+                The unshielded wallet address the customer used to bootstrap their account —
+                looked up against their linked wallet, not their email (customers created without
+                one get an unguessable auto-generated address, so email/ID lookups usually fail
+                here). Used to write the action-token grant into the service DB after mint success.
               </p>
             </div>
             <div className="space-y-2">
