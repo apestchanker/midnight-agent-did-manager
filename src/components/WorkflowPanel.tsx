@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import type { AppProviders } from "../../lib/providers";
+import { logRawWalletError } from "../../lib/providers";
 import type { UnifiedRegistryAPI } from "../lib/registry";
 import type { DidRecord } from "../types/did";
 import type {
@@ -349,6 +350,7 @@ export function WorkflowPanel({
     setMessage("");
     try {
       const didDocument = JSON.stringify(buildDidDocumentForRequest(request), null, 2);
+      console.debug("[handleApproveRequest] calling onApproveOnChain", { requestId: request.id });
       const onchainRequest = await onApproveOnChain({
         requestId: request.id,
         agentId: request.agent_id || "",
@@ -359,14 +361,18 @@ export function WorkflowPanel({
         organizationDisclosure: request.organization_disclosure,
         didDocument,
       });
+      console.debug("[handleApproveRequest] onApproveOnChain succeeded", { did: onchainRequest.did, txId: onchainRequest.txId, txHash: onchainRequest.txHash });
       await approveDidRequest(request.id, walletAddress, {
         requestedDid: onchainRequest.did,
         onchainRequestTxId: onchainRequest.txId,
         onchainRequestTxHash: onchainRequest.txHash,
       });
+      console.debug("[handleApproveRequest] approveDidRequest (DB) succeeded");
       setMessage(`Human approval recorded and request registered on-chain for ${request.id}`);
       await refreshDashboard();
+      console.debug("[handleApproveRequest] refreshDashboard succeeded");
     } catch (error) {
+      logRawWalletError("handleApproveRequest", error, { requestId: request.id });
       setMessage(error instanceof Error ? error.message : "Approval failed");
     } finally {
       setBusyAction("");
