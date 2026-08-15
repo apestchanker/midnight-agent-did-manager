@@ -1,6 +1,259 @@
-const MCP_PROTOCOL_VERSION = "2024-11-05";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+// This server is dual-era (see the MCP "Versioning and Compatibility" spec):
+//
+//   Modern  (2026-07-28+) — no handshake. Every request carries its protocol
+//                           version, client info and client capabilities in
+//                           `params._meta`, and `server/discover` is mandatory.
+//   Legacy  (2025-11-25-) — session established with an `initialize` handshake.
+//
+// Revisions >= 2025-06-18 require that JSON-RPC batching NOT be supported;
+// handleRequest rejects array payloads, so we satisfy that.
+const MCP_MODERN_PROTOCOL_VERSIONS = ["2026-07-28"];
+const MCP_LEGACY_PROTOCOL_VERSIONS = [
+  "2025-11-25",
+  "2025-06-18",
+  "2025-03-26",
+  "2024-11-05",
+];
+const MCP_SUPPORTED_PROTOCOL_VERSIONS = [
+  ...MCP_MODERN_PROTOCOL_VERSIONS,
+  ...MCP_LEGACY_PROTOCOL_VERSIONS,
+];
+// Default answered to a legacy `initialize` that does not name a revision we
+// speak. Modern requests never fall back — an unsupported version is an error.
+const MCP_PROTOCOL_VERSION = MCP_LEGACY_PROTOCOL_VERSIONS[0];
+
+// Reserved `_meta` keys defined by the spec.
+const META_PROTOCOL_VERSION = "io.modelcontextprotocol/protocolVersion";
+const META_CLIENT_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities";
+const META_SERVER_INFO = "io.modelcontextprotocol/serverInfo";
+
+// Error codes from the range the MCP spec reserves for itself (-32020..-32099).
+const ERROR_HEADER_MISMATCH = -32020;
+const ERROR_UNSUPPORTED_PROTOCOL_VERSION = -32022;
+
 const MCP_SERVER_NAME = "midnight-did-mcp";
-const MCP_SERVER_VERSION = process.env.npm_package_version || "0.3.1";
+
+// Single source of truth for the reported version: package.json. This used to
+// be `process.env.npm_package_version || "0.3.1"`, which meant any runtime that
+// did not start the process through an npm script (Render, Docker, systemd,
+// plain `node server/mcp-http.js`) silently reported the stale literal instead
+// of the real version.
+function readPackageVersion() {
+  try {
+    const pkgPath = fileURLToPath(new URL("../package.json", import.meta.url));
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+    if (typeof pkg?.version === "string" && pkg.version.trim()) {
+      return pkg.version.trim();
+    }
+  } catch {
+    // Fall through — an honest sentinel beats a confidently wrong number.
+  }
+  return "0.0.0-unknown";
+}
+
+const MCP_SERVER_VERSION = readPackageVersion();
+
+function serverInfo() {
+  return { name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION };
+}
+
+// Legacy-era negotiation: echo the client's requested revision when we support
+// it, otherwise answer with our newest legacy revision. This server previously
+// ignored `params.protocolVersion` entirely and always replied "2024-11-05",
+// pinning every client to the oldest revision regardless of what it asked for.
+function negotiateProtocolVersion(requested) {
+  if (
+    typeof requested === "string" &&
+    MCP_LEGACY_PROTOCOL_VERSIONS.includes(requested)
+  ) {
+    return requested;
+  }
+  return MCP_PROTOCOL_VERSION;
+}
+
+// A request belongs to the modern era iff it carries the per-request protocol
+// version in `_meta`. Everything else (including `initialize`) is legacy.
+function isModernRequest(request) {
+  const version = request?.params?._meta?.[META_PROTOCOL_VERSION];
+  return typeof version === "string" && version.length > 0;
+}
+
+// Methods that 2026-07-28 removed outright. They still exist on the legacy
+// path, but a modern request for one is `Method not found` — answering them
+// would misrepresent which revision this server actually speaks.
+//   - initialize / notifications/initialized: the handshake itself was removed.
+//   - ping, logging/setLevel, notifications/roots/list_changed: removed.
+//   - resources/subscribe|unsubscribe: replaced by `subscriptions/listen`.
+const MODERN_REMOVED_METHODS = new Set([
+  "initialize",
+  "notifications/initialized",
+  "ping",
+  "logging/setLevel",
+  "notifications/roots/list_changed",
+  "resources/subscribe",
+  "resources/unsubscribe",
+]);
+
+// `CacheableResult` — 2026-07-28 REQUIRES `ttlMs` and `cacheScope` on these
+// results. `cacheScope` is a security control, not a hint: "public" lets shared
+// intermediaries cache and re-serve the payload. Any listing built from the
+// caller's MCP-key scopes therefore MUST be "private", or one customer's
+// scope-filtered view could be served to another.
+const CACHEABLE_RESULTS = {
+  // buildToolDefinitions(auth) / buildResourceDefinitions(auth) filter by scope.
+  "tools/list": { ttlMs: 300000, cacheScope: "private" },
+  "resources/list": { ttlMs: 300000, cacheScope: "private" },
+  "resources/read": { ttlMs: 300000, cacheScope: "private" },
+  // buildPrompts() / buildResourceTemplates() take no auth — identical for all.
+  "prompts/list": { ttlMs: 3600000, cacheScope: "public" },
+  "resources/templates/list": { ttlMs: 3600000, cacheScope: "public" },
+};
+
+// Modern results MUST carry `resultType`, and SHOULD identify the server in
+// `_meta`, so a stateless client can tell who answered without a handshake.
+function modernResult(id, result) {
+  const { _meta: innerMeta, ...rest } = result || {};
+  return jsonRpcResult(id, {
+    resultType: "complete",
+    ...rest,
+    _meta: {
+      ...(innerMeta || {}),
+      [META_SERVER_INFO]: serverInfo(),
+    },
+  });
+}
+
+// Per-request fields the spec marks REQUIRED on every modern request. A request
+// missing one is malformed: JSON-RPC -32602, HTTP 400.
+function validateModernMeta(request) {
+  const meta = request?.params?._meta || {};
+  const version = meta[META_PROTOCOL_VERSION];
+
+  const capabilities = meta[META_CLIENT_CAPABILITIES];
+  if (
+    capabilities === undefined ||
+    capabilities === null ||
+    typeof capabilities !== "object" ||
+    Array.isArray(capabilities)
+  ) {
+    return createJsonRpcError(
+      -32602,
+      `Invalid params: _meta["${META_CLIENT_CAPABILITIES}"] is required on every request`,
+    );
+  }
+
+  if (!MCP_MODERN_PROTOCOL_VERSIONS.includes(version)) {
+    return createJsonRpcError(
+      ERROR_UNSUPPORTED_PROTOCOL_VERSION,
+      "Unsupported protocol version",
+      {
+        supported: MCP_SUPPORTED_PROTOCOL_VERSIONS,
+        requested: version,
+        // Non-normative hint: this server is dual-era, so the legacy revisions
+        // above are reachable only through the `initialize` handshake, not
+        // through per-request _meta.
+        modern: MCP_MODERN_PROTOCOL_VERSIONS,
+        legacy: MCP_LEGACY_PROTOCOL_VERSIONS,
+      },
+    );
+  }
+
+  return null;
+}
+
+// Streamable HTTP mirrors selected body fields into headers so intermediaries
+// can route without parsing the body; the server must reject any disagreement
+// so the two never diverge as sources of truth.
+const HEADER_NAME_SOURCES = {
+  "tools/call": (params) => params?.name,
+  "resources/read": (params) => params?.uri,
+  "prompts/get": (params) => params?.name,
+};
+
+function decodeHeaderValue(value) {
+  if (typeof value !== "string") return value;
+  const match = /^=\?base64\?(.*)\?=$/.exec(value);
+  if (!match) return value;
+  try {
+    return Buffer.from(match[1], "base64").toString("utf8");
+  } catch {
+    return value;
+  }
+}
+
+function headerMismatch(message) {
+  return createJsonRpcError(ERROR_HEADER_MISMATCH, `Header mismatch: ${message}`);
+}
+
+// Only meaningful for modern requests over HTTP. Legacy requests predate these
+// headers and MUST NOT be subjected to this check.
+function validateModernHeaders(request, headers = {}) {
+  const get = (name) => {
+    const found = Object.keys(headers).find(
+      (key) => key.toLowerCase() === name.toLowerCase(),
+    );
+    return found === undefined ? undefined : headers[found];
+  };
+
+  const headerVersion = get("mcp-protocol-version");
+  if (typeof headerVersion !== "string" || !headerVersion) {
+    return headerMismatch("MCP-Protocol-Version header is required");
+  }
+  const bodyVersion = request?.params?._meta?.[META_PROTOCOL_VERSION];
+  if (headerVersion !== bodyVersion) {
+    return headerMismatch(
+      `MCP-Protocol-Version header value '${headerVersion}' does not match body value '${bodyVersion}'`,
+    );
+  }
+
+  const headerMethod = get("mcp-method");
+  if (typeof headerMethod !== "string" || !headerMethod) {
+    return headerMismatch("Mcp-Method header is required");
+  }
+  if (headerMethod !== request.method) {
+    return headerMismatch(
+      `Mcp-Method header value '${headerMethod}' does not match body value '${request.method}'`,
+    );
+  }
+
+  const nameSource = HEADER_NAME_SOURCES[request.method];
+  if (nameSource) {
+    const expected = nameSource(request.params);
+    const headerName = get("mcp-name");
+    if (typeof headerName !== "string" || !headerName) {
+      return headerMismatch(`Mcp-Name header is required for ${request.method}`);
+    }
+    if (decodeHeaderValue(headerName) !== expected) {
+      return headerMismatch(
+        `Mcp-Name header value '${headerName}' does not match body value '${expected}'`,
+      );
+    }
+  }
+
+  return null;
+}
+
+// HTTP status for a JSON-RPC envelope. The spec pins specific statuses to
+// specific modern error codes so a dual-era client can tell a modern server
+// from a legacy one by inspecting a 400/404 body.
+function getHttpStatusForResponse(response, modern = false) {
+  const code = response?.error?.code;
+  if (code === undefined) return 200;
+  if (!modern) return 200;
+  if (
+    code === ERROR_HEADER_MISMATCH ||
+    code === ERROR_UNSUPPORTED_PROTOCOL_VERSION ||
+    code === -32021 ||
+    code === -32602
+  ) {
+    return 400;
+  }
+  if (code === -32601) return 404;
+  return 200;
+}
 
 function createJsonRpcError(code, message, data) {
   return { code, message, ...(data === undefined ? {} : { data }) };
@@ -510,7 +763,10 @@ function getPublicGuideResource(uri, auth) {
       server: {
         name: MCP_SERVER_NAME,
         version: MCP_SERVER_VERSION,
-        protocolVersion: MCP_PROTOCOL_VERSION,
+        protocolVersion: MCP_MODERN_PROTOCOL_VERSIONS[0],
+        supportedProtocolVersions: MCP_SUPPORTED_PROTOCOL_VERSIONS,
+        modernProtocolVersions: MCP_MODERN_PROTOCOL_VERSIONS,
+        legacyProtocolVersions: MCP_LEGACY_PROTOCOL_VERSIONS,
       },
       summary:
         "This MCP server exposes the Midnight DID workflow over MCP. Agents authenticate with a human-issued MCP key, discover capabilities through resources/prompts/tools, and then create or query DID requests and registry data.",
@@ -1134,6 +1390,23 @@ export function createMcpServer(deps) {
     throw createJsonRpcError(-32601, `Unknown tool: ${name}`);
   }
 
+  function buildDiscoverResult() {
+    return {
+      supportedVersions: MCP_SUPPORTED_PROTOCOL_VERSIONS,
+      capabilities: {
+        tools: {},
+        resources: {},
+        prompts: {},
+      },
+      instructions:
+        "Authenticate with the human-issued MCP key, inspect resources/prompts/tools, then use the DID request and DID resolution tools exposed by this server.",
+      // Identity and version support are stable; the payload carries no
+      // caller-specific data, so a shared intermediary may cache it.
+      ttlMs: 3600000,
+      cacheScope: "public",
+    };
+  }
+
   async function handleRequest(request, ctx = {}) {
     if (!request || typeof request !== "object" || Array.isArray(request)) {
       return jsonRpcError(null, createJsonRpcError(-32600, "Invalid Request"));
@@ -1148,6 +1421,54 @@ export function createMcpServer(deps) {
 
     const id = request.id ?? null;
 
+    if (isModernRequest(request)) {
+      return handleModernRequest(request, ctx, id);
+    }
+
+    return handleLegacyRequest(request, ctx, id);
+  }
+
+  async function handleModernRequest(request, ctx, id) {
+    const metaError = validateModernMeta(request);
+    if (metaError) {
+      return jsonRpcError(id, metaError);
+    }
+
+    // Header mirroring is a Streamable HTTP concern, and the spec does not
+    // define header requirements for notification POSTs.
+    const isNotification = String(request.method || "").startsWith("notifications/");
+    if (ctx.transport === "http" && !isNotification) {
+      const headerError = validateModernHeaders(request, ctx.headers || {});
+      if (headerError) {
+        return jsonRpcError(id, headerError);
+      }
+    }
+
+    if (MODERN_REMOVED_METHODS.has(request.method)) {
+      return jsonRpcError(
+        id,
+        createJsonRpcError(
+          -32601,
+          `Method not found: '${request.method}' was removed in protocol version ${MCP_MODERN_PROTOCOL_VERSIONS[0]}. It remains available to legacy clients through the initialize handshake.`,
+        ),
+      );
+    }
+
+    if (request.method === "server/discover") {
+      return modernResult(id, buildDiscoverResult());
+    }
+
+    const response = await handleLegacyRequest(request, ctx, id);
+    if (!response || !("result" in response)) {
+      return response;
+    }
+    return modernResult(id, {
+      ...response.result,
+      ...(CACHEABLE_RESULTS[request.method] || {}),
+    });
+  }
+
+  async function handleLegacyRequest(request, ctx, id) {
     try {
       if (request.method === "notifications/initialized") {
         return null;
@@ -1176,7 +1497,9 @@ export function createMcpServer(deps) {
         }
 
         return jsonRpcResult(id, {
-          protocolVersion: MCP_PROTOCOL_VERSION,
+          protocolVersion: negotiateProtocolVersion(
+            request.params?.protocolVersion,
+          ),
           capabilities: {
             tools: {
               listChanged: false,
@@ -1272,7 +1595,10 @@ export function createMcpServer(deps) {
     return {
       name: MCP_SERVER_NAME,
       version: MCP_SERVER_VERSION,
-      protocolVersion: MCP_PROTOCOL_VERSION,
+      protocolVersion: MCP_MODERN_PROTOCOL_VERSIONS[0],
+      supportedProtocolVersions: MCP_SUPPORTED_PROTOCOL_VERSIONS,
+      modernProtocolVersions: MCP_MODERN_PROTOCOL_VERSIONS,
+      legacyProtocolVersions: MCP_LEGACY_PROTOCOL_VERSIONS,
       endpoint: `${baseUrl.replace(/\/$/, "")}/mcp`,
       authentication: {
         type: "human-issued-mcp-key",
@@ -1292,5 +1618,19 @@ export function createMcpServer(deps) {
   return {
     handleRequest,
     getDiscoveryDocument,
+    isModernRequest,
+    getHttpStatusForResponse,
   };
 }
+
+export {
+  MCP_MODERN_PROTOCOL_VERSIONS,
+  MCP_LEGACY_PROTOCOL_VERSIONS,
+  MCP_SUPPORTED_PROTOCOL_VERSIONS,
+  MCP_SERVER_NAME,
+  MCP_SERVER_VERSION,
+  isModernRequest,
+  getHttpStatusForResponse,
+  validateModernHeaders,
+  negotiateProtocolVersion,
+};

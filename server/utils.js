@@ -134,6 +134,26 @@ function getCorsOrigin(req) {
   return allowedOrigins[0] || "http://localhost:5173";
 }
 
+// MCP's Streamable HTTP transport requires servers to validate `Origin` on
+// incoming connections to prevent DNS rebinding, rejecting with 403.
+//
+// CORS alone does not satisfy this: the Access-Control-Allow-Origin mismatch
+// only stops the *browser* from reading the response — the server has already
+// executed the request and any side effects have happened. This check refuses
+// before any work is done.
+//
+// A missing Origin is allowed on purpose. The rule is scoped to "present and
+// invalid" because non-browser callers (agents, curl, MCP SDK clients, stdio)
+// never send the header, and rejecting them would break every real consumer.
+export function isOriginAllowed(req) {
+  const requestOrigin = req?.headers?.origin;
+  if (typeof requestOrigin !== "string" || !requestOrigin) return true;
+
+  const allowedOrigins = getAllowedOrigins();
+  if (allowedOrigins.includes("*")) return true;
+  return allowedOrigins.includes(requestOrigin);
+}
+
 export function applyCorsHeaders(res, req) {
   res.setHeader("Access-Control-Allow-Origin", getCorsOrigin(req));
   res.setHeader("Vary", "Origin");

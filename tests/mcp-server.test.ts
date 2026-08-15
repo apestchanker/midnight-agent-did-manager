@@ -1,6 +1,49 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Server } from "http";
-import { createMcpServer } from "../server/mcp-core.js";
+import {
+  createMcpServer,
+  getHttpStatusForResponse,
+  isModernRequest,
+  MCP_LEGACY_PROTOCOL_VERSIONS,
+  MCP_MODERN_PROTOCOL_VERSIONS,
+  MCP_SERVER_VERSION,
+  MCP_SUPPORTED_PROTOCOL_VERSIONS,
+} from "../server/mcp-core.js";
+import { readFileSync } from "node:fs";
+
+const MODERN_VERSION = "2026-07-28";
+const META_VERSION = "io.modelcontextprotocol/protocolVersion";
+const META_CAPS = "io.modelcontextprotocol/clientCapabilities";
+const META_SERVER_INFO = "io.modelcontextprotocol/serverInfo";
+
+/** Build a spec-shaped modern request plus the headers HTTP requires for it. */
+function modernRequest(
+  method: string,
+  params: Record<string, unknown> = {},
+  overrides: { version?: string; meta?: Record<string, unknown> } = {},
+) {
+  const version = overrides.version ?? MODERN_VERSION;
+  const meta: Record<string, unknown> = {
+    [META_VERSION]: version,
+    [META_CAPS]: {},
+    "io.modelcontextprotocol/clientInfo": { name: "probe", version: "1.0.0" },
+    ...(overrides.meta ?? {}),
+  };
+
+  const headers: Record<string, string> = {
+    "mcp-protocol-version": version,
+    "mcp-method": method,
+  };
+  const name = (params.name ?? params.uri) as string | undefined;
+  if (["tools/call", "resources/read", "prompts/get"].includes(method) && name) {
+    headers["mcp-name"] = name;
+  }
+
+  return {
+    request: { jsonrpc: "2.0", id: 1, method, params: { ...params, _meta: meta } },
+    headers,
+  };
+}
 
 // Task 8: server/mcp-http.js's GET /logs is now gated by requireSession
 // (duplicated from server/index.js per ADR-005) instead of the old
@@ -197,10 +240,76 @@ describe("MCP server core", () => {
       { transport: "stdio", session: {} },
     );
 
-    expect(response?.result.protocolVersion).toBe("2024-11-05");
+    expect(response?.result.protocolVersion).toBe("2025-11-25");
     expect(response?.result.capabilities.tools).toBeTruthy();
     expect(response?.result.capabilities.resources).toBeTruthy();
     expect(response?.result.capabilities.prompts).toBeTruthy();
+  });
+
+  it("echoes back a supported protocol version requested by the client", async () => {
+    const server = createMcpServer(createDeps());
+
+    for (const requested of [
+      "2025-11-25",
+      "2025-06-18",
+      "2025-03-26",
+      "2024-11-05",
+    ]) {
+      const response = await server.handleRequest(
+        {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: { protocolVersion: requested },
+        },
+        { transport: "stdio", session: {} },
+      );
+
+      expect(response?.result.protocolVersion).toBe(requested);
+    }
+  });
+
+  it("falls back to the newest supported revision for unknown or missing versions", async () => {
+    const server = createMcpServer(createDeps());
+
+    // 2026-07-28 is the modern era (per-request _meta + server/discover), which
+    // this server does not implement — it must not claim to speak it.
+    for (const requested of [undefined, "2026-07-28", "1900-01-01", 42]) {
+      const response = await server.handleRequest(
+        {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: requested === undefined ? {} : { protocolVersion: requested },
+        },
+        { transport: "stdio", session: {} },
+      );
+
+      expect(response?.result.protocolVersion).toBe("2025-11-25");
+    }
+  });
+
+  it("advertises its supported revisions in the discovery document", async () => {
+    const server = createMcpServer(createDeps());
+    const discovery = server.getDiscoveryDocument("https://example.test");
+
+    // The document advertises the newest revision the server speaks overall,
+    // with the per-era breakdown alongside it.
+    expect(discovery.protocolVersion).toBe("2026-07-28");
+    expect(discovery.modernProtocolVersions).toEqual(["2026-07-28"]);
+    expect(discovery.legacyProtocolVersions).toEqual([
+      "2025-11-25",
+      "2025-06-18",
+      "2025-03-26",
+      "2024-11-05",
+    ]);
+    expect(discovery.supportedProtocolVersions).toEqual([
+      "2026-07-28",
+      "2025-11-25",
+      "2025-06-18",
+      "2025-03-26",
+      "2024-11-05",
+    ]);
   });
 
   it("filters tools by MCP-key scope during discovery", async () => {
@@ -925,5 +1034,528 @@ describe("server/mcp-http.js GET /logs (Task 8: requireSession gating)", () => {
     expect(src).not.toMatch(/function requireApiAuth\s*\(/);
     expect(src).not.toMatch(/process\.env\.DID_API_AUTH_TOKEN/);
     expect(src).toContain("async function requireSession(");
+  });
+});
+
+describe("MCP dual-era protocol support", () => {
+  describe("era detection", () => {
+    it("treats a request carrying per-request _meta as modern", () => {
+      const { request } = modernRequest("tools/list");
+      expect(isModernRequest(request)).toBe(true);
+    });
+
+    it("treats initialize and bare requests as legacy", () => {
+      expect(
+        isModernRequest({ jsonrpc: "2.0", id: 1, method: "initialize" }),
+      ).toBe(false);
+      expect(
+        isModernRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      ).toBe(false);
+    });
+  });
+
+  describe("server/discover", () => {
+    it("reports supported versions, capabilities and identity", async () => {
+      const server = createMcpServer(createDeps());
+      const { request, headers } = modernRequest("server/discover");
+      const response = await server.handleRequest(request, {
+        transport: "http",
+        headers,
+      });
+
+      expect(response?.result.resultType).toBe("complete");
+      expect(response?.result.supportedVersions).toEqual(
+        MCP_SUPPORTED_PROTOCOL_VERSIONS,
+      );
+      expect(response?.result.supportedVersions).toContain(MODERN_VERSION);
+      expect(response?.result.capabilities.tools).toBeTruthy();
+      expect(response?.result._meta[META_SERVER_INFO]).toEqual({
+        name: "midnight-did-mcp",
+        version: MCP_SERVER_VERSION,
+      });
+    });
+  });
+
+  describe("per-request _meta validation", () => {
+    it("rejects a modern request missing clientCapabilities with -32602", async () => {
+      const server = createMcpServer(createDeps());
+      const request = {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+        params: { _meta: { [META_VERSION]: MODERN_VERSION } },
+      };
+
+      const response = await server.handleRequest(request, {
+        transport: "stdio",
+        session: {},
+      });
+
+      expect(response?.error.code).toBe(-32602);
+      expect(getHttpStatusForResponse(response, true)).toBe(400);
+    });
+
+    it("rejects an unsupported version with -32022 and lists what it speaks", async () => {
+      const server = createMcpServer(createDeps());
+      const { request, headers } = modernRequest("tools/list", {}, {
+        version: "1900-01-01",
+      });
+
+      const response = await server.handleRequest(request, {
+        transport: "http",
+        headers,
+      });
+
+      expect(response?.error.code).toBe(-32022);
+      expect(response?.error.data.requested).toBe("1900-01-01");
+      expect(response?.error.data.supported).toEqual(
+        MCP_SUPPORTED_PROTOCOL_VERSIONS,
+      );
+      expect(response?.error.data.modern).toEqual(MCP_MODERN_PROTOCOL_VERSIONS);
+      expect(getHttpStatusForResponse(response, true)).toBe(400);
+    });
+
+    it("rejects a legacy revision sent in modern framing", async () => {
+      const server = createMcpServer(createDeps());
+      // 2025-11-25 is real, but it is only reachable through `initialize` —
+      // it must not be accepted via per-request _meta.
+      const { request, headers } = modernRequest("tools/list", {}, {
+        version: "2025-11-25",
+      });
+
+      const response = await server.handleRequest(request, {
+        transport: "http",
+        headers,
+      });
+
+      expect(response?.error.code).toBe(-32022);
+    });
+
+    it("rejects initialize sent in modern framing with -32601 / 404", async () => {
+      const server = createMcpServer(createDeps());
+      const { request, headers } = modernRequest("initialize");
+
+      const response = await server.handleRequest(request, {
+        transport: "http",
+        headers,
+      });
+
+      expect(response?.error.code).toBe(-32601);
+      expect(getHttpStatusForResponse(response, true)).toBe(404);
+    });
+  });
+
+  describe("HTTP header mirroring", () => {
+    it("accepts a well-formed modern request and stamps resultType + serverInfo", async () => {
+      const server = createMcpServer(createDeps());
+      const { request, headers } = modernRequest("tools/list");
+
+      const response = await server.handleRequest(request, {
+        transport: "http",
+        headers: { ...headers, "x-mcp-key": "mcp_valid" },
+      });
+
+      expect(response?.error).toBeUndefined();
+      expect(response?.result.resultType).toBe("complete");
+      expect(Array.isArray(response?.result.tools)).toBe(true);
+      expect(response?.result._meta[META_SERVER_INFO].version).toBe(
+        MCP_SERVER_VERSION,
+      );
+      expect(getHttpStatusForResponse(response, true)).toBe(200);
+    });
+
+    it("rejects a missing MCP-Protocol-Version header with -32020", async () => {
+      const server = createMcpServer(createDeps());
+      const { request, headers } = modernRequest("tools/list");
+      delete headers["mcp-protocol-version"];
+
+      const response = await server.handleRequest(request, {
+        transport: "http",
+        headers,
+      });
+
+      expect(response?.error.code).toBe(-32020);
+      expect(getHttpStatusForResponse(response, true)).toBe(400);
+    });
+
+    it("rejects a header/body protocol version disagreement", async () => {
+      const server = createMcpServer(createDeps());
+      const { request, headers } = modernRequest("tools/list");
+      headers["mcp-protocol-version"] = "2025-11-25";
+
+      const response = await server.handleRequest(request, {
+        transport: "http",
+        headers,
+      });
+
+      expect(response?.error.code).toBe(-32020);
+    });
+
+    it("rejects an Mcp-Method header that disagrees with the body", async () => {
+      const server = createMcpServer(createDeps());
+      const { request, headers } = modernRequest("tools/list");
+      headers["mcp-method"] = "prompts/list";
+
+      const response = await server.handleRequest(request, {
+        transport: "http",
+        headers,
+      });
+
+      expect(response?.error.code).toBe(-32020);
+    });
+
+    it("requires Mcp-Name on tools/call and matches it against the body", async () => {
+      const server = createMcpServer(createDeps());
+      const { request, headers } = modernRequest("tools/call", {
+        name: "did_resolve",
+        arguments: { did: "did:midnight:preprod:contract:agent" },
+      });
+
+      const missing = await server.handleRequest(request, {
+        transport: "http",
+        headers: (({ "mcp-name": _drop, ...rest }) => rest)(headers),
+      });
+      expect(missing?.error.code).toBe(-32020);
+
+      const wrong = await server.handleRequest(request, {
+        transport: "http",
+        headers: { ...headers, "mcp-name": "did_validate" },
+      });
+      expect(wrong?.error.code).toBe(-32020);
+    });
+
+    it("decodes the base64 sentinel form of Mcp-Name before comparing", async () => {
+      const server = createMcpServer(createDeps());
+      const { request, headers } = modernRequest("tools/call", {
+        name: "did_resolve",
+        arguments: { did: "did:midnight:preprod:contract:agent" },
+      });
+      const encoded = `=?base64?${Buffer.from("did_resolve", "utf8").toString("base64")}?=`;
+
+      const response = await server.handleRequest(request, {
+        transport: "http",
+        headers: { ...headers, "mcp-name": encoded, "x-mcp-key": "mcp_valid" },
+      });
+
+      expect(response?.error?.code).not.toBe(-32020);
+    });
+
+    it("does not apply header validation to legacy requests", async () => {
+      const server = createMcpServer(createDeps());
+      // No MCP-Protocol-Version / Mcp-Method headers at all — a legacy client
+      // predates them and must keep working.
+      const response = await server.handleRequest(
+        { jsonrpc: "2.0", id: 1, method: "tools/list" },
+        { transport: "http", headers: { "x-mcp-key": "mcp_valid" } },
+      );
+
+      expect(response?.error).toBeUndefined();
+      expect(Array.isArray(response?.result.tools)).toBe(true);
+      // Legacy results must NOT be stamped with modern-only fields.
+      expect(response?.result.resultType).toBeUndefined();
+    });
+  });
+
+  describe("HTTP status mapping", () => {
+    it("never maps legacy errors onto non-200 statuses", () => {
+      const legacyError = { jsonrpc: "2.0", id: 1, error: { code: -32601, message: "x" } };
+      expect(getHttpStatusForResponse(legacyError, false)).toBe(200);
+      expect(getHttpStatusForResponse(legacyError, true)).toBe(404);
+    });
+  });
+
+  describe("reported server version", () => {
+    it("matches package.json instead of a hardcoded literal", () => {
+      const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+      expect(MCP_SERVER_VERSION).toBe(pkg.version);
+      expect(MCP_SERVER_VERSION).not.toBe("0.3.1");
+    });
+
+    it("keeps the legacy revision list ordered newest-first", () => {
+      expect(MCP_LEGACY_PROTOCOL_VERSIONS[0]).toBe("2025-11-25");
+      expect(MCP_LEGACY_PROTOCOL_VERSIONS).toContain("2024-11-05");
+    });
+  });
+});
+
+describe("server/mcp-http.js Streamable HTTP transport (dual-era)", () => {
+  let httpServer: Server;
+  let baseUrl: string;
+
+  beforeAll(async () => {
+    const mod = await import("../server/mcp-http.js");
+    httpServer = mod.server;
+    if (!httpServer.listening) {
+      await new Promise<void>((resolve) => {
+        httpServer.listen(0, "127.0.0.1", () => resolve());
+      });
+    }
+    const address = httpServer.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+    baseUrl = `http://127.0.0.1:${port}`;
+  });
+
+  afterAll(async () => {
+    if (httpServer.listening) {
+      await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+    }
+  });
+
+  async function postMcp(body: unknown, headers: Record<string, string> = {}) {
+    const response = await fetch(`${baseUrl}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        ...headers,
+      },
+      body: JSON.stringify(body),
+    });
+    const text = await response.text();
+    return { status: response.status, body: text ? JSON.parse(text) : null };
+  }
+
+  it("answers GET and DELETE on the MCP endpoint with 405", async () => {
+    for (const method of ["GET", "DELETE"]) {
+      const response = await fetch(`${baseUrl}/mcp`, { method });
+      expect(response.status).toBe(405);
+      expect(response.headers.get("allow")).toBe("POST");
+    }
+  });
+
+  it("returns 400 + UnsupportedProtocolVersionError for a modern unsupported version", async () => {
+    const { request, headers } = modernRequest("tools/list", {}, { version: "1900-01-01" });
+    const { status, body } = await postMcp(request, headers);
+
+    expect(status).toBe(400);
+    expect(body.error.code).toBe(-32022);
+    expect(body.error.data.supported).toContain("2026-07-28");
+  });
+
+  it("returns 400 + HeaderMismatch when the header disagrees with the body", async () => {
+    const { request, headers } = modernRequest("tools/list");
+    const { status, body } = await postMcp(request, {
+      ...headers,
+      "mcp-protocol-version": "2025-11-25",
+    });
+
+    expect(status).toBe(400);
+    expect(body.error.code).toBe(-32020);
+  });
+
+  it("returns 404 + -32601 for an unknown modern method", async () => {
+    const { request, headers } = modernRequest("does/not-exist");
+    const { status, body } = await postMcp(request, headers);
+
+    expect(status).toBe(404);
+    expect(body.error.code).toBe(-32601);
+  });
+
+  it("serves server/discover over HTTP with 200", async () => {
+    const { request, headers } = modernRequest("server/discover");
+    const { status, body } = await postMcp(request, headers);
+
+    expect(status).toBe(200);
+    expect(body.result.resultType).toBe("complete");
+    expect(body.result.supportedVersions).toContain("2026-07-28");
+  });
+
+  it("still serves the legacy initialize handshake with 200 and no modern headers", async () => {
+    const { status, body } = await postMcp({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2025-06-18" },
+    });
+
+    expect(status).toBe(200);
+    expect(body.result.protocolVersion).toBe("2025-06-18");
+    expect(body.result.serverInfo.name).toBe("midnight-did-mcp");
+  });
+
+  it("keeps legacy JSON-RPC errors on HTTP 200", async () => {
+    const { status, body } = await postMcp({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "does/not-exist",
+    });
+
+    expect(status).toBe(200);
+    expect(body.error.code).toBe(-32601);
+  });
+
+  it("acknowledges a notification with 202 and an empty body", async () => {
+    const response = await fetch(`${baseUrl}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(await response.text()).toBe("");
+  });
+});
+
+describe("MCP 2026-07-28 removals and CacheableResult", () => {
+  it("rejects methods removed in 2026-07-28 on the modern path", async () => {
+    const server = createMcpServer(createDeps());
+
+    for (const method of [
+      "ping",
+      "logging/setLevel",
+      "notifications/roots/list_changed",
+      "resources/subscribe",
+      "resources/unsubscribe",
+    ]) {
+      const { request, headers } = modernRequest(method);
+      const response = await server.handleRequest(request, {
+        transport: "http",
+        headers,
+      });
+
+      expect(response?.error.code, `${method} must be Method not found`).toBe(-32601);
+      expect(getHttpStatusForResponse(response, true)).toBe(404);
+    }
+  });
+
+  it("still answers ping for legacy clients", async () => {
+    const server = createMcpServer(createDeps());
+    const response = await server.handleRequest(
+      { jsonrpc: "2.0", id: 1, method: "ping" },
+      { transport: "stdio", session: {} },
+    );
+
+    expect(response?.error).toBeUndefined();
+    expect(response?.result).toEqual({});
+  });
+
+  it("marks scope-filtered listings private so intermediaries cannot re-serve them", async () => {
+    const server = createMcpServer(createDeps());
+
+    for (const method of ["tools/list", "resources/list"]) {
+      const { request, headers } = modernRequest(method);
+      const response = await server.handleRequest(request, {
+        transport: "http",
+        headers: { ...headers, "x-mcp-key": "mcp_valid" },
+      });
+
+      expect(response?.result.cacheScope, `${method} varies by MCP key`).toBe("private");
+      expect(typeof response?.result.ttlMs).toBe("number");
+    }
+  });
+
+  it("marks auth-independent listings public", async () => {
+    const server = createMcpServer(createDeps());
+
+    for (const method of ["prompts/list", "resources/templates/list"]) {
+      const { request, headers } = modernRequest(method);
+      const response = await server.handleRequest(request, {
+        transport: "http",
+        headers,
+      });
+
+      expect(response?.result.cacheScope, method).toBe("public");
+      expect(typeof response?.result.ttlMs).toBe("number");
+    }
+  });
+
+  it("does not leak cache fields onto legacy results", async () => {
+    const server = createMcpServer(createDeps());
+    const response = await server.handleRequest(
+      { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      { transport: "http", headers: { "x-mcp-key": "mcp_valid" } },
+    );
+
+    expect(response?.result.ttlMs).toBeUndefined();
+    expect(response?.result.cacheScope).toBeUndefined();
+  });
+});
+
+describe("server/mcp-http.js Origin validation (DNS rebinding guard)", () => {
+  const ORIGINAL_ENV = { ...process.env };
+  let httpServer: Server;
+  let baseUrl: string;
+
+  beforeAll(async () => {
+    process.env.DID_CORS_ALLOWED_ORIGINS = "https://multipass-site.onrender.com";
+    const mod = await import("../server/mcp-http.js");
+    httpServer = mod.server;
+    if (!httpServer.listening) {
+      await new Promise<void>((resolve) => {
+        httpServer.listen(0, "127.0.0.1", () => resolve());
+      });
+    }
+    const address = httpServer.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+    baseUrl = `http://127.0.0.1:${port}`;
+  });
+
+  afterAll(async () => {
+    if (httpServer.listening) {
+      await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+    }
+    process.env = { ...ORIGINAL_ENV };
+  });
+
+  it("allows requests with no Origin header at all (non-browser clients)", async () => {
+    const { request, headers } = modernRequest("server/discover");
+    const response = await fetch(`${baseUrl}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(request),
+    });
+
+    expect(response.status).toBe(200);
+  });
+
+  it("allows an Origin on the allowlist", async () => {
+    const { request, headers } = modernRequest("server/discover");
+    const response = await fetch(`${baseUrl}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://multipass-site.onrender.com",
+        ...headers,
+      },
+      body: JSON.stringify(request),
+    });
+
+    expect(response.status).toBe(200);
+  });
+
+  it("rejects a disallowed Origin with 403 before processing the request", async () => {
+    const { request, headers } = modernRequest("server/discover");
+    const response = await fetch(`${baseUrl}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://evil.example.com",
+        ...headers,
+      },
+      body: JSON.stringify(request),
+    });
+
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error.message).toMatch(/Origin/i);
+    // Spec: the error response carries no id.
+    expect(body.id).toBeUndefined();
+  });
+
+  it("rejects a disallowed Origin on the preflight too", async () => {
+    const response = await fetch(`${baseUrl}/mcp`, {
+      method: "OPTIONS",
+      headers: {
+        origin: "https://evil.example.com",
+        "access-control-request-method": "POST",
+      },
+    });
+
+    expect(response.status).toBe(403);
+  });
+
+  it("does not block the health check", async () => {
+    const response = await fetch(`${baseUrl}/health`);
+    expect(response.status).toBe(200);
   });
 });

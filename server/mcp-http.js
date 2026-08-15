@@ -4,7 +4,14 @@ import { URL, fileURLToPath } from "url";
 import { initializeDatabase } from "./db.js";
 import { getRecentLogs, installProcessLogger } from "./log-store.js";
 import { createDidMcpApp } from "./mcp-app.js";
-import { readJson, RequestBodyError, sendJson, sendText, setCorsHeaders } from "./utils.js";
+import {
+  isOriginAllowed,
+  readJson,
+  RequestBodyError,
+  sendJson,
+  sendText,
+  setCorsHeaders,
+} from "./utils.js";
 import { validateSession } from "./session-service.js";
 
 const PORT = Number(process.env.PORT || process.env.DID_MCP_PORT || 8788);
@@ -75,6 +82,21 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // DNS-rebinding guard, ahead of every route including the preflight. Callers
+  // without an Origin header (agents, curl, SDK clients, Render health checks)
+  // are unaffected — see isOriginAllowed.
+  if (!isOriginAllowed(req)) {
+    console.warn(`[mcp-http] rejected disallowed Origin: ${req.headers.origin}`);
+    sendJson(res, 403, {
+      jsonrpc: "2.0",
+      error: {
+        code: -32600,
+        message: "Forbidden: request Origin is not allowed",
+      },
+    }, req);
+    return;
+  }
+
   if (req.method === "OPTIONS") {
     setCorsHeaders(res, req);
     res.statusCode = 204;
@@ -110,19 +132,34 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // Protocol version 2026-07-28 removed the GET stream endpoint and
+  // protocol-level sessions. A server on this revision answers the older
+  // GET/DELETE mechanics with 405 rather than pretending to support them.
+  if (url.pathname === "/mcp" && (req.method === "GET" || req.method === "DELETE")) {
+    res.setHeader("Allow", "POST");
+    sendText(res, 405, "Method Not Allowed", req);
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/mcp") {
     try {
       const payload = await readJson(req);
+      // The era is decided by the request itself: per-request `_meta` protocol
+      // version means modern, anything else (including `initialize`) is legacy.
+      // Only modern responses map JSON-RPC errors onto non-200 HTTP statuses —
+      // that mapping is what lets a dual-era client tell the eras apart.
+      const modern = app.isModernRequest(payload);
       const response = await app.handleRequest(payload, {
         transport: "http",
         headers: req.headers,
       });
       if (response == null) {
-        res.statusCode = 204;
+        // Accepted notification: 202 with no body.
+        res.statusCode = 202;
         res.end("");
         return;
       }
-      sendJson(res, 200, response, req);
+      sendJson(res, app.getHttpStatusForResponse(response, modern), response, req);
     } catch (error) {
       if (error instanceof RequestBodyError) {
         console.warn("[mcp-http] invalid JSON payload", error.message);
