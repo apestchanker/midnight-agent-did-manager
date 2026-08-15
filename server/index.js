@@ -58,6 +58,7 @@ import {
 } from "./proof-request-service.js";
 import {
   getClientIp,
+  isOriginAllowed,
   normalizeWallet,
   parseRequestPath,
   readJson,
@@ -125,6 +126,25 @@ function getApiAuthToken(req) {
     return authHeader.slice("Bearer ".length).trim();
   }
   return "";
+}
+
+// (d) The agent routes used to accept the MCP key from either the X-MCP-Key
+// header or a `mcpKey` field in the JSON body. Request bodies end up in access
+// logs, error reports, proxy buffers and browser devtools far more readily
+// than headers do, so a long-lived credential should never travel there. The
+// body form is no longer honoured.
+//
+// Callers still sending it get a warning line rather than a silent failure, so
+// a lingering integration is visible in the logs instead of just breaking. The
+// key itself is never logged.
+function getAgentMcpKey(req, body) {
+  if (body && typeof body === "object" && body.mcpKey) {
+    console.warn(
+      "[backend] ignoring mcpKey supplied in the request body — send the X-MCP-Key header instead",
+    );
+  }
+  const headerKey = req.headers["x-mcp-key"];
+  return typeof headerKey === "string" ? headerKey.trim() : "";
 }
 
 function isPublicApiRoute(req, url, parts) {
@@ -241,6 +261,45 @@ function isSessionRateLimited(remoteAddress) {
   );
 }
 
+// The rest of isPublicApiRoute's surface was unauthenticated AND uncapped.
+// /api/vps/verify, /api/vcs/verify and /api/vps/midnight/verify each run real
+// signature and proof verification, so they are the same unauthenticated
+// CPU-amplification vector isSessionRateLimited was added for; /api/dids/*
+// and /api/issuer are cheaper but still anonymous database reads. Since these
+// carry no credential, source IP is the only key available — which is a weak
+// key behind CGNAT or a botnet, so these limits are an abuse brake, not an
+// access control. The credential on each non-public route remains the real
+// gate. Same window, buckets and prune helpers as the limiters above.
+//
+// /health is deliberately absent: Render polls it for liveness and must never
+// be throttled. /api/auth/nonce and /api/auth/session are absent because they
+// already have dedicated limiters and should not be charged twice.
+const PUBLIC_COMPUTE_RATE_LIMITS = {
+  "/api/vps/verify": 10,
+  "/api/vcs/verify": 10,
+  "/api/vps/midnight/verify": 10,
+  "/api/dids/resolve": 30,
+  "/api/dids/validate": 30,
+  "/api/issuer": 30,
+};
+const publicComputeRateLimitBuckets = new Map();
+
+function isPublicComputeRateLimited(pathname, remoteAddress) {
+  const maxRequests = PUBLIC_COMPUTE_RATE_LIMITS[pathname];
+  if (maxRequests === undefined) return false;
+
+  const now = Date.now();
+  pruneExpiredRateLimitBuckets(publicComputeRateLimitBuckets, now);
+  // Per-route budget: exhausting the verify quota must not also lock out
+  // did resolution for the same caller.
+  return checkAndBumpRateLimitBucket(
+    publicComputeRateLimitBuckets,
+    `${pathname}|${remoteAddress || ""}`,
+    now,
+    maxRequests,
+  );
+}
+
 // OWASP A09 follow-up (security scan on tasks 4-6): createSessionFromSignature
 // wrote no audit trail on success or failure. Rather than teach
 // session-service.js about audit_events directly (its failure paths run
@@ -334,6 +393,23 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // Defense in depth against browser-driven cross-site abuse. CORS alone only
+  // stops the browser from *reading* the response — by then the request has
+  // already executed here. This refuses ahead of every route, preflight
+  // included. It is deliberately not a perimeter control: a non-browser client
+  // can set any Origin it likes, so the real gate on each route is still its
+  // credential. Requests with no Origin at all (agents, curl, SDK clients,
+  // Render health checks) are unaffected.
+  if (!isOriginAllowed(req)) {
+    console.warn(`[backend] rejected disallowed Origin: ${req.headers.origin}`);
+    sendJson(res, 403, {
+      ok: false,
+      error: "forbidden_origin",
+      message: "Request Origin is not allowed.",
+    }, req);
+    return;
+  }
+
   if (req.method === "OPTIONS") {
     setCorsHeaders(res, req);
     res.statusCode = 204;
@@ -344,6 +420,20 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const parts = parseRequestPath(url.pathname);
   console.info(`[backend] ${req.method} ${url.pathname}`);
+
+  // (b) Unauthenticated compute endpoints are the real abuse surface: they run
+  // DB reads and signature/proof verification for anyone, with no credential to
+  // revoke. /health is excluded so Render's health checks never trip it, and
+  // the two /api/auth/* routes keep their own dedicated limiters rather than
+  // being charged twice here.
+  if (isPublicComputeRateLimited(url.pathname, getClientIp(req))) {
+    sendJson(res, 429, {
+      ok: false,
+      error: "rate_limited",
+      message: "Too many requests for this endpoint. Try again shortly.",
+    }, req);
+    return;
+  }
 
   try {
     if (!(await requireSession(req, res, url, parts))) {
@@ -610,13 +700,12 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/agent/did-requests") {
       const body = await readJson(req);
-      const mcpKey = req.headers["x-mcp-key"] || body.mcpKey;
       sendJson(
         res,
         201,
         await createDidRequest({
           ...body,
-          mcpKey,
+          mcpKey: getAgentMcpKey(req, body),
         }),
       );
       return;
@@ -624,13 +713,12 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/agent/proof-requests") {
       const body = await readJson(req);
-      const mcpKey = req.headers["x-mcp-key"] || body.mcpKey;
       sendJson(
         res,
         201,
         await createProofRequestForAgent({
           ...body,
-          mcpKey,
+          mcpKey: getAgentMcpKey(req, body),
         }),
       );
       return;
