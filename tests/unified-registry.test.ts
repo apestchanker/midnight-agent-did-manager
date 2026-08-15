@@ -66,7 +66,12 @@ const MOCK_COLOR = "a1".repeat(32);
 const MOCK_ADMIN_COLOR = "ad".repeat(32);
 const MOCK_DID_KEY = new Uint8Array(32).fill(0xdd);
 const MOCK_TX = { public: { txHash: "0xdeadbeef", txId: "txid-001" } };
-const MOCK_TX_WITH_RESULT = { ...MOCK_TX, result: MOCK_DID_KEY };
+// Mirrors the real SDK shape. `callTx` resolves to FinalizedCallTxData, which is
+// `CallResult & { private: UnsubmittedTxData } & { public: FinalizedTxData }` —
+// so the JS value returned by the circuit lives at `private.result`, never at a
+// top-level `result`. This mock used to expose `result` at the top level, which
+// is why it kept passing against the pre-3b1738f source that read `tx.result`.
+const MOCK_TX_WITH_RESULT = { ...MOCK_TX, private: { result: MOCK_DID_KEY } };
 
 function makeModule() {
   return {
