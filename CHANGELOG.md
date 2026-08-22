@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.9.1
+
+### Fixed
+- Fixed a selected agent rendering with no DID whenever the connected wallet supplies an indexer endpoint the dApp's origin cannot reach. The indexer URL was taken solely from the wallet's `getConfiguration()`, and every contract read goes through the provider built from it, so one unreachable endpoint disabled all on-chain reads at once. `VITE_INDEXER_URI` now takes priority over the wallet's value when set, mirroring how `VITE_PROVER_SERVER_URI` already overrides the wallet's prover URL; both vars were already declared and populated but nothing read them.
+  Reason/impact: 1AM's preprod build returns a pre-authenticated URL on `api-preprod.1am.xyz` that is currently answering `502 Bad Gateway`. The 502 carries no `Access-Control-Allow-Origin`, so the browser reported it as a CORS failure and the SDK surfaced `IndexerQueryError: Internal Server Error`; `UnifiedRegistryAPI.join()` then failed and no DID could be displayed. The app could not diagnose this on its own, because a CORS rejection reaches JavaScript as a bare network error indistinguishable from the chain having no record. **This fix is inert until `VITE_INDEXER_URI` is set in the deployment environment** — it is a build-time `VITE_` variable and needs a rebuild, not a restart.
+
 ## v0.9.0
 
 ### Fixed

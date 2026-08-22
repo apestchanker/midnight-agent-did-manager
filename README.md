@@ -636,6 +636,10 @@ See:
 
 ## Release Notes
 
+### v0.9.1
+
+- **Fixed a selected agent showing no DID when the wallet supplies an unreachable indexer** — contract reads took their endpoint solely from the wallet's `getConfiguration()`, so a wallet pointing at a failing host disabled every on-chain read. `VITE_INDEXER_URI` now overrides the wallet's value when set, matching the existing `VITE_PROVER_SERVER_URI` behaviour. Set it in the deployment environment to take effect — it is a build-time variable.
+
 ### v0.9.0
 
 - **Fixed existing agents showing no DID** — the DID directory fetch is session-gated but ran at mount, keyed off a contract address restored from `localStorage`, so it fired before `login()` had produced a session, took a 401, and never retried. Only returning users with a saved agent were affected, which is why it looked specific to *existing* agents.
@@ -700,7 +704,7 @@ See git log for prior release notes.
 
 ## Tested Versions
 
-- Application version: `0.9.0`
+- Application version: `0.9.1`
 - Compact compiler: `v0.31.0` (`pragma language_version >= 0.23 && <= 0.23`)
 - Midnight JS SDK family: `4.1.1`
 - Midnight DApp connector API: `4.0.1`
