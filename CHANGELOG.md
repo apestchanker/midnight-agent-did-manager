@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.9.0
+
+### Fixed
+- Fixed the DID directory rendering empty for a returning user opening an existing agent. `GET /api/registry/dids` is session-gated, but the effect that calls it keys off `contractAddress`, which `src/App.tsx` restores from `localStorage` at mount — long before a wallet is connected, and well before `login()` has completed its nonce -> sign -> session round trip. The call therefore fired unauthenticated, took a 401, and never retried, because its only other trigger was `didRecord.status` changing.
+  Reason/impact: only affected users with a saved contract/agent in `localStorage` (i.e. anyone revisiting an agent they had already opened), which is why it presented as "existing agents can't show their DID" rather than as a general breakage. The session token is held in memory only (ADR-002), so every page load starts unauthenticated and this race was lost on every visit.
+- Fixed the same premature-fetch race in the customer/request loader, which called `GET /api/customers/by-wallet` and `GET /api/did-requests` as soon as a wallet address existed, rather than once a session existed. This one self-healed via its 5-second poll, so it surfaced as recurring 401 noise in the console rather than as broken UI.
+  Reason/impact: both loaders now route their guard through a single `canLoadSessionScopedData()` predicate in `src/lib/auth-session.ts` and list `authSession` as an effect dependency, which both suppresses the doomed call and supplies the retry that was missing.
+- Fixed the API server exiting on an unhandled `'error'` event whenever Postgres terminated a connection while the server was idle (`docker stop` on the database, a managed-host failover, a server-side idle timeout). The `pg` Pool in `server/db.js` had no `'error'` listener, and node-postgres emits `'error'` on the Pool for failures on *idle* clients — an EventEmitter `'error'` with no listener throws, so the process died even though nothing was in flight and no request was affected.
+  Reason/impact: reproduced and verified against a real database — the process now logs and stays up, and recovers on its own once the database returns, since the pool discards the broken client and dials a fresh one on the next query. The handler logs the error as message + code rather than as the object, because `pg` attaches the failed client (including its resolved connection parameters) to these errors and `console.error` is teed into the in-memory buffer that `/api/logs` serves.
+
 ## v0.8.8
 
 ### Fixed — BREAKING (contract)

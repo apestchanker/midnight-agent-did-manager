@@ -636,6 +636,12 @@ See:
 
 ## Release Notes
 
+### v0.9.0
+
+- **Fixed existing agents showing no DID** — the DID directory fetch is session-gated but ran at mount, keyed off a contract address restored from `localStorage`, so it fired before `login()` had produced a session, took a 401, and never retried. Only returning users with a saved agent were affected, which is why it looked specific to *existing* agents.
+- **Fixed recurring 401s from the customer/request loader** — same premature-fetch race, triggered by wallet connect rather than by an established session. Both loaders now share one `canLoadSessionScopedData()` guard and re-run when the session lands.
+- **Fixed the API server dying when the database went away while idle** — the `pg` pool had no `'error'` listener, so a terminated idle connection (`docker stop`, host failover, idle timeout) killed the process via an unhandled `'error'` event. It now logs and stays up, reconnecting on the next query.
+
 ### v0.8.8
 
 - **Critical contract fix, breaking** — `admin_token_color` is no longer computed in the constructor. Verified against two distinct real preprod deployments that `tokenType(adminDomainSep(), kernel.self())` evaluated in the constructor produced the *same* color for different contracts — the admin token was not actually bound to a specific deployment. It's now computed inside `register_initial_admin()`, the same circuit that performs the mint. Contracts deployed before this fix cannot be patched — redeploy required. See [Constructor](#constructor).
@@ -694,7 +700,7 @@ See git log for prior release notes.
 
 ## Tested Versions
 
-- Application version: `0.8.8`
+- Application version: `0.9.0`
 - Compact compiler: `v0.31.0` (`pragma language_version >= 0.23 && <= 0.23`)
 - Midnight JS SDK family: `4.1.1`
 - Midnight DApp connector API: `4.0.1`
