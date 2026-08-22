@@ -114,6 +114,68 @@ const NATIVE_OWNERSHIP_MANAGED_CONTRACT_PATH =
   "/contracts/managed/native-ownership-proof";
 const CONFIGURED_PROVER_SERVER_URL = (import.meta.env.VITE_PROVER_SERVER_URI || "").trim();
 
+// The indexer URL the wallet hands back from getConfiguration() is whatever
+// that wallet vendor hosts, not necessarily an endpoint the dApp's own origin
+// is allowed to call. 1AM's preprod build returns a pre-authenticated URL on
+// api-preprod.1am.xyz that answers browser requests without an
+// Access-Control-Allow-Origin header, which blocks every contract read the app
+// makes — including the DID lookup for a selected agent — with no usable error,
+// since a CORS rejection surfaces to JS only as a bare network failure.
+//
+// VITE_INDEXER_URI therefore takes priority over the wallet's value when it is
+// set, mirroring how CONFIGURED_PROVER_SERVER_URL already overrides
+// config.proverServerUri above. Leave it unset to keep the previous behaviour
+// of trusting the wallet.
+const CONFIGURED_INDEXER_URL = (import.meta.env.VITE_INDEXER_URI || "").trim();
+const CONFIGURED_INDEXER_WS_URL = (import.meta.env.VITE_INDEXER_WS_URI || "").trim();
+
+/**
+ * Derives the websocket companion for a configured indexer URL, used only when
+ * VITE_INDEXER_URI is set without an explicit VITE_INDEXER_WS_URI.
+ *
+ * The http and ws endpoints are always resolved as a pair: taking one from the
+ * environment and the other from the wallet would point subscriptions at a
+ * different host than queries, which is worse than either source alone.
+ */
+export function deriveIndexerWsUrl(indexerUrl: string): string {
+  const trimmed = (indexerUrl || "").trim();
+  if (!trimmed) return "";
+  const withWsScheme = trimmed
+    .replace(/^https:\/\//i, "wss://")
+    .replace(/^http:\/\//i, "ws://");
+  return withWsScheme.replace(/\/+$/, "") + "/ws";
+}
+
+/**
+ * Resolves the indexer endpoint pair, preferring the configured environment
+ * values over the wallet-supplied ones. Exported for testing.
+ */
+export function resolveIndexerEndpoints(
+  walletIndexerUri: string,
+  walletIndexerWsUri: string,
+  configuredIndexerUrl: string = CONFIGURED_INDEXER_URL,
+  configuredIndexerWsUrl: string = CONFIGURED_INDEXER_WS_URL,
+): { indexerUri: string; indexerWsUri: string; source: "configured_env" | "wallet" } {
+  // Trimmed here as well as at the module constants, so a caller passing a
+  // blank-but-present value gets the wallet fallback rather than an endpoint
+  // that is technically truthy and entirely unusable.
+  const configuredUrl = (configuredIndexerUrl || "").trim();
+  const configuredWsUrl = (configuredIndexerWsUrl || "").trim();
+
+  if (configuredUrl) {
+    return {
+      indexerUri: configuredUrl,
+      indexerWsUri: configuredWsUrl || deriveIndexerWsUrl(configuredUrl),
+      source: "configured_env",
+    };
+  }
+  return {
+    indexerUri: walletIndexerUri,
+    indexerWsUri: walletIndexerWsUri,
+    source: "wallet",
+  };
+}
+
 const PRIVATE_STATE_PASSWORD_ENV = (import.meta.env.VITE_PRIVATE_STATE_PASSWORD || "").trim();
 const APP_LOCAL_STORAGE_PREFIX = "didmn:private-state:app-local:v1";
 
@@ -378,6 +440,7 @@ export interface AppProviders extends MidnightProviders<string> {
   configuredProverServerUrl?: string;
   proofProviderSource: "configured_env" | "wallet";
   proofWarningRequired: boolean;
+  indexerSource: "configured_env" | "wallet";
   shieldedAddress: string;
   shieldedCoinPublicKeyHex: string;
   unshieldedAddress: string;
@@ -561,6 +624,10 @@ export async function buildProviders(
 ): Promise<AppProviders> {
   const config = await api.getConfiguration();
   setNetworkId(config.networkId as never);
+  const { indexerUri, indexerWsUri, source: indexerSource } = resolveIndexerEndpoints(
+    config.indexerUri,
+    config.indexerWsUri,
+  );
   const shielded = await api.getShieldedAddresses();
   const unshielded = await api.getUnshieldedAddress();
   const shieldedCoinPublicKeyHex = extractShieldedCoinPublicKeyHex(
@@ -785,7 +852,7 @@ export async function buildProviders(
       });
       const identifier =
         transactionIdentifier(tx) ||
-        (await resolveTransactionIdentifierFromHash(config.indexerUri, submittedId)) ||
+        (await resolveTransactionIdentifierFromHash(indexerUri, submittedId)) ||
         submittedId;
       if (!identifier) {
         throw new Error(
@@ -809,8 +876,8 @@ export async function buildProviders(
   appProviders = {
     privateStateProvider,
     publicDataProvider: indexerPublicDataProvider(
-      config.indexerUri,
-      config.indexerWsUri,
+      indexerUri,
+      indexerWsUri,
       WebSocket as never,
     ),
     zkConfigProvider,
@@ -820,8 +887,9 @@ export async function buildProviders(
     midnightProvider,
     connectedAPI: connectedApiProxy,
     networkId: config.networkId,
-    indexerUrl: config.indexerUri,
-    indexerWsUrl: config.indexerWsUri,
+    indexerUrl: indexerUri,
+    indexerWsUrl: indexerWsUri,
+    indexerSource,
     nodeUrl: config.substrateNodeUri,
     proverServerUrl: config.proverServerUri,
     configuredProverServerUrl: CONFIGURED_PROVER_SERVER_URL || undefined,
