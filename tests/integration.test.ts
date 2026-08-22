@@ -489,7 +489,12 @@ describe("App.tsx task 10 — structural acceptance criteria (source-level check
   it("App.tsx imports login/clearAuthSession from ./utils/serviceApi and isAdminSession from ./lib/auth-session", async () => {
     const fs = await import("fs");
     const src = fs.readFileSync("src/App.tsx", "utf-8");
-    expect(src).toContain("import { isAdminSession } from \"./lib/auth-session\"");
+    // Matches the named import rather than the whole literal line, so adding a
+    // sibling export from ./lib/auth-session (canLoadSessionScopedData) does
+    // not break an assertion that is really about where isAdminSession lives.
+    expect(src).toMatch(
+      /import \{[^}]*\bisAdminSession\b[^}]*\} from "\.\/lib\/auth-session"/,
+    );
     expect(src).toMatch(/clearAuthSession,\s*\n\s*createWalletDidRequest/);
   });
 });

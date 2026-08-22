@@ -34,7 +34,7 @@ import {
   updateDidWithSync,
 } from "./lib/did/app-api";
 import { deriveSubjectNonceFromSeed } from "./lib/did/private-state";
-import { isAdminSession } from "./lib/auth-session";
+import { canLoadSessionScopedData, isAdminSession } from "./lib/auth-session";
 import {
   clearAuthSession,
   createWalletDidRequest,
@@ -347,8 +347,14 @@ export default function App() {
     [registryDids, selectedAgentId, selectedRegistryDidId],
   );
 
+  // Everything below reads session-gated endpoints (/api/customers/by-wallet,
+  // /api/did-requests), so it stays a no-op until login() has produced a
+  // session. Without the authSession guard this fires on wallet connect and
+  // races the nonce -> sign -> session round trip — a race it always loses,
+  // since the signature step needs the user to approve it in the wallet.
+  // Depending on authSession re-runs this the moment the session lands.
   const refreshRequestCollections = useCallback(async () => {
-    if (!walletAddress.trim()) {
+    if (!canLoadSessionScopedData(authSession, walletAddress)) {
       setCustomerRequests([]);
       setAdminRequests([]);
       setCustomerQuotaTotal(0);
@@ -375,7 +381,7 @@ export default function App() {
       setCustomerQuotaTotal(0);
     }
     setAdminRequests(pendingAdmin);
-  }, [walletAddress]);
+  }, [walletAddress, authSession]);
 
   useEffect(() => {
     if (!(status === "connected" && viewMode === "admin" && activeMainSection === "admin-logs")) {
@@ -1005,8 +1011,14 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, [registryApi]);
 
+  // GET /api/registry/dids is session-gated. This effect keys off
+  // contractAddress, which is populated from config at mount — long before
+  // any wallet is connected — so without the authSession guard it fires once,
+  // 401s, and then never retries: its only other trigger is didRecord.status
+  // changing. That is why an existing agent's DID directory renders empty for
+  // the rest of the page's life. Depending on authSession gives it the retry.
   useEffect(() => {
-    if (!contractAddress.trim()) {
+    if (!canLoadSessionScopedData(authSession, contractAddress)) {
       setRegistryDids([]);
       return;
     }
@@ -1017,7 +1029,7 @@ export default function App() {
         console.error("[App] Failed to load registry DID directory:", error);
         setRegistryDids([]);
       });
-  }, [contractAddress, didRecord?.status]);
+  }, [contractAddress, didRecord?.status, authSession]);
 
   useEffect(() => {
     if (!registryApi || !walletAddress.trim() || !providers) {
