@@ -636,6 +636,11 @@ See:
 
 ## Release Notes
 
+### v0.9.2
+
+- **Capability-token top-ups no longer mint a new color each time** — the admin "grant action credits" flow derived the token color from a timestamp, so every top-up produced a fresh, separately-tracked color instead of adding to the recipient's existing credits. The color is now deterministic per recipient + contract. Colors minted before this change stay spendable but won't be topped up; mint one fresh batch on the new stable color.
+- **Gated actions no longer fragment the wallet into unspendable coins** — the app presented the registry with a synthetic coin of hardcoded value 2, so each action returned change as a single 1-unit coin until the wallet could no longer assemble a spendable input (`Balance failed: Insufficient funds for fallible segment`). It now presents the real balance, so change comes back consolidated. The Compact contract is unchanged.
+
 ### v0.9.1
 
 - **Fixed a selected agent showing no DID when the wallet supplies an unreachable indexer** — contract reads took their endpoint solely from the wallet's `getConfiguration()`, so a wallet pointing at a failing host disabled every on-chain read. `VITE_INDEXER_URI` now overrides the wallet's value when set, matching the existing `VITE_PROVER_SERVER_URI` behaviour. Set it in the deployment environment to take effect — it is a build-time variable.
@@ -704,7 +709,7 @@ See git log for prior release notes.
 
 ## Tested Versions
 
-- Application version: `0.9.1`
+- Application version: `0.9.2`
 - Compact compiler: `v0.31.0` (`pragma language_version >= 0.23 && <= 0.23`)
 - Midnight JS SDK family: `4.1.1`
 - Midnight DApp connector API: `4.0.1`

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.9.2
 
 ### Fixed
 - **Capability-token top-ups no longer mint a new color every time.** `UnifiedRegistryAPI.mintTokens()` derived the `mint_capability_tokens` subscription key from `Date.now()`, so each grant to a recipient produced a fresh, separately-tracked token color instead of topping up their existing one. The key is now deterministic per `(recipient coin public key, contract address)`, with an explicit `rotation` opt-in for the rare case of deliberately moving a recipient onto a new color. `generateSubscriptionKey` and `grantSubscription` updated accordingly; the persisted `action_token_grants.subscription_key_hex` becomes an audit record rather than the source of truth for the color. Colors minted before this change stay valid and spendable but won't be topped up — mint one fresh batch on the new stable color.
