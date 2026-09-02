@@ -1,6 +1,6 @@
 {
   "name": "midnight-agent-did-manager",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "contractVersion": "3.0.0",
   "type": "module",
   "scripts": {
