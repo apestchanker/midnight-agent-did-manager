@@ -221,39 +221,50 @@ export class UnifiedRegistryAPI {
       verifiedColors: Array.from(verifiedColors),
     });
 
+    // Pick the verified color with the LARGEST balance, not the first one that
+    // clears the minimum. A wallet can hold several capability-token colors
+    // (one per grant); an older near-depleted color must not be chosen over a
+    // freshly funded one.
+    let best: { colorHex: string; bal: bigint } | null = null;
     for (const colorHex of verifiedColors) {
-      const bal = rawBalances[colorHex];
-      console.debug("[_buildCoin] checking verified color", { colorHex, balance: bal !== undefined ? String(bal) : undefined });
-      if (bal !== undefined && BigInt(bal) >= 2n) {
-        // Present the caller's FULL aggregate balance for this color, not a
-        // hardcoded 2. consumeToken() does `remaining = coin.value - 1` and
-        // re-emits the change as a single coin, so passing the real balance N
-        // means each gated action returns one consolidated coin of N-1 instead
-        // of collapsing every spend to a 1-unit crumb. Passing 2 fragmented the
-        // wallet into many value-1 UTXOs until the balancer could no longer
-        // source a >=2 input ("Insufficient funds for fallible segment").
-        // The connector API only exposes aggregate balances (no per-UTXO view),
-        // so the wallet still has to combine any pre-existing fragments once to
-        // fund N on the first post-fix spend; after that the color stays as a
-        // single coin that decrements by 1 per action.
-        const value = BigInt(bal);
-        console.debug("[_buildCoin] selected coin", { colorHex, aggregateBalance: String(bal), coinValue: String(value) });
-        return {
-          coin: {
-            nonce: crypto.getRandomValues(new Uint8Array(32)),
-            color: fromHex(colorHex),
-            value,
-          },
-          colorHex,
-        };
+      const raw = rawBalances[colorHex];
+      if (raw === undefined) continue;
+      const bal = BigInt(raw);
+      console.debug("[_buildCoin] checking verified color", { colorHex, balance: String(bal) });
+      if (bal >= 2n && (best === null || bal > best.bal)) {
+        best = { colorHex, bal };
       }
     }
+
+    if (best) {
+      // Present the circuit MINIMUM (2), not the full aggregate balance.
+      // consumeToken() only requires coin.value >= 2; the wallet's shielded
+      // balancer covers the fallible-segment requirement by combining the
+      // caller's real UTXOs of this color. It fails ("Insufficient funds for
+      // fallible segment N" — N is a segment id, not an amount) only when the
+      // total held is below what the segment needs. v0.9.2 passed the full
+      // balance and left zero headroom: any gap between getShieldedBalances()
+      // and what the balancer could actually source made every call fail even
+      // with a freshly funded color. A fixed 2 keeps maximum headroom; the
+      // change from over-provisioned inputs is returned automatically.
+      // See sdd/features/005-coin-gated-admin-access/defect-log-2026-09-02.md.
+      console.debug("[_buildCoin] selected coin", { colorHex: best.colorHex, aggregateBalance: String(best.bal), coinValue: "2" });
+      return {
+        coin: {
+          nonce: crypto.getRandomValues(new Uint8Array(32)),
+          color: fromHex(best.colorHex),
+          value: 2n,
+        },
+        colorHex: best.colorHex,
+      };
+    }
+
     console.error("[_buildCoin] no verified color had balance >= 2n", {
       allBalances: Object.fromEntries(Object.entries(rawBalances).map(([k, v]) => [k, String(v)])),
       verifiedColors: Array.from(verifiedColors),
     });
     throw new Error(
-      "No spendable action credits found. Your wallet needs shielded tokens with at least 2 units in a single coin.",
+      "No spendable action credits found. Your wallet needs a recognized action-credit token with at least 2 units for this contract.",
     );
   }
 
@@ -282,17 +293,15 @@ export class UnifiedRegistryAPI {
     >;
     const bal = rawBalances[adminColorHex];
     if (bal !== undefined && BigInt(bal) >= 2n) {
-      // Present the full aggregate admin-token balance, not a hardcoded 2 —
-      // same rationale as _buildCoin(): consumeAdminToken() returns the change
-      // as a single coin of `value - 1`, so passing the real balance keeps the
-      // admin token consolidated instead of fragmenting it into 1-unit crumbs
-      // with every admin action (issue_did, grant_role, mint_capability_tokens, ...).
-      const value = BigInt(bal);
+      // Circuit minimum (2), not the full aggregate — same rationale as
+      // _buildCoin(): passing the full balance leaves the wallet balancer zero
+      // headroom on the fallible segment. consumeAdminToken() only needs
+      // value >= 2; the balancer combines the caller's real admin-color UTXOs.
       return {
         coin: {
           nonce: crypto.getRandomValues(new Uint8Array(32)),
           color: adminColorBytes,
-          value,
+          value: 2n,
         },
         colorHex: adminColorHex,
       };

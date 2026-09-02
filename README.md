@@ -636,6 +636,10 @@ See:
 
 ## Release Notes
 
+### v0.9.3
+
+- **Fixed `Insufficient funds for fallible segment` on gated actions even with a funded token color** — v0.9.2 presented the wallet's whole balance for the color as the coin value, which left zero headroom for the wallet's transaction balancer. Verified against the Midnight wallet SDK source that this is the wrong lever; reverted to the circuit minimum and let the balancer combine UTXOs. `_buildCoin()` also now picks the color with the largest balance rather than the first usable one.
+
 ### v0.9.2
 
 - **Capability-token top-ups no longer mint a new color each time** — the admin "grant action credits" flow derived the token color from a timestamp, so every top-up produced a fresh, separately-tracked color instead of adding to the recipient's existing credits. The color is now deterministic per recipient + contract. Colors minted before this change stay spendable but won't be topped up; mint one fresh batch on the new stable color.
@@ -709,7 +713,7 @@ See git log for prior release notes.
 
 ## Tested Versions
 
-- Application version: `0.9.2`
+- Application version: `0.9.3`
 - Compact compiler: `v0.31.0` (`pragma language_version >= 0.23 && <= 0.23`)
 - Midnight JS SDK family: `4.1.1`
 - Midnight DApp connector API: `4.0.1`

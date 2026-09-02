@@ -60,6 +60,9 @@ vi.mock("../src/lib/did/cache", () => {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const MOCK_COLOR = "a1".repeat(32);
+// A second capability-token color the mock ledger also recognises as valid —
+// used to exercise _buildCoin()'s "pick the largest balance" selection.
+const MOCK_COLOR_2 = "a2".repeat(32);
 // Distinct from MOCK_COLOR — feature 005-coin-gated-admin-access introduces a
 // single dedicated admin_token_color, separate from the multi-color
 // valid_colors set used by capability tokens.
@@ -78,7 +81,8 @@ function makeModule() {
     Contract: class {},
     ledger: vi.fn(() => ({
       valid_colors: {
-        member: (color: Uint8Array) => toHex(color) === MOCK_COLOR,
+        member: (color: Uint8Array) =>
+          toHex(color) === MOCK_COLOR || toHex(color) === MOCK_COLOR_2,
         lookup: () => true,
         [Symbol.iterator]: function* () {},
       },
@@ -220,14 +224,35 @@ describe("REQ-01 gatedSelfRegisterDid", () => {
 
     expect(callTx.gated_self_register_did).toHaveBeenCalledOnce();
     const [coin, nonce] = (callTx.gated_self_register_did as Mock).mock.calls[0];
-    // coin carries the wallet's full aggregate balance for the color (5n here),
-    // not a hardcoded 2n — consumeToken() returns `value - 1` as a single
-    // consolidated change coin, so passing the real balance avoids fragmenting
-    // the wallet into unspendable 1-unit UTXOs.
+    // coin carries the circuit minimum (2), not the full balance — the wallet
+    // balancer combines the caller's real UTXOs to cover the fallible segment;
+    // passing the full aggregate (v0.9.2) left zero headroom and always failed.
     expect(toHex(coin.color)).toBe(MOCK_COLOR);
-    expect(coin.value).toBe(5n);
+    expect(coin.value).toBe(2n);
     expect(coin.nonce).toHaveLength(32);
     expect(toHex(nonce)).toBe(toHex(subjectNonce));
+  });
+
+  it("picks the verified color with the largest balance, not the first over the minimum", async () => {
+    const callTx = makeCallTx();
+    // MOCK_COLOR at 3 (over the minimum), MOCK_COLOR_2 at 40 — the freshly
+    // funded color must win over an older near-depleted one.
+    const providers = makeProviders({
+      [MOCK_COLOR]: 3n,
+      [MOCK_COLOR_2]: 40n,
+      [MOCK_ADMIN_COLOR]: 5n,
+    });
+    const api = await buildAPI(providers, callTx);
+
+    await api.gatedSelfRegisterDid({
+      subjectNonce: new Uint8Array(32),
+      agentId: "agent-xyz",
+      didDocument: "{}",
+    });
+
+    const [coin] = (callTx.gated_self_register_did as Mock).mock.calls[0];
+    expect(toHex(coin.color)).toBe(MOCK_COLOR_2);
+    expect(coin.value).toBe(2n);
   });
 
   it("returns a DidRecord with the did_key from the circuit result", async () => {
@@ -344,7 +369,7 @@ describe("REQ-02 mintTokens", () => {
     // Feature 005-coin-gated-admin-access: first arg is the admin coin
     // obtained from _buildAdminCoin(), colored with admin_token_color.
     expect(toHex(coin.color)).toBe(MOCK_ADMIN_COLOR);
-    expect(coin.value).toBe(5n); // full aggregate admin-token balance, not hardcoded 2n
+    expect(coin.value).toBe(2n); // circuit minimum, not the full admin-token balance
     expect(subKey).toHaveLength(32);
     expect(recipient.bytes).toEqual(recipientBytes);
     expect(coinNonce).toHaveLength(32);
@@ -415,7 +440,7 @@ describe("REQ-05 requestUpdateDid", () => {
     expect(callTx.request_update_did).toHaveBeenCalledOnce();
     const [coin, nonce, doc, cap] = (callTx.request_update_did as Mock).mock.calls[0];
     expect(toHex(coin.color)).toBe(MOCK_COLOR);
-    expect(coin.value).toBe(5n); // full aggregate balance for the color, not hardcoded 2n
+    expect(coin.value).toBe(2n); // circuit minimum, not the full balance for the color
     expect(nonce).toHaveLength(32);
     expect(doc).toHaveLength(32);
     expect(cap).toHaveLength(32);
