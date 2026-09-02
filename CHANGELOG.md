@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.9.3
+
+### Fixed
+- **`Balance failed: Insufficient funds for fallible segment` on gated actions, even with a freshly funded token color.** v0.9.2 changed `_buildCoin()` / `_buildAdminCoin()` to present the wallet's *full aggregate balance* for the color as the coin value. Verified against the Midnight wallet SDK source (`midnight-wallet` `balanceFallibleSection` / `Balancer.doBalance`) that the number after "fallible segment" is a **segment id, not an amount**, and that the balancer **combines multiple UTXOs** to cover a segment — it fails only when the wallet's *total* holdings of that color fall short. Passing the full balance therefore left **zero headroom**: any gap between `getShieldedBalances()` and what the balancer can actually source made every call fail. Reverted to presenting the circuit minimum (`value: 2n`); `consumeToken` / `consumeAdminToken` only require `>= 2` and the balancer covers the rest.
+- **`_buildCoin()` now selects the verified color with the largest balance**, instead of the first one over the minimum, so an older near-depleted capability-token color is never chosen over a freshly funded one.
+  Reason/impact: supersedes the "pass the full balance" half of the v0.9.2 fix. The stable-color-per-recipient fix from v0.9.2 is unchanged. See `sdd/features/005-coin-gated-admin-access/defect-log-2026-09-02.md` for the full evidence trail.
+
 ## v0.9.2
 
 ### Fixed
