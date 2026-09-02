@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- **Capability-token top-ups no longer mint a new color every time.** `UnifiedRegistryAPI.mintTokens()` derived the `mint_capability_tokens` subscription key from `Date.now()`, so each grant to a recipient produced a fresh, separately-tracked token color instead of topping up their existing one. The key is now deterministic per `(recipient coin public key, contract address)`, with an explicit `rotation` opt-in for the rare case of deliberately moving a recipient onto a new color. `generateSubscriptionKey` and `grantSubscription` updated accordingly; the persisted `action_token_grants.subscription_key_hex` becomes an audit record rather than the source of truth for the color. Colors minted before this change stay valid and spendable but won't be topped up — mint one fresh batch on the new stable color.
+- **Gated actions no longer fragment the wallet into unspendable 1-unit coins.** `_buildCoin()` / `_buildAdminCoin()` handed the circuit a synthetic coin with a hardcoded `value: 2n`; because `consumeToken`/`consumeAdminToken` return `value - 1` as a single change coin, every action collapsed the caller's balance to a 1-unit crumb, until the connected wallet's balancer could no longer source a `>= 2` input and failed with `Balance failed: Insufficient funds for fallible segment`. They now pass the wallet's real aggregate balance for the color, so the change comes back as one consolidated coin. First spend after upgrading still needs the wallet to combine any pre-existing fragments once.
+  Reason/impact: both bugs are in the TypeScript layer of feature `005-coin-gated-admin-access`; the Compact contract is unchanged. See `sdd/features/005-coin-gated-admin-access/defect-log-2026-09-02.md`.
+
 ## v0.9.1
 
 ### Fixed

@@ -225,17 +225,24 @@ export class UnifiedRegistryAPI {
       const bal = rawBalances[colorHex];
       console.debug("[_buildCoin] checking verified color", { colorHex, balance: bal !== undefined ? String(bal) : undefined });
       if (bal !== undefined && BigInt(bal) >= 2n) {
-        // value: 2n = 1 credit spent + 1 permanent anchor retained by the contract.
-        // The wallet SDK exposes aggregate balances, not individual UTXOs.
-        // If the balance >= 2n comes from many small UTXOs (each < 2n), the ZK proof
-        // will fail at runtime with a coin-not-found error. Normal mint flow (batches of 5+)
-        // avoids this; users with heavily fragmented wallets should request a re-mint.
-        console.debug("[_buildCoin] selected coin", { colorHex, aggregateBalance: String(bal), syntheticValue: "2" });
+        // Present the caller's FULL aggregate balance for this color, not a
+        // hardcoded 2. consumeToken() does `remaining = coin.value - 1` and
+        // re-emits the change as a single coin, so passing the real balance N
+        // means each gated action returns one consolidated coin of N-1 instead
+        // of collapsing every spend to a 1-unit crumb. Passing 2 fragmented the
+        // wallet into many value-1 UTXOs until the balancer could no longer
+        // source a >=2 input ("Insufficient funds for fallible segment").
+        // The connector API only exposes aggregate balances (no per-UTXO view),
+        // so the wallet still has to combine any pre-existing fragments once to
+        // fund N on the first post-fix spend; after that the color stays as a
+        // single coin that decrements by 1 per action.
+        const value = BigInt(bal);
+        console.debug("[_buildCoin] selected coin", { colorHex, aggregateBalance: String(bal), coinValue: String(value) });
         return {
           coin: {
             nonce: crypto.getRandomValues(new Uint8Array(32)),
             color: fromHex(colorHex),
-            value: 2n,
+            value,
           },
           colorHex,
         };
@@ -275,13 +282,17 @@ export class UnifiedRegistryAPI {
     >;
     const bal = rawBalances[adminColorHex];
     if (bal !== undefined && BigInt(bal) >= 2n) {
-      // value: 2n = 1 credit spent + 1 permanent anchor retained by the contract,
-      // matching consumeAdminToken()'s value check (mirrors _buildCoin()).
+      // Present the full aggregate admin-token balance, not a hardcoded 2 —
+      // same rationale as _buildCoin(): consumeAdminToken() returns the change
+      // as a single coin of `value - 1`, so passing the real balance keeps the
+      // admin token consolidated instead of fragmenting it into 1-unit crumbs
+      // with every admin action (issue_did, grant_role, mint_capability_tokens, ...).
+      const value = BigInt(bal);
       return {
         coin: {
           nonce: crypto.getRandomValues(new Uint8Array(32)),
           color: adminColorBytes,
-          value: 2n,
+          value,
         },
         colorHex: adminColorHex,
       };
@@ -295,12 +306,35 @@ export class UnifiedRegistryAPI {
 
   async mintTokens(opts: {
     recipientBytes: Uint8Array;
+    /** Opaque customer reference — kept for the audit record, not used to derive the color. */
     userId: string;
     credits: bigint;
+    /**
+     * Bump (string or number) to deliberately mint a NEW token color for this
+     * recipient — e.g. after revoking their subscription. Default keeps the
+     * color stable, so repeated grants to the same recipient on the same
+     * contract top up one color instead of minting a fresh, separately-tracked
+     * color every time (the old `Date.now()`-based behaviour, which fragmented
+     * recipients' wallets into unspendable 1-unit coins).
+     */
+    rotation?: string | number;
+    /** Supply the 32-byte subscription key directly, bypassing derivation. */
+    subscriptionKey?: Uint8Array;
   }): Promise<{ txHash: string; subscriptionKey: Uint8Array }> {
     if (opts.credits < 1n) throw new Error("Credits must be >= 1");
 
-    const subscriptionKey = generateSubscriptionKey(opts.userId, Date.now());
+    // Deterministic per (recipient, contract): mint_capability_tokens derives
+    // the color as tokenType(persistentHash(subscriptionKey), contract), so a
+    // stable key means every grant to this recipient lands on the same color
+    // and is spendable alongside their existing credits. The recipient's coin
+    // public key + this contract anchor the derivation (not `userId`, which the
+    // admin types and may format inconsistently).
+    const subscriptionKey =
+      opts.subscriptionKey ??
+      generateSubscriptionKey(
+        `${toHex(opts.recipientBytes)}:${this.contractAddress}`,
+        opts.rotation ?? 0,
+      );
     const coinNonce = crypto.getRandomValues(new Uint8Array(32));
     // Feature 005-coin-gated-admin-access (ADR-004): mint_capability_tokens is
     // now admin-token-gated; consumeAdminToken(coin) is the circuit's first
