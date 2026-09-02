@@ -18,15 +18,27 @@ import { mintCapabilityTokens, type TokenProviders } from './token-witness.js';
 // ─── Key generation ───────────────────────────────────────────────────────────
 
 /**
- * Generates a deterministic 32-byte subscription key unique to a (userId, timestamp) pair.
- * The admin uses this as the `subscriptionKey` parameter for `mint_capability_tokens`.
+ * Generates a deterministic 32-byte subscription key from an identity string and
+ * a rotation marker. The admin uses this as the `subscriptionKey` parameter for
+ * `mint_capability_tokens`, which derives the token color from it
+ * (`tokenType(persistentHash(subscriptionKey), contract)`).
  *
- * In production, `timestamp` should be the subscription creation time (ms since epoch)
- * to ensure uniqueness even if the same user is re-subscribed.
+ * The key MUST be stable for a given identity so that repeated grants to the
+ * same recipient land on the same color and top up their existing credits.
+ * Deriving it from a timestamp (the previous behaviour) minted a brand-new,
+ * separately-tracked color on every grant and fragmented recipients' wallets.
+ *
+ * @param identity - stable identity string, e.g. `"<recipientCoinPublicKeyHex>:<contractAddress>"`
+ * @param rotation - bump this (string or number) only to deliberately move the
+ *                   recipient onto a fresh color, e.g. after revoking a subscription.
+ *                   Defaults to `0` (stable color).
  */
-export function generateSubscriptionKey(userId: string, timestamp: number = Date.now()): Uint8Array {
+export function generateSubscriptionKey(
+  identity: string,
+  rotation: string | number = 0,
+): Uint8Array {
   return new Uint8Array(
-    createHash('sha256').update(`${userId}:${timestamp}`).digest()
+    createHash('sha256').update(`${identity}:${rotation}`).digest()
   );
 }
 
@@ -47,23 +59,26 @@ export interface GrantSubscriptionResult {
  * shielded wallet address.
  *
  * @param config - TokenProviders with admin's token contract access
- * @param userId - Opaque user identifier (used to generate subscriptionKey)
+ * @param _userId - Opaque user identifier; retained for call-site compatibility.
+ *                  The color is derived from the recipient + contract, not this.
  * @param userRecipient - User's ZswapCoinPublicKey (shielded address bytes)
  * @param creditsToGrant - Number of usable capability credits (circuit mints this + 1 anchor)
- * @param timestampMs - Optional timestamp for key generation (defaults to now)
+ * @param rotation - bump only to deliberately move the recipient onto a fresh color (default 0)
  */
 export async function grantSubscription(
   config: TokenProviders,
-  userId: string,
+  _userId: string,
   userRecipient: { bytes: Uint8Array },
   creditsToGrant: bigint,
-  timestampMs: number = Date.now(),
+  rotation: string | number = 0,
 ): Promise<GrantSubscriptionResult> {
   if (creditsToGrant < 1n) {
     throw new Error('SUBSCRIPTION_INVALID_AMOUNT');
   }
 
-  const subscriptionKey = generateSubscriptionKey(userId, timestampMs);
+  // Stable per (recipient, contract) so repeated grants top up one color.
+  const identity = `${Buffer.from(userRecipient.bytes).toString('hex')}:${config.stateManager.contractAddress}`;
+  const subscriptionKey = generateSubscriptionKey(identity, rotation);
 
   const { coin, txHash } = await mintCapabilityTokens(
     config,
@@ -77,7 +92,7 @@ export async function grantSubscription(
     recipientBytes: userRecipient.bytes,
     creditsGranted: creditsToGrant,
     contractAddress: config.stateManager.contractAddress,
-    grantedAt: new Date(timestampMs).toISOString(),
+    grantedAt: new Date().toISOString(),
   };
 
   return { subscriptionKey, coin, record, txHash };

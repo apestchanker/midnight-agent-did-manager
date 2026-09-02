@@ -220,9 +220,12 @@ describe("REQ-01 gatedSelfRegisterDid", () => {
 
     expect(callTx.gated_self_register_did).toHaveBeenCalledOnce();
     const [coin, nonce] = (callTx.gated_self_register_did as Mock).mock.calls[0];
-    // coin must have color=MOCK_COLOR, value=2n, and a fresh nonce
+    // coin carries the wallet's full aggregate balance for the color (5n here),
+    // not a hardcoded 2n — consumeToken() returns `value - 1` as a single
+    // consolidated change coin, so passing the real balance avoids fragmenting
+    // the wallet into unspendable 1-unit UTXOs.
     expect(toHex(coin.color)).toBe(MOCK_COLOR);
-    expect(coin.value).toBe(2n);
+    expect(coin.value).toBe(5n);
     expect(coin.nonce).toHaveLength(32);
     expect(toHex(nonce)).toBe(toHex(subjectNonce));
   });
@@ -341,7 +344,7 @@ describe("REQ-02 mintTokens", () => {
     // Feature 005-coin-gated-admin-access: first arg is the admin coin
     // obtained from _buildAdminCoin(), colored with admin_token_color.
     expect(toHex(coin.color)).toBe(MOCK_ADMIN_COLOR);
-    expect(coin.value).toBe(2n);
+    expect(coin.value).toBe(5n); // full aggregate admin-token balance, not hardcoded 2n
     expect(subKey).toHaveLength(32);
     expect(recipient.bytes).toEqual(recipientBytes);
     expect(coinNonce).toHaveLength(32);
@@ -355,6 +358,44 @@ describe("REQ-02 mintTokens", () => {
     await expect(
       api.mintTokens({ recipientBytes: new Uint8Array(32), userId: "u", credits: 0n }),
     ).rejects.toThrow("Credits must be >= 1");
+  });
+
+  it("derives a STABLE subscription key per recipient — repeated grants top up one color", async () => {
+    const api = await buildAPI(undefined, makeCallTx());
+    const recipientBytes = new Uint8Array(32).fill(0xee);
+
+    const first = await api.mintTokens({ recipientBytes, userId: "user@example.com", credits: 5n });
+    const second = await api.mintTokens({ recipientBytes, userId: "totally-different-ref", credits: 3n });
+
+    // Same recipient + contract ⇒ identical key ⇒ identical on-chain color.
+    // `userId` does NOT influence the key (used only for the audit record).
+    expect(toHex(second.subscriptionKey)).toBe(toHex(first.subscriptionKey));
+
+    // A different recipient gets a different key.
+    const other = await api.mintTokens({
+      recipientBytes: new Uint8Array(32).fill(0x11),
+      userId: "user@example.com",
+      credits: 5n,
+    });
+    expect(toHex(other.subscriptionKey)).not.toBe(toHex(first.subscriptionKey));
+  });
+
+  it("rotation bumps the recipient onto a fresh color; an explicit subscriptionKey is passed through", async () => {
+    const api = await buildAPI(undefined, makeCallTx());
+    const recipientBytes = new Uint8Array(32).fill(0xee);
+
+    const base = await api.mintTokens({ recipientBytes, userId: "u", credits: 5n });
+    const rotated = await api.mintTokens({ recipientBytes, userId: "u", credits: 5n, rotation: 1 });
+    expect(toHex(rotated.subscriptionKey)).not.toBe(toHex(base.subscriptionKey));
+
+    const explicit = new Uint8Array(32).fill(0x7a);
+    const forced = await api.mintTokens({
+      recipientBytes,
+      userId: "u",
+      credits: 5n,
+      subscriptionKey: explicit,
+    });
+    expect(toHex(forced.subscriptionKey)).toBe(toHex(explicit));
   });
 });
 
@@ -374,7 +415,7 @@ describe("REQ-05 requestUpdateDid", () => {
     expect(callTx.request_update_did).toHaveBeenCalledOnce();
     const [coin, nonce, doc, cap] = (callTx.request_update_did as Mock).mock.calls[0];
     expect(toHex(coin.color)).toBe(MOCK_COLOR);
-    expect(coin.value).toBe(2n);
+    expect(coin.value).toBe(5n); // full aggregate balance for the color, not hardcoded 2n
     expect(nonce).toHaveLength(32);
     expect(doc).toHaveLength(32);
     expect(cap).toHaveLength(32);
